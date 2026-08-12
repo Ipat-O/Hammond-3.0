@@ -1,0 +1,54 @@
+# Hammond 3.0 Foundation Board
+
+Active orchestrator: OpenAI / Codex / GPT-5.6 Sol  
+Initial condition: every task is `in_design`  
+Dispatch rule: dependencies must be merged before a task becomes `ready_for_development`
+
+## in_design
+
+- [HAM3-001](./tasks/HAM3-001.md) — Desktop application foundation
+- [HAM3-002](./tasks/HAM3-002.md) — Supabase project memory and owner access
+- [HAM3-003](./tasks/HAM3-003.md) — Local directory contexts and bindings
+- [HAM3-004](./tasks/HAM3-004.md) — Core project and task tracker
+- [HAM3-005](./tasks/HAM3-005.md) — Versioned instruction template domain
+- [HAM3-006](./tasks/HAM3-006.md) — Harness adapters and managed-file injection
+- [HAM3-007](./tasks/HAM3-007.md) — Instruction Studio UI
+- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
+- [HAM3-009](./tasks/HAM3-009.md) — Work-order generation and dispatch records
+- [HAM3-010](./tasks/HAM3-010.md) — Exact-SHA evidence and approval workflow
+- [HAM3-011](./tasks/HAM3-011.md) — Tracker depth, activity, search, and export
+- [HAM3-012](./tasks/HAM3-012.md) — Integrated desktop release and human QA
+
+## ready_for_development
+
+None.
+
+## in_development
+
+None.
+
+## in_review
+
+None.
+
+## testing
+
+None.
+
+## merged
+
+None.
+
+## shipped
+
+None.
+
+## Dependency waves
+
+1. HAM3-001
+2. HAM3-002 and HAM3-003
+3. HAM3-004 and HAM3-005
+4. HAM3-006
+5. HAM3-007, HAM3-008, HAM3-009, and HAM3-010
+6. HAM3-011
+7. HAM3-012

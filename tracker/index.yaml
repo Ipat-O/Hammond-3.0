@@ -1,0 +1,80 @@
+project: Hammond 3.0
+active_orchestrator:
+  provider: OpenAI
+  tool: Codex Desktop
+  model: GPT-5.6 Sol
+default_base_branch: dev
+initial_state: in_design
+tasks:
+  - id: HAM3-001
+    title: Desktop application foundation
+    state: in_design
+    depends_on: []
+    worker: Claude Code / Claude Sonnet 5
+    auditor: Kilo Code / DeepSeek V4 Pro
+  - id: HAM3-002
+    title: Supabase project memory and owner access
+    state: in_design
+    depends_on: [HAM3-001]
+    worker: Kilo Code / DeepSeek V4 Pro
+    auditor: Claude Code / Claude Sonnet 5
+  - id: HAM3-003
+    title: Local directory contexts and bindings
+    state: in_design
+    depends_on: [HAM3-001]
+    worker: Claude Code / Claude Sonnet 5
+    auditor: Kilo Code / DeepSeek V4 Pro
+  - id: HAM3-004
+    title: Core project and task tracker
+    state: in_design
+    depends_on: [HAM3-002]
+    worker: Kilo Code / DeepSeek V4 Pro
+    auditor: Claude Code / Claude Sonnet 5
+  - id: HAM3-005
+    title: Versioned instruction template domain
+    state: in_design
+    depends_on: [HAM3-002]
+    worker: Claude Code / Claude Sonnet 5
+    auditor: Kilo Code / DeepSeek V4 Pro
+  - id: HAM3-006
+    title: Harness adapters and managed-file injection
+    state: in_design
+    depends_on: [HAM3-003, HAM3-005]
+    worker: Kilo Code / DeepSeek V4 Pro
+    auditor: Claude Code / Claude Sonnet 5
+  - id: HAM3-007
+    title: Instruction Studio UI
+    state: in_design
+    depends_on: [HAM3-005, HAM3-006]
+    worker: Claude Code / Claude Sonnet 5
+    auditor: Kilo Code / DeepSeek V4 Pro
+  - id: HAM3-008
+    title: Project home, directory switching, and resume
+    state: in_design
+    depends_on: [HAM3-003, HAM3-004, HAM3-006]
+    worker: Kilo Code / DeepSeek V4 Pro
+    auditor: Claude Code / Claude Sonnet 5
+  - id: HAM3-009
+    title: Work-order generation and dispatch records
+    state: in_design
+    depends_on: [HAM3-004, HAM3-005]
+    worker: Claude Code / Claude Sonnet 5
+    auditor: Kilo Code / DeepSeek V4 Pro
+  - id: HAM3-010
+    title: Exact-SHA evidence and approval workflow
+    state: in_design
+    depends_on: [HAM3-004]
+    worker: Kilo Code / DeepSeek V4 Pro
+    auditor: Claude Code / Claude Sonnet 5
+  - id: HAM3-011
+    title: Tracker depth, activity, search, and export
+    state: in_design
+    depends_on: [HAM3-004, HAM3-009, HAM3-010]
+    worker: Claude Code / Claude Sonnet 5
+    auditor: Kilo Code / DeepSeek V4 Pro
+  - id: HAM3-012
+    title: Integrated desktop release and human QA
+    state: in_design
+    depends_on: [HAM3-007, HAM3-008, HAM3-009, HAM3-010, HAM3-011]
+    worker: Kilo Code / DeepSeek V4 Pro
+    auditor: Claude Code / Claude Sonnet 5
