@@ -60,3 +60,13 @@
 - Acceptance criterion "a clean checkout can install, test, build, and open a desktop window" is therefore not yet demonstrated, and the human check remains outstanding.
 - HAM3-001 moved from `ready_for_development` to `in_review`. The audit packet is bound to exact head `e482dd1d46d73eca2c10e1a35d186f88acc80434` and requires the auditor to attempt the Rust toolchain and report explicitly if it is also unavailable.
 - Incidental: the worker's formatting pass corrected a markdown defect the preceding governance commit introduced in `README.md`.
+
+## 2026-08-12 — HAM3-001 audited; CHANGES at e482dd1
+
+- Kilo Code / DeepSeek V4 Pro audited exact head `e482dd1d46d73eca2c10e1a35d186f88acc80434` in a temporary worktree and returned `AUDIT-VERDICT: CHANGES`. Report: https://github.com/Ipat-O/Hammond-3.0/pull/2#issuecomment-5271914672
+- The auditor confirmed the structural evidence independently: head SHA matches, one commit, PR draft and mergeable, `tracker/` untouched, scope clean. It restored its worktree.
+- One required finding: `.prettierrc.json` declares no `endOfLine`, so Prettier applies its `lf` default and `npm run format:check` fails on every file of a clean checkout on the owner's `core.autocrlf=true` Windows machine. The auditor demonstrated exit 1 on a CRLF checkout and exit 0 on an LF checkout at the same head, isolating the cause to the missing policy rather than the committed bytes. The orchestrator independently confirmed `core.autocrlf=true`, the absent `endOfLine` key, and the absence of any `.gitattributes`. This breaks the acceptance criterion that a clean checkout can install, test, and build.
+- Advisory findings recorded and deliberately excluded from Correction 1: `csp: null` accepted for the foundation slice and deferred to HAM3-002; frontend coverage is a single smoke test, which satisfies the "test entry points" requirement as written; `Cargo.lock` absent, which cannot be generated without a toolchain.
+- `rust_toolchain_available: false` for the auditor as well. The native half of HAM3-001 is now unverified across both the implementing and the auditing family. `tauri:build` failed at `cargo metadata` for the auditor exactly as the worker reported, corroborating the worker's limitation from an independent environment.
+- Consequence recorded for the owner: HAM3-001 cannot honestly satisfy "open a desktop window" or its human check until a Rust toolchain exists somewhere in the loop. This is an infrastructure gap, not a product defect, and no participant has been charged with it.
+- HAM3-001 moved from `in_review` to `in_development` for Correction 1, routed to the original worker on the same branch and PR. Any new commit invalidates the prior review and requires a Kilo re-audit of the new exact head.

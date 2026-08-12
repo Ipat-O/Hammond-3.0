@@ -16,16 +16,18 @@ execution_families:
 tasks:
   - id: HAM3-001
     title: Desktop application foundation
-    state: in_review
+    state: in_development
+    correction: 1
     depends_on: []
     worker: OpenAI / Luna
     auditor: Kilo Code / DeepSeek V4 Pro
     dispatched_worker_identity: OpenAI / Codex Desktop / GPT-5
     branch: openai/HAM3-001-desktop-foundation
     base_sha: beb106a335a4943c5b3f3f0298da86054b66e90a
-    head_sha: e482dd1d46d73eca2c10e1a35d186f88acc80434
+    audited_head_sha: e482dd1d46d73eca2c10e1a35d186f88acc80434
+    audit_verdict: CHANGES
     pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/2
-    native_verification: blocked; no Rust toolchain on the worker machine
+    native_verification: blocked; no Rust toolchain in either the worker or the auditor environment
   - id: HAM3-002
     title: Supabase project memory and owner access
     state: in_design
