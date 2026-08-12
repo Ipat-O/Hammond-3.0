@@ -47,3 +47,16 @@
 - Recorded D-010, superseding D-008, and D-011, establishing sequential delivery and superseding the concurrent-dispatch allowance.
 - Luna's exact harness and model version were not supplied and were not invented. Routing is recorded at family level; exact identity is bound per work order at dispatch.
 - No task state changed. HAM3-001 remains `ready_for_development`. No implementation branch, pull request, dispatch, or audit evidence exists.
+
+## 2026-08-12 — HAM3-001 dispatched, delivered, and accepted into review
+
+- The HAM3-001 work order was issued against exact `dev` head `beb106a335a4943c5b3f3f0298da86054b66e90a` with the worker's exact tool and model left unfilled.
+- The worker correctly refused to execute on an unverifiable identity and returned its own: OpenAI / Codex Desktop / GPT-5. The packet was completed with those values and re-issued. "Luna" is retained as the planning alias for this execution family; the exact identity is bound per work order.
+- Worker delivered on branch `openai/HAM3-001-desktop-foundation`, head `e482dd1d46d73eca2c10e1a35d186f88acc80434`, draft PR https://github.com/Ipat-O/Hammond-3.0/pull/2.
+- Evidence intake verified by the orchestrator against the repository rather than accepted from the report: head SHA exists and matches the pushed branch; the packet base SHA is a true ancestor of the head; the branch carries exactly one commit; the PR is a draft targeting `dev`, is mergeable, and names the task; the worktree is clean; `tracker/` was not modified.
+- Product-boundary check passed: `tauri.conf.json` uses `devUrl` for development only and `frontendDist` for packaged builds, so the packaged application requires no browser server. No bridge or polling architecture was introduced. D-001 is satisfied.
+- The worker's reported limitation was independently confirmed: `cargo` and `rustc` are absent from the worker machine. The worker reported the blocker rather than substituting a browser-only build, as the packet required. This is an infrastructure failure, not a product defect.
+- Consequently the entire native half of HAM3-001 is unverified: no Rust compile, clippy, `cargo test`, or `tauri build` has ever run. Rust unit tests exist in `src-tauri/src/` but have never been executed. No `Cargo.lock` is committed, which blocks reproducible native builds.
+- Acceptance criterion "a clean checkout can install, test, build, and open a desktop window" is therefore not yet demonstrated, and the human check remains outstanding.
+- HAM3-001 moved from `ready_for_development` to `in_review`. The audit packet is bound to exact head `e482dd1d46d73eca2c10e1a35d186f88acc80434` and requires the auditor to attempt the Rust toolchain and report explicitly if it is also unavailable.
+- Incidental: the worker's formatting pass corrected a markdown defect the preceding governance commit introduced in `README.md`.

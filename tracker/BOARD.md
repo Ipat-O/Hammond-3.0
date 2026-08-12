@@ -20,7 +20,7 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## ready_for_development
 
-- [HAM3-001](./tasks/HAM3-001.md) — Desktop application foundation
+None.
 
 ## in_development
 
@@ -28,7 +28,8 @@ None.
 
 ## in_review
 
-None.
+- [HAM3-001](./tasks/HAM3-001.md) — Desktop application foundation  
+  PR [#2](https://github.com/Ipat-O/Hammond-3.0/pull/2) · reviewed head `e482dd1d46d73eca2c10e1a35d186f88acc80434` · auditor Kilo Code / DeepSeek V4 Pro
 
 ## testing
 

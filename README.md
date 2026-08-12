@@ -22,6 +22,7 @@ It remembers projects, tasks, comments, versioned instruction templates, and exa
 - DeepSeek V4 Pro through Kilo Code: implementation worker or auditor as routed per task.
 
 The orchestrator and the Sonnet participant share a provider and tool, differing only by model. Audit independence therefore rests on the routing matrix, which is enforced per task rather than assumed from provider identity.
+
 - Git: authority for code, commits, issues, PRs, exact SHAs, and posted reports.
 - Hammond: authority for project/task state, instruction versions, dispatch history, and evidence presentation.
 
