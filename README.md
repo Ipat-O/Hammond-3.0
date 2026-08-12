@@ -4,6 +4,32 @@ Hammond 3.0 is a single-owner desktop project tracker and instruction manager.
 
 It remembers projects, tasks, comments, versioned instruction templates, and exact-SHA delivery evidence in Supabase. It opens local directories directly and writes the selected Codex, Claude, or Kilo instructions into them. Agents perform Git and GitHub work using their own harnesses; Hammond presents and validates the returned workflow evidence.
 
+## Desktop foundation
+
+The application is a Tauri desktop shell with a React and TypeScript frontend. Vite is used for
+the local development/build step; packaged Tauri builds load the generated frontend directly and
+do not require a browser server.
+
+```text
+src/                       React shell and typed frontend command adapters
+src-tauri/                 Rust/Tauri application shell and native command entry points
+docs/MODULE_BOUNDARIES.md  UI, native, Supabase, and local-settings seams
+```
+
+Install dependencies and run the focused checks with:
+
+```sh
+npm install
+npm run test
+npm run typecheck
+npm run lint
+npm run format:check
+npm run tauri:dev
+```
+
+See [module boundaries](./docs/MODULE_BOUNDARIES.md) before adding filesystem, Supabase, or local
+settings behavior.
+
 ## Canonical planning documents
 
 - [Architecture](./docs/ARCHITECTURE.md)
@@ -22,6 +48,7 @@ It remembers projects, tasks, comments, versioned instruction templates, and exa
 - DeepSeek V4 Pro through Kilo Code: implementation worker or auditor as routed per task.
 
 The orchestrator and the Sonnet participant share a provider and tool, differing only by model. Audit independence therefore rests on the routing matrix, which is enforced per task rather than assumed from provider identity.
+
 - Git: authority for code, commits, issues, PRs, exact SHAs, and posted reports.
 - Hammond: authority for project/task state, instruction versions, dispatch history, and evidence presentation.
 
