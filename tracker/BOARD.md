@@ -6,7 +6,6 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## in_design
 
-- [HAM3-001](./tasks/HAM3-001.md) — Desktop application foundation
 - [HAM3-002](./tasks/HAM3-002.md) — Supabase project memory and owner access
 - [HAM3-003](./tasks/HAM3-003.md) — Local directory contexts and bindings
 - [HAM3-004](./tasks/HAM3-004.md) — Core project and task tracker
@@ -21,7 +20,7 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## ready_for_development
 
-None.
+- [HAM3-001](./tasks/HAM3-001.md) — Desktop application foundation
 
 ## in_development
 

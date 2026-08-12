@@ -8,7 +8,7 @@ initial_state: in_design
 tasks:
   - id: HAM3-001
     title: Desktop application foundation
-    state: in_design
+    state: ready_for_development
     depends_on: []
     worker: Claude Code / Claude Sonnet 5
     auditor: Kilo Code / DeepSeek V4 Pro

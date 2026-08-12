@@ -27,3 +27,12 @@
 - Generated work orders were kept local through `.git/info/exclude`, consistent with the approved instruction model.
 - The approved planning documents were committed as the repository baseline.
 - Remote creation remains pending; HAM3-001 stays `in_design` until a pushable remote is configured and the final dispatch SHA is verified.
+
+## 2026-08-12 — HAM3-001 cleared for development
+
+- Created the public GitHub repository `Ipat-O/Hammond-3.0` with `dev` as its default branch.
+- Pushed the local planning baseline and verified the exact remote `dev` head.
+- Created GitHub issue #1 for HAM3-001: `https://github.com/Ipat-O/Hammond-3.0/issues/1`.
+- Completed design control by recording expected implementation boundaries and focused verification.
+- Promoted HAM3-001 from `in_design` to `ready_for_development`; all dependent tasks remain `in_design`.
+- Dispatch remains a manual owner transfer to Claude Code / Claude Sonnet 5. No implementation has started yet.
