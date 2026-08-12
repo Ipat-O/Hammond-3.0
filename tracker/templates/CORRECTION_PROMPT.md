@@ -1,12 +1,12 @@
 # Hammond 3.0 Correction Prompt Template
 
-Correction returns to the original worker. The previous auditor remains the auditor for the resulting new head unless Sol records a human routing override.
+Correction returns to the original worker. The previous auditor remains the auditor for the resulting new head unless the orchestrator records a human routing override.
 
 ```yaml
 task_id: <task-id>
 stage: correction
 correction: <number>
-active_orchestrator: OpenAI / Codex Desktop / GPT-5.6 Sol
+active_orchestrator: Anthropic / Claude Code / Claude Opus 5
 assigned_worker: <original-worker-provider/tool/model>
 assigned_reauditor: <other-provider/tool/model>
 previous_head_sha: <sha>

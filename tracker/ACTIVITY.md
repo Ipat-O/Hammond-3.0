@@ -36,3 +36,14 @@
 - Completed design control by recording expected implementation boundaries and focused verification.
 - Promoted HAM3-001 from `in_design` to `ready_for_development`; all dependent tasks remain `in_design`.
 - Dispatch remains a manual owner transfer to Claude Code / Claude Sonnet 5. No implementation has started yet.
+
+## 2026-08-12 — Orchestrator transfer and routing revision
+
+- The owner transferred the active orchestrator role from OpenAI / Codex Desktop / GPT-5.6 Sol to Anthropic / Claude Code / Claude Opus 5.
+- The incoming orchestrator initially returned `BLOCKED`: the transfer packet specified the Claude Opus family, but the session was running Claude Sonnet 5, which is also a designated worker and auditor identity. The owner switched the model to Claude Opus 5, clearing the mismatch, and the transfer was accepted.
+- Canonical orchestrator identity updated across the README, workflow, board, task index, all twelve task files, and the worker, auditor, and correction templates. Historical activity entries were left unchanged.
+- The owner replaced the Sonnet worker assignment with OpenAI / Luna and directed a full re-plan of the routing matrix across three execution families.
+- Routing rebuilt: OpenAI / Luna, Claude Code / Claude Sonnet 5, and Kilo Code / DeepSeek V4 Pro each work four tasks and audit four. All twelve rows were checked so that no task is audited by its author's family.
+- Recorded D-010, superseding D-008, and D-011, establishing sequential delivery and superseding the concurrent-dispatch allowance.
+- Luna's exact harness and model version were not supplied and were not invented. Routing is recorded at family level; exact identity is bound per work order at dispatch.
+- No task state changed. HAM3-001 remains `ready_for_development`. No implementation branch, pull request, dispatch, or audit evidence exists.

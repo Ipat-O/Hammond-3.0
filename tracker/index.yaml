@@ -1,41 +1,49 @@
 project: Hammond 3.0
 active_orchestrator:
-  provider: OpenAI
-  tool: Codex Desktop
-  model: GPT-5.6 Sol
+  provider: Anthropic
+  tool: Claude Code
+  model: Claude Opus 5
 default_base_branch: dev
 initial_state: in_design
+execution_order: sequential
+# Worker and auditor are recorded at execution-family level. The exact harness
+# and model version are bound in each work order at dispatch time, alongside the
+# exact start SHA.
+execution_families:
+  - OpenAI / Luna
+  - Claude Code / Claude Sonnet 5
+  - Kilo Code / DeepSeek V4 Pro
 tasks:
   - id: HAM3-001
     title: Desktop application foundation
     state: ready_for_development
     depends_on: []
-    worker: Claude Code / Claude Sonnet 5
+    worker: OpenAI / Luna
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-002
     title: Supabase project memory and owner access
     state: in_design
     depends_on: [HAM3-001]
-    worker: Kilo Code / DeepSeek V4 Pro
-    auditor: Claude Code / Claude Sonnet 5
+    worker: Claude Code / Claude Sonnet 5
+    auditor: OpenAI / Luna
   - id: HAM3-003
     title: Local directory contexts and bindings
     state: in_design
     depends_on: [HAM3-001]
-    worker: Claude Code / Claude Sonnet 5
-    auditor: Kilo Code / DeepSeek V4 Pro
+    worker: Kilo Code / DeepSeek V4 Pro
+    auditor: Claude Code / Claude Sonnet 5
   - id: HAM3-004
     title: Core project and task tracker
     state: in_design
     depends_on: [HAM3-002]
-    worker: Kilo Code / DeepSeek V4 Pro
-    auditor: Claude Code / Claude Sonnet 5
+    worker: OpenAI / Luna
+    auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-005
     title: Versioned instruction template domain
     state: in_design
     depends_on: [HAM3-002]
     worker: Claude Code / Claude Sonnet 5
-    auditor: Kilo Code / DeepSeek V4 Pro
+    auditor: OpenAI / Luna
   - id: HAM3-006
     title: Harness adapters and managed-file injection
     state: in_design
@@ -46,32 +54,32 @@ tasks:
     title: Instruction Studio UI
     state: in_design
     depends_on: [HAM3-005, HAM3-006]
-    worker: Claude Code / Claude Sonnet 5
+    worker: OpenAI / Luna
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-008
     title: Project home, directory switching, and resume
     state: in_design
     depends_on: [HAM3-003, HAM3-004, HAM3-006]
-    worker: Kilo Code / DeepSeek V4 Pro
-    auditor: Claude Code / Claude Sonnet 5
+    worker: Claude Code / Claude Sonnet 5
+    auditor: OpenAI / Luna
   - id: HAM3-009
     title: Work-order generation and dispatch records
     state: in_design
     depends_on: [HAM3-004, HAM3-005]
-    worker: Claude Code / Claude Sonnet 5
-    auditor: Kilo Code / DeepSeek V4 Pro
+    worker: Kilo Code / DeepSeek V4 Pro
+    auditor: Claude Code / Claude Sonnet 5
   - id: HAM3-010
     title: Exact-SHA evidence and approval workflow
     state: in_design
     depends_on: [HAM3-004]
-    worker: Kilo Code / DeepSeek V4 Pro
-    auditor: Claude Code / Claude Sonnet 5
+    worker: OpenAI / Luna
+    auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-011
     title: Tracker depth, activity, search, and export
     state: in_design
     depends_on: [HAM3-004, HAM3-009, HAM3-010]
     worker: Claude Code / Claude Sonnet 5
-    auditor: Kilo Code / DeepSeek V4 Pro
+    auditor: OpenAI / Luna
   - id: HAM3-012
     title: Integrated desktop release and human QA
     state: in_design

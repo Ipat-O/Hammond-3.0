@@ -7,12 +7,12 @@ task_id: <task-id>
 stage: implementation
 human_owner: <owner>
 active_orchestrator:
-  provider: OpenAI
-  tool: Codex Desktop
-  model: GPT-5.6 Sol
+  provider: Anthropic
+  tool: Claude Code
+  model: Claude Opus 5
 assigned_worker:
-  provider: <Anthropic-or-Kilo>
-  tool: <Claude-Code-or-Kilo-Code>
+  provider: <OpenAI-or-Anthropic-or-Kilo>
+  tool: <exact-harness>
   model: <exact-model>
 assigned_auditor_after_delivery:
   provider: <other-provider-family>
@@ -20,13 +20,13 @@ assigned_auditor_after_delivery:
   model: <exact-model>
 ```
 
-You are the assigned implementation worker. Sol is the orchestrator and does not write the feature. The named auditor does not participate in implementation and will review your exact pushed head after delivery.
+You are the assigned implementation worker. The orchestrator routes the workflow and does not write the feature. The named auditor does not participate in implementation and will review your exact pushed head after delivery.
 
 If your provider, tool, model, role, repository, branch, task, or orchestrator differs from this packet, stop and report the mismatch.
 
 ## Authority boundary
 
-The human owner and Sol control Hammond planning state. Do not read or edit `tracker/`, change task state, broaden scope, mark the PR ready, merge, or create follow-up tasks. This prompt is your complete context.
+The human owner and the orchestrator control Hammond planning state. Do not read or edit `tracker/`, change task state, broaden scope, mark the PR ready, merge, or create follow-up tasks. This prompt is your complete context.
 
 ## Delivery coordinates
 
@@ -36,13 +36,13 @@ remote_url: <url-or-not_available>
 issue_url: <url-or-not_available-and-reason>
 pull_request_url: <not_available-at-start>
 base_branch: dev
-work_branch: <provider/task-slug>
+work_branch: <worker-provider/task-slug>
 start_sha: <exact-sha>
 ```
 
 ## Verified facts
 
-<facts inspected by Sol immediately before dispatch>
+<facts inspected by the orchestrator immediately before dispatch>
 
 ## Scope
 
@@ -72,7 +72,7 @@ provider: <provider>
 tool: <tool>
 model: <model>
 role: worker
-active_orchestrator: OpenAI / Codex Desktop / GPT-5.6 Sol
+active_orchestrator: Anthropic / Claude Code / Claude Opus 5
 branch: <branch>
 base_sha: <sha>
 head_sha: <sha>

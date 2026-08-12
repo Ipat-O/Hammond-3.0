@@ -30,8 +30,28 @@ Worker delivery, cross-provider audit, stale approval after new commits, final v
 
 ## D-008 — Sol orchestrates; Sonnet and Kilo execute
 
+Superseded by D-010. Retained as the record of the arrangement in force before the orchestrator transfer.
+
 Sol plans, routes, records, and assesses readiness without writing feature code. Sonnet and Kilo alternate as implementation worker and independent auditor.
 
 ## D-009 — Focused verification by default
 
 Tasks run focused verification appropriate to the changed boundary. Full-suite execution is reserved for release/cross-cutting boundaries and is not repeated to compensate for uncertainty.
+
+## D-010 — Opus orchestrates; Luna, Sonnet, and DeepSeek execute
+
+Supersedes D-008.
+
+The owner transferred the active orchestrator role from OpenAI / Codex Desktop / GPT-5.6 Sol to Anthropic / Claude Code / Claude Opus 5. The orchestrator plans, routes, records, and assesses readiness without writing feature code, and never acts as worker or auditor on a task it orchestrates.
+
+Implementation rotates across three execution families: OpenAI / Luna, Claude Code / Claude Sonnet 5, and Kilo Code / DeepSeek V4 Pro. Each family works four of the twelve foundation tasks and audits four. No task is audited by its author's family.
+
+The orchestrator shares a provider and tool with the Sonnet participant, differing only by model. Audit independence is therefore a property of the routing matrix, enforced per task, and must not be inferred from provider identity. Any future orchestrator transfer must re-check this constraint rather than assume it.
+
+Execution identities are recorded at family level in the workflow and task index. The exact harness and model version are bound in each work order at dispatch time, alongside the exact start SHA, so a worker can verify itself against its packet.
+
+## D-011 — Sequential delivery
+
+Supersedes the concurrent-dispatch allowance in the original workflow.
+
+Exactly one task is dispatched at a time and must reach `merged` before the next is promoted to `ready_for_development`. Each work order therefore binds the current `dev` head at the moment it is issued. Concurrent dispatch, and the expected-file-ownership check it would require, is reintroduced only by explicit owner authorization.

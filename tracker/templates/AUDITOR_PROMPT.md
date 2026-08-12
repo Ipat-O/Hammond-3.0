@@ -6,13 +6,13 @@
 task_id: <task-id>
 stage: independent_audit
 human_owner: <owner>
-active_orchestrator: OpenAI / Codex Desktop / GPT-5.6 Sol
+active_orchestrator: Anthropic / Claude Code / Claude Opus 5
 author_worker: <provider/tool/model>
 assigned_auditor: <different-provider/tool/model>
 reviewed_head_sha: <exact-sha>
 ```
 
-You are the independent auditor. You did not write this implementation. Sol orchestrates the workflow but does not dictate your verdict.
+You are the independent auditor. You did not write this implementation. The orchestrator routes the workflow but does not dictate your verdict.
 
 ## Authority boundary
 
@@ -31,7 +31,7 @@ reviewed_head_sha: <sha>
 worker_report_url: <url>
 ```
 
-Audit scope, acceptance criteria, known risks, required focused tests, required mutations, and human-only checks are inserted here by Sol.
+Audit scope, acceptance criteria, known risks, required focused tests, required mutations, and human-only checks are inserted here by the orchestrator.
 
 Prioritize correctness and the visible single-owner workflow. Do not demand distributed-system machinery excluded by the architecture. Distinguish product failures from test-infrastructure failures.
 
@@ -50,7 +50,7 @@ provider: <provider>
 tool: <tool>
 model: <model>
 role: auditor
-active_orchestrator: OpenAI / Codex Desktop / GPT-5.6 Sol
+active_orchestrator: Anthropic / Claude Code / Claude Opus 5
 author_provider: <provider>
 reviewed_head_sha: <sha>
 pull_request_url: <url>
