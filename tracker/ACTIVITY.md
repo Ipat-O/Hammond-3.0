@@ -19,3 +19,11 @@
 - Repository preflight at `C:\Users\owczy\Desktop\repos\Hammond 3.0` found no Git metadata, `dev` branch, remote, or exact start SHA.
 - HAM3-001 remains `in_design`. Its work order now records the known local path and the exact Git bootstrap blocker.
 - No task was promoted, no implementation agent was dispatched, and no delivery evidence was created.
+
+## 2026-08-12 — Local Git baseline established
+
+- The owner authorized repository bootstrap.
+- Sol initialized the local repository with `dev` as the delivery branch.
+- Generated work orders were kept local through `.git/info/exclude`, consistent with the approved instruction model.
+- The approved planning documents were committed as the repository baseline.
+- Remote creation remains pending; HAM3-001 stays `in_design` until a pushable remote is configured and the final dispatch SHA is verified.
