@@ -19,8 +19,7 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## ready_for_development
 
-- [HAM3-002](./tasks/HAM3-002.md) — Supabase project memory and owner access  
-  Branch `openai/HAM3-002-supabase-memory` · worker OpenAI / Codex Desktop / GPT-5 · auditor Kilo Code / DeepSeek V4 Pro · base SHA rebound at dispatch
+None.
 
 ## in_development
 
@@ -28,7 +27,8 @@ None.
 
 ## in_review
 
-None.
+- [HAM3-002](./tasks/HAM3-002.md) — Supabase project memory and owner access  
+  PR [#3](https://github.com/Ipat-O/Hammond-3.0/pull/3) · reviewed head `acd0b5e99013b89aaf6d323727ac81dfe01b9bdc` · auditor Kilo Code / DeepSeek V4 Pro
 
 ## testing
 

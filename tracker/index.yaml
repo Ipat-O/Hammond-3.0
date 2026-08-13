@@ -39,15 +39,18 @@ tasks:
     human_check: passed; the owner ran the release executable at 0eec339 and observed the Hammond shell
   - id: HAM3-002
     title: Supabase project memory and owner access
-    state: ready_for_development
+    state: in_review
     depends_on: [HAM3-001]
     worker: OpenAI / Luna
     auditor: Kilo Code / DeepSeek V4 Pro
     dispatched_worker_identity: OpenAI / Codex Desktop / GPT-5
     dispatched_auditor_identity: Kilo / Kilo Code / DeepSeek V4 Pro
     branch: openai/HAM3-002-supabase-memory
-    base_sha: c35c4dc647d3a9a75db0b444ff74f9deaafe9d66
+    base_sha: 8aa7e5bf79e0ee60ef20efc9ef6ea7370ceb7f85
+    head_sha: acd0b5e99013b89aaf6d323727ac81dfe01b9bdc
+    pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/3
     owner_prerequisites: satisfied; Docker daemon running at 29.7.2 and .env.local present with the Vite Supabase variables
+    outstanding: hosted project configured and reachable but migrations not pushed; no Supabase CLI management session or database credential was supplied
   - id: HAM3-003
     title: Local directory contexts and bindings
     state: in_design
