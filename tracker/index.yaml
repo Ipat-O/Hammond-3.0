@@ -67,13 +67,18 @@ tasks:
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-004
     title: Core project and task tracker
-    state: ready_for_development
+    state: in_review
     depends_on: [HAM3-002]
     worker: OpenAI / Luna
     auditor: Kilo Code / DeepSeek V4 Pro
     dispatched_worker_identity: OpenAI / Codex Desktop / GPT-5
     dispatched_auditor_identity: Kilo / Kilo Code / DeepSeek V4 Pro
     branch: openai/HAM3-004-core-tracker
+    base_sha: 78ff3d5f07bba22a4d2d88ca8a84133739c86a8c
+    head_sha: d0f775e21b31690eeacea026e11ffeaa71dd124f
+    pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/4
+    migration_added: 20260813120000_expand_tracker_fields.sql; adds merged and shipped to the task status enum, archived_at on projects and tasks, parent_task_id with a self-parent check and a composite owner and project foreign key, and a parent index
+    outstanding: the new migration is local only and has not been pushed to the hosted project; the owner human check through the UI depends on it
   - id: HAM3-005
     title: Versioned instruction template domain
     state: in_design

@@ -18,8 +18,7 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## ready_for_development
 
-- [HAM3-004](./tasks/HAM3-004.md) — Core project and task tracker  
-  Branch `openai/HAM3-004-core-tracker` · worker OpenAI / Codex Desktop / GPT-5 · auditor Kilo Code / DeepSeek V4 Pro · base SHA bound at dispatch
+None.
 
 ## in_development
 
@@ -27,7 +26,8 @@ None.
 
 ## in_review
 
-None.
+- [HAM3-004](./tasks/HAM3-004.md) — Core project and task tracker  
+  PR [#4](https://github.com/Ipat-O/Hammond-3.0/pull/4) · reviewed head `d0f775e21b31690eeacea026e11ffeaa71dd124f` · auditor Kilo Code / DeepSeek V4 Pro · adds a schema migration not yet pushed to hosted
 
 ## testing
 
