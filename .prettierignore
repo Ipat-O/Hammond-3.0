@@ -5,3 +5,4 @@ src-tauri/gen/
 supabase/.temp/
 package-lock.json
 tracker/
+.kilo/

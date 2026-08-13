@@ -201,6 +201,7 @@ export type Database = {
       };
       projects: {
         Row: {
+          archived_at: string | null;
           created_at: string;
           description: string;
           id: string;
@@ -209,6 +210,7 @@ export type Database = {
           updated_at: string;
         };
         Insert: {
+          archived_at?: string | null;
           created_at?: string;
           description?: string;
           id?: string;
@@ -217,6 +219,7 @@ export type Database = {
           updated_at?: string;
         };
         Update: {
+          archived_at?: string | null;
           created_at?: string;
           description?: string;
           id?: string;
@@ -317,11 +320,13 @@ export type Database = {
       };
       tasks: {
         Row: {
+          archived_at: string | null;
           created_at: string;
           description: string;
           due_at: string | null;
           id: string;
           owner_id: string;
+          parent_task_id: string | null;
           priority: number;
           project_id: string;
           status: Database['public']['Enums']['task_status'];
@@ -329,11 +334,13 @@ export type Database = {
           updated_at: string;
         };
         Insert: {
+          archived_at?: string | null;
           created_at?: string;
           description?: string;
           due_at?: string | null;
           id?: string;
           owner_id?: string;
+          parent_task_id?: string | null;
           priority?: number;
           project_id: string;
           status?: Database['public']['Enums']['task_status'];
@@ -341,11 +348,13 @@ export type Database = {
           updated_at?: string;
         };
         Update: {
+          archived_at?: string | null;
           created_at?: string;
           description?: string;
           due_at?: string | null;
           id?: string;
           owner_id?: string;
+          parent_task_id?: string | null;
           priority?: number;
           project_id?: string;
           status?: Database['public']['Enums']['task_status'];
@@ -353,6 +362,13 @@ export type Database = {
           updated_at?: string;
         };
         Relationships: [
+          {
+            foreignKeyName: 'tasks_parent_project_owner_fkey';
+            columns: ['parent_task_id', 'owner_id', 'project_id'];
+            isOneToOne: false;
+            referencedRelation: 'tasks';
+            referencedColumns: ['id', 'owner_id', 'project_id'];
+          },
           {
             foreignKeyName: 'tasks_project_id_owner_id_fkey';
             columns: ['project_id', 'owner_id'];
@@ -373,7 +389,15 @@ export type Database = {
       instruction_role: 'orchestrator' | 'worker' | 'auditor';
       provider_family: 'codex' | 'claude_code' | 'kilo_code';
       task_relation_kind: 'depends_on' | 'blocks' | 'relates_to' | 'duplicates';
-      task_status: 'backlog' | 'ready' | 'in_progress' | 'blocked' | 'done' | 'cancelled';
+      task_status:
+        | 'backlog'
+        | 'ready'
+        | 'in_progress'
+        | 'blocked'
+        | 'done'
+        | 'cancelled'
+        | 'merged'
+        | 'shipped';
     };
     CompositeTypes: {
       [_ in never]: never;
@@ -498,7 +522,16 @@ export const Constants = {
       instruction_role: ['orchestrator', 'worker', 'auditor'],
       provider_family: ['codex', 'claude_code', 'kilo_code'],
       task_relation_kind: ['depends_on', 'blocks', 'relates_to', 'duplicates'],
-      task_status: ['backlog', 'ready', 'in_progress', 'blocked', 'done', 'cancelled'],
+      task_status: [
+        'backlog',
+        'ready',
+        'in_progress',
+        'blocked',
+        'done',
+        'cancelled',
+        'merged',
+        'shipped',
+      ],
     },
   },
 } as const;

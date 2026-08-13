@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseClient } from './client';
 import type { Database } from './database.types';
 import { assertNoAbsoluteLocalPaths } from './pathGuard';
+import { assertNoParentCycle, assertValidTaskStatus } from './taskValidation';
 
 type Tables = Database['public']['Tables'];
 type ProjectInsert = Tables['projects']['Insert'];
@@ -10,18 +11,19 @@ type ProjectUpdate = Tables['projects']['Update'];
 type TaskInsert = Tables['tasks']['Insert'];
 type TaskUpdate = Tables['tasks']['Update'];
 
-function dataOrThrow<T>(result: { data: T; error: Error | null }): T {
+function dataOrThrow<T>(result: { data: T; error: Error | null }): NonNullable<T> {
   if (result.error) throw result.error;
-  return result.data;
+  if (result.data === null) throw new Error('Supabase returned no data');
+  return result.data as NonNullable<T>;
 }
 
 export class ProjectRepository {
   constructor(private readonly client: SupabaseClient<Database> = getSupabaseClient()) {}
 
-  async list() {
-    return dataOrThrow(
-      await this.client.from('projects').select('*').order('updated_at', { ascending: false }),
-    );
+  async list(options: { includeArchived?: boolean } = {}) {
+    let query = this.client.from('projects').select('*').order('updated_at', { ascending: false });
+    if (!options.includeArchived) query = query.is('archived_at', null);
+    return dataOrThrow(await query);
   }
   async create(input: ProjectInsert) {
     assertNoAbsoluteLocalPaths(input);
@@ -38,28 +40,56 @@ export class ProjectRepository {
       await this.client.from('projects').delete().eq('id', id).select('id').single(),
     );
   }
+
+  async archive(id: string) {
+    return this.update(id, { archived_at: new Date().toISOString() });
+  }
 }
 
 export class TaskRepository {
   constructor(private readonly client: SupabaseClient<Database> = getSupabaseClient()) {}
 
-  async list(projectId: string) {
-    return dataOrThrow(
-      await this.client.from('tasks').select('*').eq('project_id', projectId).order('created_at'),
-    );
+  async list(projectId: string, options: { includeArchived?: boolean } = {}) {
+    let query = this.client
+      .from('tasks')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('created_at');
+    if (!options.includeArchived) query = query.is('archived_at', null);
+    return dataOrThrow(await query);
   }
   async create(input: TaskInsert) {
     assertNoAbsoluteLocalPaths(input);
+    if (input.status !== undefined) assertValidTaskStatus(input.status);
+    if (input.parent_task_id && input.id) {
+      const existingTasks = await this.list(input.project_id, { includeArchived: true });
+      assertNoParentCycle(existingTasks, input.id, input.parent_task_id);
+    }
     return dataOrThrow(await this.client.from('tasks').insert(input).select().single());
   }
   async update(id: string, input: TaskUpdate) {
     assertNoAbsoluteLocalPaths(input);
+    if (input.status !== undefined) assertValidTaskStatus(input.status);
+    if (input.parent_task_id !== undefined || input.project_id !== undefined) {
+      const projectId = input.project_id ?? (await this.findProjectId(id));
+      const existingTasks = await this.list(projectId, { includeArchived: true });
+      assertNoParentCycle(existingTasks, id, input.parent_task_id ?? null);
+    }
     return dataOrThrow(
       await this.client.from('tasks').update(input).eq('id', id).select().single(),
     );
   }
   async remove(id: string) {
     return dataOrThrow(await this.client.from('tasks').delete().eq('id', id).select('id').single());
+  }
+
+  async archive(id: string) {
+    return this.update(id, { archived_at: new Date().toISOString() });
+  }
+
+  private async findProjectId(id: string): Promise<string> {
+    return dataOrThrow(await this.client.from('tasks').select('project_id').eq('id', id).single())
+      .project_id;
   }
 }
 
