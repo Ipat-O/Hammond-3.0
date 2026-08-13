@@ -78,7 +78,11 @@ tasks:
     head_sha: d0f775e21b31690eeacea026e11ffeaa71dd124f
     pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/4
     migration_added: 20260813120000_expand_tracker_fields.sql; adds merged and shipped to the task status enum, archived_at on projects and tasks, parent_task_id with a self-parent check and a composite owner and project foreign key, and a parent index
-    outstanding: the new migration is local only and has not been pushed to the hosted project; the owner human check through the UI depends on it
+    audited_head_sha: d0f775e21b31690eeacea026e11ffeaa71dd124f
+    audit_verdict: APPROVE
+    audit_report: not_available; the auditor could not post to the pull request and returned its structured verdict block directly
+    cycle_prevention: database prevents self-parenting only; multi-level cycles are prevented in application code and accepted by the auditor under a single-writer threat model, to be revisited as a database trigger only if Hammond gains multiple writers, shared projects, or a public API
+    outstanding: the new migration must be pushed to the hosted project before merge, per the auditor; the owner human check through the UI depends on it
   - id: HAM3-005
     title: Versioned instruction template domain
     state: in_design

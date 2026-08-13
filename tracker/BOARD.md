@@ -26,12 +26,12 @@ None.
 
 ## in_review
 
-- [HAM3-004](./tasks/HAM3-004.md) — Core project and task tracker  
-  PR [#4](https://github.com/Ipat-O/Hammond-3.0/pull/4) · reviewed head `d0f775e21b31690eeacea026e11ffeaa71dd124f` · auditor Kilo Code / DeepSeek V4 Pro · adds a schema migration not yet pushed to hosted
+None.
 
 ## testing
 
-None.
+- [HAM3-004](./tasks/HAM3-004.md) — Core project and task tracker  
+  PR [#4](https://github.com/Ipat-O/Hammond-3.0/pull/4) · approved head `d0f775e21b31690eeacea026e11ffeaa71dd124f` · hosted migration must be pushed before merge · human check outstanding
 
 ## merged
 
