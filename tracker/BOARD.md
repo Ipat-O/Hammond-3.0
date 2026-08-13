@@ -23,7 +23,7 @@ None.
 ## in_development
 
 - [HAM3-013](./tasks/HAM3-013.md) — Task hierarchy outliner
-  Correction 2 required after owner check reproduced create-mode false rejection at approved head `6b7269ccce71d0d8069bc7706970a62817fda4d4`
+  Correction 2 assigned by owner override to Claude Code / Claude Sonnet 5 after the owner check reproduced create-mode false rejection at approved head `6b7269ccce71d0d8069bc7706970a62817fda4d4`
 
 ## in_review
 

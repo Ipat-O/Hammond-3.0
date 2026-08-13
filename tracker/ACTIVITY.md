@@ -369,3 +369,11 @@
 - Safety remains intact. Repository create validates the full stored task set without a moving id, so invalid depth cannot persist. The defect is an over-restrictive UI pre-check that blocks a legal operation.
 - PR #5 was re-verified open, draft, mergeable, and still headed by `6b7269ccce71d0d8069bc7706970a62817fda4d4`. No unauthorized commit or merge occurred.
 - HAM3-013 moved from `testing` to `in_development` for Correction 2 by the original OpenAI / Luna worker on the same branch and PR. Any new head invalidates the round-2 approval for merge purposes and requires DeepSeek audit round 3.
+
+## 2026-08-13 — HAM3-013 Correction 2 reassigned to Sonnet 5
+
+- The owner overrode the default correction routing and reassigned Correction 2 from OpenAI / Luna to Anthropic / Claude Code / Claude Sonnet 5.
+- This is an explicit human routing override permitted by the correction workflow. The change restores provider-family separation between the OpenAI orchestrator and the correction worker; Kilo Code / DeepSeek V4 Pro remains the independent auditor for round 3.
+- Sonnet must continue from exact head `6b7269ccce71d0d8069bc7706970a62817fda4d4` on the existing `openai/HAM3-013-hierarchy-outliner` branch and PR #5. The branch prefix records the task's historical OpenAI authorship and is not changed mid-flight.
+- Live GitHub state was re-verified before rebinding: PR #5 is open, draft, mergeable, targets `dev`, and still has exact head `6b7269c`. No implementation commit has arrived since the failed owner check.
+- The Correction 2 packet now binds Anthropic / Claude Code / Claude Sonnet 5. No feature code was changed by the orchestrator.

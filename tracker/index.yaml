@@ -166,6 +166,8 @@ tasks:
     audit_observation: the shared UI save pre-check may falsely reject adding another child under a selected parent that already has children; repository create remains correct and no invalid nesting can persist
     human_check: failed at 6b7269ccce71d0d8069bc7706970a62817fda4d4; ordinary + child create mode falsely rejected a legal child under a selected parent that already had a child
     correction_2_required: scope the moving task id and edited-task filtering to edit mode only; create mode must validate the full existing task set with no moving id
+    correction_2_worker: Anthropic / Claude Code / Claude Sonnet 5
+    correction_2_routing: owner override from the original OpenAI worker; continue on the existing openai-prefixed branch and PR because the name records historical provenance
     next_audit_round: 3
     next_audit_condition: after Correction 2 produces a new pushed head
     design_decision: D-013
