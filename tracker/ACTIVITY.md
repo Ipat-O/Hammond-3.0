@@ -111,3 +111,13 @@
 - Orchestrator readiness check completed: the branch head still equals the approved SHA so the approval is current; the PR targets `dev`, names the task, and carries matching provenance; a local merge dry-run against `dev` at `d74c2578a9d679a9172b8ef1742a6fb8c11cb455` produced no conflicts across 29 application files and would not disturb the tracker records on `dev`.
 - Stage 7 exact-head validation is treated as satisfied by the auditor's from-scratch run rather than repeated. Per D-009, focused verification is the default and a full suite is not re-executed to compensate for uncertainty when an independent party has already executed it at the exact head.
 - HAM3-001 moved from `in_review` to `testing`. It awaits two owner actions that the orchestrator will not take unilaterally: marking PR #2 ready for review, and authorizing the merge. Neither worker nor auditor merges its own work.
+
+## 2026-08-12 — HAM3-001 merged
+
+- The owner authorized the merge. PR #2 was marked ready and merged into `dev` as merge commit `757c58d7b67cdacb0bf442b43d4a68d6a9bdc8c8`.
+- A merge commit was used rather than a squash, deliberately. Squashing would have rewritten the three worker commits into a new SHA that no audit ever reviewed, breaking the chain between the approved head and what landed. Verified after the fact: `0eec339c586fc65685d0de531c64315cb716a563` is an ancestor of `dev`, and `e482dd1`, `e7f3abf`, and `0eec339` all remain individually addressable in history.
+- The branch head was re-checked immediately before merging and still equalled the approved SHA, so no commit arrived between approval and merge.
+- HAM3-001 is the first Hammond 3.0 task to complete the full governance cycle: design control, exact-base dispatch, delivery, cross-family audit, two corrections, re-audit, independent exact-head validation, human check, and owner-authorized merge.
+- Delivery record: worker OpenAI / Codex Desktop / GPT-5; auditor Kilo Code / DeepSeek V4 Pro; orchestrator Anthropic / Claude Code / Claude Opus 5. No participant audited or merged its own work.
+- HAM3-001 is `merged`, not `shipped`. `shipped` requires the owner to observe the capability in the packaged application built from merged `dev`. The earlier human check was performed against the pre-merge branch build and is deliberately not carried forward to satisfy this.
+- HAM3-002 and HAM3-003 are now unblocked by dependency. Under D-011 exactly one is promoted at a time; neither has been promoted, and no work order has been prepared.

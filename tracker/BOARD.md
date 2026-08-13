@@ -32,12 +32,12 @@ None.
 
 ## testing
 
-- [HAM3-001](./tasks/HAM3-001.md) — Desktop application foundation  
-  PR [#2](https://github.com/Ipat-O/Hammond-3.0/pull/2) · approved head `0eec339c586fc65685d0de531c64315cb716a563` · exact-head validation complete · human check passed · awaiting owner-authorized merge
+None.
 
 ## merged
 
-None.
+- [HAM3-001](./tasks/HAM3-001.md) — Desktop application foundation  
+  PR [#2](https://github.com/Ipat-O/Hammond-3.0/pull/2) · approved head `0eec339c586fc65685d0de531c64315cb716a563` · merge commit `757c58d7b67cdacb0bf442b43d4a68d6a9bdc8c8` · awaiting owner observation in the packaged app to become `shipped`
 
 ## shipped
 

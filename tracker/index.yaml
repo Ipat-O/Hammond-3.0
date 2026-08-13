@@ -16,8 +16,9 @@ execution_families:
 tasks:
   - id: HAM3-001
     title: Desktop application foundation
-    state: testing
+    state: merged
     corrections_completed: 2
+    merge_commit: 757c58d7b67cdacb0bf442b43d4a68d6a9bdc8c8
     depends_on: []
     worker: OpenAI / Luna
     auditor: Kilo Code / DeepSeek V4 Pro
