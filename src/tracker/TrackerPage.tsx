@@ -645,9 +645,10 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
       return;
     }
     if (!selectedProject) return;
+    const editingTask = taskEditor === 'edit' ? selectedTask : null;
     try {
-      const existingTasks = tasks.filter((task) => task.id !== selectedTask?.id);
-      assertTaskDepth(existingTasks, draft.parent_task_id, selectedTask?.id);
+      const existingTasks = editingTask ? tasks.filter((task) => task.id !== editingTask.id) : tasks;
+      assertTaskDepth(existingTasks, draft.parent_task_id, editingTask?.id);
     } catch (error) {
       setTaskSaveError(errorMessage(error));
       return;
@@ -655,7 +656,6 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
     setTaskSaving(true);
     setTaskSaveError(null);
     setTaskRetry(null);
-    const editingTask = taskEditor === 'edit' ? selectedTask : null;
     const existingTaskDraft = taskEditor === 'new' && selectedTask?.id.startsWith('draft-task-') ? selectedTask : null;
     const optimisticId = editingTask?.id ?? existingTaskDraft?.id ?? draftId('task');
     const optimisticTask: Task = {

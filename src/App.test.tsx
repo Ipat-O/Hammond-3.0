@@ -221,6 +221,36 @@ describe('Hammond tracker workspace', () => {
     expect(services.repositories.tasks.archive).not.toHaveBeenCalled();
   });
 
+  it('creates a second child from a selected parent without a false depth rejection', async () => {
+    const parent = task({ id: 'parent', title: 'Parent task' });
+    const child = task({ id: 'child', title: 'Child task', parent_task_id: 'parent' });
+    const services = makeServices([project()], [parent, child]);
+    const secondChild = task({
+      id: 'second-child',
+      title: 'Second child',
+      parent_task_id: 'parent',
+    });
+    const create = services.repositories.tasks.create as ReturnType<typeof vi.fn>;
+    create.mockResolvedValue(secondChild);
+
+    render(<App services={services} initialSession={session} />);
+
+    // Select the parent (opens edit, then cancel) so selectedTaskId still identifies
+    // the parent when the ordinary "+ child" create flow is opened from its row.
+    fireEvent.click(await screen.findByRole('button', { name: /^Parent task/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '+ child' }));
+    expect(screen.getByLabelText('Parent task')).toHaveValue('parent');
+
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'Second child' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ parent_task_id: 'parent' }));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('rejects a third nesting level with a visible message before the task write', async () => {
     const parent = task({ id: 'parent', title: 'Parent task' });
     const child = task({ id: 'child', title: 'Child task', parent_task_id: 'parent' });
