@@ -27,12 +27,12 @@ None.
 
 ## in_review
 
-- [HAM3-002](./tasks/HAM3-002.md) — Supabase project memory and owner access  
-  PR [#3](https://github.com/Ipat-O/Hammond-3.0/pull/3) · reviewed head `acd0b5e99013b89aaf6d323727ac81dfe01b9bdc` · auditor Kilo Code / DeepSeek V4 Pro
+None.
 
 ## testing
 
-None.
+- [HAM3-002](./tasks/HAM3-002.md) — Supabase project memory and owner access  
+  PR [#3](https://github.com/Ipat-O/Hammond-3.0/pull/3) · approved head `acd0b5e99013b89aaf6d323727ac81dfe01b9bdc` · exact-head validation complete · **human check outstanding** · blocked on hosted migrations not yet pushed
 
 ## merged
 
