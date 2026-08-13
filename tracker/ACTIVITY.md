@@ -274,3 +274,11 @@
 - The ordering followed the auditor's explicit direction to push before merge rather than after, so the schema the owner exercises during the human check is the schema the audit reviewed.
 - The change is additive. No column or table was dropped or rewritten, and the seed project created during the HAM3-002 human check is unaffected.
 - HAM3-004 remains `testing`, awaiting the owner human check through the new UI and then owner-authorized merge.
+
+## 2026-08-13 — HAM3-004 human check passed
+
+- The owner performed the check entirely through the user interface, with no devtools console, which was the standard set when HAM3-002 could not be observed without one.
+- The owner created a project, nested tasks, and a comment, and changed statuses. The orchestrator confirmed the application process had fully exited and port 1420 was released before relaunching, so the restart was a genuine cold start rather than a reload. After relaunch the project, task nesting, comment, and statuses were all intact.
+- All acceptance criteria for HAM3-004 are satisfied. The task awaits only owner-authorized merge.
+- Owner feedback recorded but deliberately not acted on: the parent and child relationship is functional but thinly presented, and the owner asked for a foldable tree in the side panel. This is a new requirement, not a defect against the accepted criteria, and folding it into this branch would create a new commit that invalidates the audit verdict bound to `d0f775e21b31690eeacea026e11ffeaa71dd124f`. It belongs in a follow-up task.
+- HAM3-011, tracker depth and activity, is the natural home for hierarchy presentation, with HAM3-008 owning project home and navigation. The requirement is recorded here so it is not lost between them.

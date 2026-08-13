@@ -83,7 +83,9 @@ tasks:
     audit_report: not_available; the auditor could not post to the pull request and returned its structured verdict block directly
     cycle_prevention: database prevents self-parenting only; multi-level cycles are prevented in application code and accepted by the auditor under a single-writer threat model, to be revisited as a database trigger only if Hammond gains multiple writers, shared projects, or a public API
     hosted_migration: applied before merge as the auditor directed; 20260813075651 and 20260813120000 are both present locally and remotely for project polphkuvlleadblxmjyz
-    outstanding: owner human check through the UI, then owner-authorized merge
+    outstanding: owner-authorized merge
+    human_check: passed; the owner created a project, nested tasks, and a comment through the UI, changed statuses, and after a verified cold restart found the project, task nesting, comment, and statuses all intact
+    owner_feedback: parent and child hierarchy is functional but the presentation is thin; the owner asked for a foldable tree. Recorded as a follow-up rather than folded into this approved head, since any new commit would invalidate the audit verdict
   - id: HAM3-005
     title: Versioned instruction template domain
     state: in_design
