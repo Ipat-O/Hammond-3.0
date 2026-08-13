@@ -222,3 +222,13 @@
 - All six acceptance criteria for HAM3-002 are now satisfied.
 - Readiness confirmed: the branch head still equals the approved SHA `acd0b5e99013b89aaf6d323727ac81dfe01b9bdc`, the PR is a draft targeting `dev` and names the task, and a merge dry run produced no conflicts. Stage 7 exact-head validation was satisfied by the auditor's independent reproduction, per D-009.
 - HAM3-002 awaits only owner-authorized merge.
+
+## 2026-08-13 — HAM3-002 merged
+
+- The owner authorized the merge. The branch head was re-checked immediately beforehand and still equalled the approved SHA, so no commit arrived between approval and merge. PR #3 was marked ready and merged into `dev` as merge commit `20f6155d770f06062eab63bb0d8d0b89ec019270`.
+- A merge commit was used rather than a squash, consistent with HAM3-001 and with exact-SHA governance. Verified afterwards: `acd0b5e99013b89aaf6d323727ac81dfe01b9bdc` is an ancestor of `dev`, and both worker commits remain individually addressable.
+- Delivery record: worker OpenAI / Codex Desktop / GPT-5; auditor Kilo Code / DeepSeek V4 Pro; orchestrator Anthropic / Claude Code / Claude Opus 5. No participant audited or merged its own work.
+- HAM3-002 required no corrections. The single defect found during delivery was in the work order itself, not the implementation: the packet asked for six base template categories while describing nine, and the worker reported the contradiction rather than silently choosing.
+- With PR #3 merged and no longer touching `README.md`, the deferred D-012 correction was applied. The README no longer lists Claude Sonnet 5 as an execution participant and now records Luna as implementer and DeepSeek as auditor on every task, with the Anthropic family orchestrating only.
+- HAM3-002 is `merged`, not `shipped`. Both HAM3-001 and HAM3-002 now await observation in a packaged application built from merged `dev`.
+- HAM3-003 and HAM3-004 are both unblocked by dependency. Under D-011 exactly one is promoted at a time, and neither has been promoted.

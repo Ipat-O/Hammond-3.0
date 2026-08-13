@@ -77,11 +77,10 @@ Owner human check:
 
 - Human owner: product authority and prompt dispatcher.
 - Claude Opus 5 through Claude Code: active orchestrator; plans, routes, records evidence, and decides readiness. The orchestrator does not implement feature code and never acts as worker or auditor on a task it orchestrates.
-- Luna through OpenAI: implementation worker or auditor as routed per task.
-- Claude Sonnet 5 through Claude Code: implementation worker or auditor as routed per task.
-- DeepSeek V4 Pro through Kilo Code: implementation worker or auditor as routed per task.
+- Luna through OpenAI: implementation worker on every task.
+- DeepSeek V4 Pro through Kilo Code: independent auditor on every task.
 
-The orchestrator and the Sonnet participant share a provider and tool, differing only by model. Audit independence therefore rests on the routing matrix, which is enforced per task rather than assumed from provider identity.
+Per D-012 the Anthropic family orchestrates only and holds no execution role, so the orchestrating family is entirely separate from the implementing and auditing families. No provider family audits its own implementation.
 
 - Git: authority for code, commits, issues, PRs, exact SHAs, and posted reports.
 - Hammond: authority for project/task state, instruction versions, dispatch history, and evidence presentation.

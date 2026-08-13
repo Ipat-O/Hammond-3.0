@@ -31,13 +31,14 @@ None.
 
 ## testing
 
-- [HAM3-002](./tasks/HAM3-002.md) — Supabase project memory and owner access  
-  PR [#3](https://github.com/Ipat-O/Hammond-3.0/pull/3) · approved head `acd0b5e99013b89aaf6d323727ac81dfe01b9bdc` · exact-head validation complete · hosted schema applied · human check passed · awaiting owner-authorized merge
+None.
 
 ## merged
 
 - [HAM3-001](./tasks/HAM3-001.md) — Desktop application foundation  
   PR [#2](https://github.com/Ipat-O/Hammond-3.0/pull/2) · approved head `0eec339c586fc65685d0de531c64315cb716a563` · merge commit `757c58d7b67cdacb0bf442b43d4a68d6a9bdc8c8` · awaiting owner observation in the packaged app to become `shipped`
+- [HAM3-002](./tasks/HAM3-002.md) — Supabase project memory and owner access  
+  PR [#3](https://github.com/Ipat-O/Hammond-3.0/pull/3) · approved head `acd0b5e99013b89aaf6d323727ac81dfe01b9bdc` · merge commit `20f6155d770f06062eab63bb0d8d0b89ec019270` · awaiting owner observation in the packaged app to become `shipped`
 
 ## shipped
 

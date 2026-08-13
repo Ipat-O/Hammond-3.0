@@ -39,7 +39,8 @@ tasks:
     human_check: passed; the owner ran the release executable at 0eec339 and observed the Hammond shell
   - id: HAM3-002
     title: Supabase project memory and owner access
-    state: testing
+    state: merged
+    merge_commit: 20f6155d770f06062eab63bb0d8d0b89ec019270
     depends_on: [HAM3-001]
     worker: OpenAI / Luna
     auditor: Kilo Code / DeepSeek V4 Pro
