@@ -139,12 +139,15 @@ tasks:
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-013
     title: Task hierarchy outliner
-    state: ready_for_development
+    state: in_review
     depends_on: [HAM3-004]
     worker: OpenAI / Luna
     auditor: Kilo Code / DeepSeek V4 Pro
     dispatched_worker_identity: OpenAI / Codex Desktop / GPT-5
     dispatched_auditor_identity: Kilo / Kilo Code / DeepSeek V4 Pro
     branch: openai/HAM3-013-hierarchy-outliner
+    base_sha: a4f322bfe0cf4e95cc029089b9bc1cd81199ff81
+    head_sha: 8903ff0f4870155bbe0dc45c290d16c276f9c728
+    pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/5
     design_decision: D-013
     added: after the HAM3-004 human check at the owner's request; extends the foundation plan from twelve tasks to thirteen

@@ -307,3 +307,14 @@
 - Both tasks moved from `merged` to `shipped`. Three of the thirteen planned tasks are now shipped.
 - HAM3-002's deferral is resolved exactly as predicted. It was held at `merged` because a persistence layer with no UI and no devtools in release builds could not be observed, and it shipped the moment HAM3-004 supplied screens. The state was never rubber-stamped in the interim.
 - Recorded for accuracy: the binary was compiled from `6514d07` while `dev` had advanced to `a4f322b`. That commit is tracker-only, so the application code in the observed build is identical to `dev`.
+
+## 2026-08-13 — HAM3-013 delivered and accepted into review
+
+- Worker delivered at head `8903ff0f4870155bbe0dc45c290d16c276f9c728`, draft PR https://github.com/Ipat-O/Hammond-3.0/pull/5, 7 files, 550 insertions.
+- Evidence intake verified against the repository: the head matches the pushed branch, `a4f322b` is a true ancestor, the PR is a draft targeting `dev` and names the task, `tracker/` was untouched, and no credential strings appear in the diff.
+- **No migration was added**, as the packet specified. The `migrations_added` field was pre-filled `false` rather than offered as a choice, because reaching for schema here would have signalled the worker misreading a product constraint as a database one. The two-level cap is enforced in `assertTaskDepth`, which walks the ancestor chain, guards against pre-existing cycles, and raises an error naming the remedy rather than merely refusing.
+- Carried constraints held: `assertNoAbsoluteLocalPaths` remains at ten call sites in `src/data/repositories.ts`.
+- All four required proofs were reported as passing, including the depth-cap mutation proof and the view-state proof that expand, collapse, focus, and unfocus leave stored rows unchanged with no task writes. That second proof was specified because a tree view quietly reordering or rewriting rows is the failure mode worth guarding against.
+- One limitation reported honestly: there is no automated restart or end-to-end persistence test, so the owner human check remains required.
+- A working-directory hazard recurred and was contained. The worker left its branch checked out, so the orchestrator's tracker edits were sitting on the wrong branch. The branch guard adopted after the earlier misplaced-commit incident aborted the commit chain before anything was written, and the edits were moved to `dev` with a stash rather than committed in place. The guard is now demonstrated to work rather than merely intended.
+- HAM3-013 moved to `in_review`, bound to exact head `8903ff0f4870155bbe0dc45c290d16c276f9c728`.
