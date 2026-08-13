@@ -94,3 +94,10 @@
 - A transient working-tree artifact was observed and resolved: `src-tauri/Cargo.toml` appeared modified with a zero-line diff, caused purely by `core.autocrlf` line-ending normalization rather than any content change.
 - The Rust toolchain installed earlier is available to the auditor, which runs on the same machine. The re-audit packet therefore requires independent reproduction of the native verification, since the worker is currently the only party ever to have compiled this code.
 - HAM3-001 moved from `in_development` to `in_review`, bound to exact head `0eec339c586fc65685d0de531c64315cb716a563`. The auditor is asked to classify the NSIS failure as a product defect, an infrastructure limitation, or a merge blocker, and is explicitly told not to soften the finding to reach an approval.
+
+## 2026-08-12 — HAM3-001 human check passed
+
+- The owner ran the release executable built from head `0eec339c586fc65685d0de531c64315cb716a563` and observed the Hammond shell, satisfying the named human check recorded in the task definition.
+- This is the first time the Hammond 3.0 desktop application has been observed running. It confirms the acceptance criterion that the packaged application opens a desktop window without a browser server.
+- The human check does not by itself advance the task. HAM3-001 remains `in_review` pending a cross-family audit verdict bound to the same exact head, followed by owner-authorized merge.
+- `shipped` remains distinct from `merged` and will be recorded only after the capability is observed in the packaged application following merge.

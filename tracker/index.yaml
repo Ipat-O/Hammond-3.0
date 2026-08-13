@@ -30,6 +30,7 @@ tasks:
     pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/2
     native_verification: performed by the worker; cargo fmt, clippy, and tests pass; release executable and MSI produced; independent reproduction requested in re-audit
     outstanding: npm run tauri:build exits 1 at the NSIS step on a repeated external download failure; classification requested from the auditor
+    human_check: passed; the owner ran the release executable at 0eec339 and observed the Hammond shell
   - id: HAM3-002
     title: Supabase project memory and owner access
     state: in_design
