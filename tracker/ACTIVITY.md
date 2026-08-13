@@ -150,3 +150,13 @@
 - Protection verified five ways before proceeding: `git check-ignore` matches the file, it is invisible to `git status`, a `git add -A` dry run does not stage it, and an explicit `git add .env.local` is refused. Only a deliberate `-f` override could commit it.
 - The residual risk is recorded rather than assumed away: until HAM3-002 delivers row-level security, that publishable key permits access to the hosted project. The project is new and empty, and migrations have deliberately not been pushed to it. Local Supabase remains the verification target for this task.
 - All owner prerequisites for HAM3-002 are now satisfied. The task is ready for dispatch.
+
+## 2026-08-12 — HAM3-002 routing override; GitHub issue #1 closed
+
+- The owner reassigned HAM3-002 implementation from Claude Code / Claude Sonnet 5 to OpenAI / Luna before dispatch.
+- Luna was the assigned auditor for this task, so the reassignment necessarily moved the audit rather than leaving it. The roles were swapped: Luna implements, Claude Code / Claude Sonnet 5 audits. No family audits its own implementation, which is the constraint that matters under D-010.
+- The work order, task file, board, index, and routing matrix were all updated so no canonical document contradicts the dispatched packet. The branch changed from `anthropic/HAM3-002-supabase-memory` to `openai/HAM3-002-supabase-memory` to match the worker's provider convention.
+- Load consequence recorded rather than silently absorbed: the matrix was originally four worker and four auditor slots per family. It is now five/three for Luna on implementation and three/five on audit, with Kilo unchanged. Rebalancing mid-plan was deliberately not attempted.
+- The packet tells Luna explicitly that this is an owner override, why the audit moved, and that having delivered HAM3-001 confers no standing on this task.
+- The auditor for this task shares a provider and tool with the orchestrator. Independence rests on the routing matrix per D-010: the work is authored by OpenAI and audited by Anthropic.
+- GitHub issue #1 closed with the full delivery record: approved head `0eec339`, merge commit `757c58d`, PR #2, worker and auditor identities, and the passed human check. No issue was opened for HAM3-002; the packet records `not_available` with a stated reason rather than leaving a blank field, since an unfilled identity field previously caused a worker to stop.

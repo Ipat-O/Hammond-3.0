@@ -20,7 +20,7 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 ## ready_for_development
 
 - [HAM3-002](./tasks/HAM3-002.md) — Supabase project memory and owner access  
-  Base `c35c4dc647d3a9a75db0b444ff74f9deaafe9d66` · branch `anthropic/HAM3-002-supabase-memory` · worker Claude Code / Claude Sonnet 5 · auditor OpenAI / Codex Desktop / GPT-5
+  Base `c35c4dc647d3a9a75db0b444ff74f9deaafe9d66` · branch `openai/HAM3-002-supabase-memory` · worker OpenAI / Codex Desktop / GPT-5 · auditor Claude Code / Claude Sonnet 5 · owner routing override
 
 ## in_development
 

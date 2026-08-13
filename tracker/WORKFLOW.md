@@ -86,7 +86,7 @@ The orchestrator confirms the PR targets `dev`, is conflict-free, names the task
 | Task | Worker | Auditor |
 |---|---|---|
 | HAM3-001 | OpenAI / Luna | Kilo Code / DeepSeek V4 Pro |
-| HAM3-002 | Claude Code / Claude Sonnet 5 | OpenAI / Luna |
+| HAM3-002 | OpenAI / Luna | Claude Code / Claude Sonnet 5 |
 | HAM3-003 | Kilo Code / DeepSeek V4 Pro | Claude Code / Claude Sonnet 5 |
 | HAM3-004 | OpenAI / Luna | Kilo Code / DeepSeek V4 Pro |
 | HAM3-005 | Claude Code / Claude Sonnet 5 | OpenAI / Luna |
@@ -98,7 +98,9 @@ The orchestrator confirms the PR targets `dev`, is conflict-free, names the task
 | HAM3-011 | Claude Code / Claude Sonnet 5 | OpenAI / Luna |
 | HAM3-012 | Kilo Code / DeepSeek V4 Pro | Claude Code / Claude Sonnet 5 |
 
-Each family works four tasks and audits four. No task is audited by its author's family. Routing may be changed by the owner before dispatch. The exact work order always overrides the planning default and must explicitly name every participant.
+No task is audited by its author's family. Routing may be changed by the owner before dispatch. The exact work order always overrides the planning default and must explicitly name every participant.
+
+The matrix was originally balanced at four worker and four auditor slots per family. The owner reassigned HAM3-002 from Sonnet to Luna before dispatch, which moved that task's audit to Sonnet. Load is therefore five/three in Luna's favour on implementation and three/five on audit, with Kilo unchanged. Rebalancing is deliberately not attempted mid-plan; the constraint that matters is that no family audits itself, and that still holds on every row.
 
 ## Execution order
 
