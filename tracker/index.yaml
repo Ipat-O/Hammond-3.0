@@ -141,8 +141,8 @@ tasks:
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-013
     title: Task hierarchy outliner
-    state: in_development
-    corrections_completed: 2
+    state: in_review
+    corrections_completed: 3
     depends_on: [HAM3-004]
     worker: OpenAI / Luna
     auditor: Kilo Code / DeepSeek V4 Pro
@@ -151,7 +151,7 @@ tasks:
     branch: openai/HAM3-013-hierarchy-outliner
     base_sha: a4f322bfe0cf4e95cc029089b9bc1cd81199ff81
     original_head_sha: 8903ff0f4870155bbe0dc45c290d16c276f9c728
-    head_sha: b3cd2653ccc937e58a639d6028dda1837187c019
+    head_sha: d2dbd880cf99ee4b0ea4c25d795d29cee34a1936
     pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/5
     audited_head_sha: b3cd2653ccc937e58a639d6028dda1837187c019
     audit_verdict: APPROVE
@@ -171,7 +171,7 @@ tasks:
     correction_2_worker: Anthropic / Claude Code / Claude Sonnet 5
     correction_2_routing: owner override from the original OpenAI worker; continue on the existing openai-prefixed branch and PR because the name records historical provenance
     correction_2_head: b3cd2653ccc937e58a639d6028dda1837187c019
-    current_head_sha: b3cd2653ccc937e58a639d6028dda1837187c019
+    current_head_sha: d2dbd880cf99ee4b0ea4c25d795d29cee34a1936
     correction_2_report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5285273885
     correction_2_scope: derive editingTask before the UI depth pre-check; edit mode excludes and passes only the edited task id, while create mode validates the full task set with no moving id; adds the owner's second-child regression test
     correction_2_intake_verification: fresh npm ci at exact head; 5 files and 21 tests pass; typecheck, lint, and format check all exit 0; worker-reported typecheck failure did not reproduce and is treated as environment-specific rather than a current project failure
@@ -183,6 +183,11 @@ tasks:
     correction_3_base_sha: b3cd2653ccc937e58a639d6028dda1837187c019
     correction_3_auditor: Kilo / Kilo Code / DeepSeek V4 Pro
     correction_3_audit_round: 4
+    correction_3_head: d2dbd880cf99ee4b0ea4c25d795d29cee34a1936
+    correction_3_report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5286259133
+    correction_3_scope: removed the fixed nesting-depth guard and all cap-only exports/call sites while preserving cycle checks; generalized recursive outliner styling; added explicit archived-row state and function-specific row controls; added four-level, cycle, archive, and control tests
+    correction_3_intake_verification: exact pushed head and ancestry verified; eight intended src files changed with no tracker or migration changes; fresh npm ci exact-head intake passes 5 files and 29 tests, typecheck, lint, and format check; worker typecheck failure did not reproduce and remains dependency-environment evidence for audit classification
+    current_audit_status: pending DeepSeek round 4 at d2dbd880cf99ee4b0ea4c25d795d29cee34a1936
     round_3_approval_status: historical exact-SHA approval at b3cd2653ccc937e58a639d6028dda1837187c019; not merge-valid for the owner-revised D-015 requirements
     design_decision: D-015; supersedes D-013 only for nesting depth and adds archived/action visual semantics
     added: after the HAM3-004 human check at the owner's request; extends the foundation plan from twelve tasks to thirteen
