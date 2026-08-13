@@ -141,7 +141,7 @@ tasks:
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-013
     title: Task hierarchy outliner
-    state: in_review
+    state: testing
     corrections_completed: 1
     depends_on: [HAM3-004]
     worker: OpenAI / Luna
@@ -152,13 +152,18 @@ tasks:
     base_sha: a4f322bfe0cf4e95cc029089b9bc1cd81199ff81
     head_sha: 8903ff0f4870155bbe0dc45c290d16c276f9c728
     pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/5
-    audited_head_sha: 8903ff0f4870155bbe0dc45c290d16c276f9c728
-    audit_verdict: CHANGES
-    audit_report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5281244859
+    audited_head_sha: 6b7269ccce71d0d8069bc7706970a62817fda4d4
+    audit_verdict: APPROVE
+    audit_round: 2
+    audit_report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5284456202
+    prior_audit_verdict: CHANGES at 8903ff0f4870155bbe0dc45c290d16c276f9c728
+    prior_audit_report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5281244859
     finding: the depth guard measured the new parent's ancestor depth but not the moved subtree's own depth, so re-parenting a task that already has children silently produced a third level
     correction_1_head: 6b7269ccce71d0d8069bc7706970a62817fda4d4
     current_head_sha: 6b7269ccce71d0d8069bc7706970a62817fda4d4
-    next_audit_round: 2
     correction_1_fix: assertTaskDepth now sums the parent chain length and the moving subtree's height against the cap, with a distinct actionable message for the subtask case; verified by the orchestrator to be applied at all three call sites, correctly omitting the moving id on the create path where a new task has no children
+    audit_round_2_verification: 20/20 tests, typecheck, lint, and format check pass; subtree-height mutation proof reproduced and restored; focused TypeScript verification accepted
+    audit_observation: the shared UI save pre-check may falsely reject adding another child under a selected parent that already has children; repository create remains correct and no invalid nesting can persist
+    human_check: pending; must exercise the ordinary + child flow twice on one parent, plus collapse, expand, focus, breadcrumb return, restart persistence, and rejection of a third level
     design_decision: D-013
     added: after the HAM3-004 human check at the owner's request; extends the foundation plan from twelve tasks to thirteen

@@ -350,3 +350,13 @@
 - Live coordinates re-verified before packet preparation: `dev` and `origin/dev` are `397c087230c4630df496f968aa9f0e2dcee26e10`; PR #5 is open, draft, mergeable, targets `dev`, and its pushed head is `6b7269ccce71d0d8069bc7706970a62817fda4d4`.
 - Corrected a stale task-file state: `tracker/tasks/HAM3-013.md` still said `in_design` while the board and index correctly recorded `in_review`.
 - Prepared audit round 2 bound to exact correction head `6b7269c`. The earlier `CHANGES` verdict remains bound only to `8903ff0`.
+
+## 2026-08-13 — HAM3-013 approved at 6b7269c; owner check required
+
+- Kilo Code / DeepSeek V4 Pro returned `AUDIT-VERDICT: APPROVE 6b7269ccce71d0d8069bc7706970a62817fda4d4`. Report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5284456202
+- Evidence intake verified the report exists as a top-level PR comment, names Kilo Code / DeepSeek V4 Pro, and binds the verdict to the current pushed branch head. PR #5 remains open, draft, targets `dev`, and is mergeable. No later implementation commit exists.
+- The auditor independently reproduced the correction and its mutation proof: 20/20 tests pass, with typecheck, lint, and format check all exit 0; neutralizing the subtree-height contribution made the reported-case test fail, and restoration left the audit worktree clean.
+- Focused verification is sufficient under D-009. Supabase, Rust, and packaging checks were correctly omitted because Correction 1 is confined to TypeScript validation and call sites, with no SQL, Rust, or packaging change.
+- One safety-preserving UI observation is carried into merge readiness rather than discarded. In create mode, the shared UI pre-check may pass the previously selected task id and falsely reject adding another child to a selected parent that already has children. Repository create correctly omits the moving id, so this cannot allow invalid depth or corrupt persistence, but it may obstruct a normal legal operation.
+- The observation does not overturn the independent approval. It becomes a required human check: create two children under the same selected parent through the ordinary `+ child` flow without deselecting or using a workaround. If that fails, HAM3-013 returns for a narrow correction and any new head requires another Kilo audit.
+- HAM3-013 moved from `in_review` to `testing`. It is not merge-ready until the full owner check passes; no merge was authorized or performed.
