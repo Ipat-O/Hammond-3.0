@@ -328,3 +328,14 @@
 - The missing automated restart test was classified `acceptable` for this task, so it is not part of the correction.
 - Worth recording about the orchestration itself: the audit packet asked whether the guard was enforced on all write paths, and it was. The real gap was narrower and subtler — the guard measures the wrong side of the relationship. The independent audit found what a targeted question did not.
 - HAM3-013 moved from `in_review` to `in_development` for Correction 1, routed to the original worker on the same branch and pull request. Any new commit invalidates the prior review.
+
+## 2026-08-13 — HAM3-013 Correction 1 delivered
+
+- Correction 1 delivered at head `6b7269ccce71d0d8069bc7706970a62817fda4d4`, four files, 79 insertions. Report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5283723926
+- Verified by the orchestrator: the previous head is a true ancestor, `tracker/` was untouched, and no migration was added.
+- The fix splits the old single walk into `measureAncestorDepth` for the proposed parent's chain and `measureSubtreeHeight` for the task being moved, then requires their sum to fit the cap. Two distinct error messages are raised, with the subtask case naming the remedy rather than only refusing.
+- The `movingTaskId` parameter is optional, which correctly leaves the create path unchanged since a new task has no children.
+- Call-site coverage checked deliberately, because the original defect was a guard applied unevenly. All three production call sites are correct: `repositories.ts` create omits the moving id by design, `repositories.ts` update passes the task id, and the `TrackerPage` pre-check passes the selected task id.
+- Both required tests are present: the reported case is rejected, and a childless task can still be re-parented, so the fix does not over-reject. The worker reported the mutation proof forcing `subtreeHeight` to zero causing the test to fail, then passing on restoration with a clean worktree.
+- The worker did not run `supabase:test`, the cargo checks, or `tauri:build`, judging them unaffected because the change touches only TypeScript validation and its call sites with no SQL, Rust, or packaging impact. The packet permitted that judgment provided it was stated plainly, and it was. The auditor is asked to confirm it.
+- HAM3-013 returned to `in_review` at exact head `6b7269ccce71d0d8069bc7706970a62817fda4d4`. The `CHANGES` verdict was bound to `8903ff0` and does not carry forward.

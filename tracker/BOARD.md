@@ -22,12 +22,12 @@ None.
 
 ## in_development
 
-- [HAM3-013](./tasks/HAM3-013.md) — Task hierarchy outliner  
-  Correction 1 · PR [#5](https://github.com/Ipat-O/Hammond-3.0/pull/5) · audited head `8903ff0f4870155bbe0dc45c290d16c276f9c728` returned `CHANGES` · re-parenting bypasses the depth cap
+None.
 
 ## in_review
 
-None.
+- [HAM3-013](./tasks/HAM3-013.md) — Task hierarchy outliner  
+  PR [#5](https://github.com/Ipat-O/Hammond-3.0/pull/5) · re-audit round 2 · reviewed head `6b7269ccce71d0d8069bc7706970a62817fda4d4` · auditor Kilo Code / DeepSeek V4 Pro
 
 ## testing
 
