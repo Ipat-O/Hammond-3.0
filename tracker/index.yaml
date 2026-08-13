@@ -141,7 +141,7 @@ tasks:
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-013
     title: Task hierarchy outliner
-    state: in_review
+    state: testing
     corrections_completed: 2
     depends_on: [HAM3-004]
     worker: OpenAI / Luna
@@ -153,10 +153,12 @@ tasks:
     original_head_sha: 8903ff0f4870155bbe0dc45c290d16c276f9c728
     head_sha: b3cd2653ccc937e58a639d6028dda1837187c019
     pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/5
-    audited_head_sha: 6b7269ccce71d0d8069bc7706970a62817fda4d4
+    audited_head_sha: b3cd2653ccc937e58a639d6028dda1837187c019
     audit_verdict: APPROVE
-    audit_round: 2
-    audit_report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5284456202
+    audit_round: 3
+    audit_report: not_available; auditor returned the structured SHA-bound verdict directly
+    prior_approved_head_sha: 6b7269ccce71d0d8069bc7706970a62817fda4d4
+    prior_approval_report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5284456202
     prior_audit_verdict: CHANGES at 8903ff0f4870155bbe0dc45c290d16c276f9c728
     prior_audit_report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5281244859
     finding: the depth guard measured the new parent's ancestor depth but not the moved subtree's own depth, so re-parenting a task that already has children silently produced a third level
@@ -164,7 +166,7 @@ tasks:
     correction_1_fix: assertTaskDepth now sums the parent chain length and the moving subtree's height against the cap, with a distinct actionable message for the subtask case; verified by the orchestrator to be applied at all three call sites, correctly omitting the moving id on the create path where a new task has no children
     audit_round_2_verification: 20/20 tests, typecheck, lint, and format check pass; subtree-height mutation proof reproduced and restored; focused TypeScript verification accepted
     audit_observation: the shared UI save pre-check may falsely reject adding another child under a selected parent that already has children; repository create remains correct and no invalid nesting can persist
-    human_check: failed at 6b7269ccce71d0d8069bc7706970a62817fda4d4; ordinary + child create mode falsely rejected a legal child under a selected parent that already had a child
+    failed_human_check: at 6b7269ccce71d0d8069bc7706970a62817fda4d4; ordinary + child create mode falsely rejected a legal child under a selected parent that already had a child
     correction_2_required: scope the moving task id and edited-task filtering to edit mode only; create mode must validate the full existing task set with no moving id
     correction_2_worker: Anthropic / Claude Code / Claude Sonnet 5
     correction_2_routing: owner override from the original OpenAI worker; continue on the existing openai-prefixed branch and PR because the name records historical provenance
@@ -173,7 +175,8 @@ tasks:
     correction_2_report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5285273885
     correction_2_scope: derive editingTask before the UI depth pre-check; edit mode excludes and passes only the edited task id, while create mode validates the full task set with no moving id; adds the owner's second-child regression test
     correction_2_intake_verification: fresh npm ci at exact head; 5 files and 21 tests pass; typecheck, lint, and format check all exit 0; worker-reported typecheck failure did not reproduce and is treated as environment-specific rather than a current project failure
-    next_audit_round: 3
-    next_audit_condition: audit round 3 pending at b3cd2653ccc937e58a639d6028dda1837187c019
+    audit_round_3_verification: 5 files and 21 tests pass; typecheck, lint, and format check exit 0; create/edit/retry boundaries and mutation proof pass; focused verification accepted
+    typecheck_dependency_observation: project omits a direct @types/node dependency and current passing environments resolve a machine-global copy; auditor reproduced TS2591 when hiding the global and classified it as a pre-existing dependency-environment issue, not a Correction 2 product defect
+    human_check: pending at b3cd2653ccc937e58a639d6028dda1837187c019; repeat the ordinary second-child flow that failed at 6b7269c, then complete hierarchy, depth rejection, and cold-restart checks
     design_decision: D-013
     added: after the HAM3-004 human check at the owner's request; extends the foundation plan from twelve tasks to thirteen

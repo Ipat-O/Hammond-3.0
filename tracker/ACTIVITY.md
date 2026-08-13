@@ -387,3 +387,13 @@
 - The worker reported 21/21 tests, lint, and format passing, but reported an environment-specific `vite.config.ts` typecheck failure that it also saw at `6b7269c`. The orchestrator did not accept that as a universal project limitation: typecheck passed in the existing exact-head `6b7269c` environment and also passed after a fresh `npm ci` at `b3cd265`.
 - Independent intake verification at the new exact head: 5 files and 21 tests pass; typecheck, lint, and format check all exit 0. The worker's typecheck failure is therefore recorded as environment-specific and superseded for readiness by the clean exact-head reproduction, not converted into a product correction.
 - HAM3-013 returned to `in_review`. DeepSeek audit round 3 must review only `b3cd265`; the approval at `6b7269c` does not carry forward.
+
+## 2026-08-13 — HAM3-013 approved at b3cd265; returned to owner testing
+
+- Kilo Code / DeepSeek V4 Pro returned `AUDIT-VERDICT: APPROVE b3cd2653ccc937e58a639d6028dda1837187c019` for audit round 3. The auditor could not post the report, so `audit_report_url` is `not_available`; its complete structured verdict returned through the owner is the audit record, as the packet permitted.
+- Live evidence intake verified PR #5 remains open, draft, mergeable, targets `dev`, and still has exact head `b3cd265`. No implementation commit arrived after the verdict.
+- The auditor independently confirmed the second-child create path passes, grandchild creation remains rejected, re-parenting a task with descendants remains rejected, retry/editor modes are correct, and the new regression test is mutation-proven against the old wiring.
+- Verification: 5 files and 21 tests pass; typecheck, lint, and format check exit 0. Focused TypeScript verification is sufficient; no migration, Supabase, Rust, or packaging check is required for the two-file correction.
+- The typecheck discrepancy was classified dependency-environment rather than a Correction 2 defect. The project does not directly declare `@types/node`; current passing environments resolve a machine-global copy. Hiding that copy reproduces TS2591. This pre-existing dependency hygiene issue is recorded for later planning and does not invalidate the exact-head product approval.
+- HAM3-013 moved from `in_review` to `testing`. The owner must rerun the exact second-child flow that failed at `6b7269c`, then complete collapse/expand, focus/breadcrumb, visible third-level rejection, and cold-restart persistence checks on a build from `b3cd265`.
+- No merge was authorized or performed.

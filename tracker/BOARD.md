@@ -26,12 +26,12 @@ None.
 
 ## in_review
 
-- [HAM3-013](./tasks/HAM3-013.md) — Task hierarchy outliner
-  PR [#5](https://github.com/Ipat-O/Hammond-3.0/pull/5) · Correction 2 head `b3cd2653ccc937e58a639d6028dda1837187c019` · DeepSeek audit round 3 pending
+None.
 
 ## testing
 
-None.
+- [HAM3-013](./tasks/HAM3-013.md) — Task hierarchy outliner
+  PR [#5](https://github.com/Ipat-O/Hammond-3.0/pull/5) · approved head `b3cd2653ccc937e58a639d6028dda1837187c019` · DeepSeek audit round 3 · owner human check pending
 
 ## merged
 
