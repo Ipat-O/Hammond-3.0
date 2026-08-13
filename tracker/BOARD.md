@@ -25,7 +25,7 @@ None.
 ## in_development
 
 - [HAM3-001](./tasks/HAM3-001.md) — Desktop application foundation  
-  Correction 1 · PR [#2](https://github.com/Ipat-O/Hammond-3.0/pull/2) · audited head `e482dd1d46d73eca2c10e1a35d186f88acc80434` returned `CHANGES` · worker OpenAI / Codex Desktop / GPT-5
+  Correction 2 · PR [#2](https://github.com/Ipat-O/Hammond-3.0/pull/2) · current head `e7f3abfa88b5032b479c443e6b9d97b31a5a0cfb` · worker OpenAI / Codex Desktop / GPT-5 · awaiting re-audit by Kilo Code / DeepSeek V4 Pro
 
 ## in_review
 

@@ -17,7 +17,7 @@ tasks:
   - id: HAM3-001
     title: Desktop application foundation
     state: in_development
-    correction: 1
+    correction: 2
     depends_on: []
     worker: OpenAI / Luna
     auditor: Kilo Code / DeepSeek V4 Pro
@@ -26,8 +26,10 @@ tasks:
     base_sha: beb106a335a4943c5b3f3f0298da86054b66e90a
     audited_head_sha: e482dd1d46d73eca2c10e1a35d186f88acc80434
     audit_verdict: CHANGES
+    current_head_sha: e7f3abfa88b5032b479c443e6b9d97b31a5a0cfb
     pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/2
-    native_verification: blocked; no Rust toolchain in either the worker or the auditor environment
+    native_verification: performed at e7f3abf; cargo fmt, clippy, and tests pass; release executable and MSI produced; NSIS packaging blocked by an external download failure
+    outstanding: format:check exits 1 on tracked tracker/WORKFLOW.md; routed as correction 2
   - id: HAM3-002
     title: Supabase project memory and owner access
     state: in_design
