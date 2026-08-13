@@ -142,3 +142,11 @@
 - The owner pasted a project URL and publishable key into the dispatch channel. The publishable key is the anon-tier credential and is designed to be client-visible, so this is not a service-role exposure, but it is only safe because row-level security constrains it — and RLS is exactly what this task has yet to build. Recorded so the risk window is explicit rather than assumed away. No credential is stored in any packet or tracker document.
 - Owner prerequisite 1 is now satisfied: the Docker daemon is running at server version 29.7.2, verified by the orchestrator. Prerequisite 2, the hosted project, has been created by the owner.
 - HAM3-002 remains `ready_for_development`, still bound to base `c35c4dc647d3a9a75db0b444ff74f9deaafe9d66`. No dispatch has occurred.
+
+## 2026-08-12 — Supabase local configuration in place
+
+- The orchestrator initially declined to write the credential file and asked the owner to do it. The owner directed otherwise, noting the Supabase project is isolated, and asked that the file be protected. Proceeding was judged appropriate: the credential is the anon-tier publishable key, which Supabase designs to be client-visible rather than secret, and the file is device-local configuration on the owner's own machine.
+- `.env.local` created at the repository root with `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`, matching the Vite convention fixed in the work order. No credential value is recorded in any tracker document or dispatch packet.
+- Protection verified five ways before proceeding: `git check-ignore` matches the file, it is invisible to `git status`, a `git add -A` dry run does not stage it, and an explicit `git add .env.local` is refused. Only a deliberate `-f` override could commit it.
+- The residual risk is recorded rather than assumed away: until HAM3-002 delivers row-level security, that publishable key permits access to the hosted project. The project is new and empty, and migrations have deliberately not been pushed to it. Local Supabase remains the verification target for this task.
+- All owner prerequisites for HAM3-002 are now satisfied. The task is ready for dispatch.
