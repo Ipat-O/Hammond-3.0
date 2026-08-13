@@ -171,4 +171,72 @@ describe('Hammond tracker workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: '+ child' }));
     expect(screen.getByLabelText('Parent task')).toHaveValue('task-1');
   });
+
+  it('renders a collapsed outliner, expands exact children, focuses, and preserves stored rows', async () => {
+    const parent = task({ id: 'parent', title: 'Parent task', status: 'ready' });
+    const child = task({
+      id: 'child',
+      title: 'Child task',
+      parent_task_id: 'parent',
+      status: 'in_progress',
+    });
+    const secondChild = task({
+      id: 'child-2',
+      title: 'Second child',
+      parent_task_id: 'parent',
+      status: 'done',
+    });
+    const other = task({ id: 'other', title: 'Other top-level task', status: 'blocked' });
+    const tasks = [parent, child, secondChild, other];
+    const storedRows = structuredClone(tasks);
+    const services = makeServices([project()], tasks);
+
+    render(<App services={services} initialSession={session} />);
+    expect(await screen.findByRole('button', { name: /Parent taskReady/ })).toBeInTheDocument();
+    expect(screen.queryByText('Child task')).not.toBeInTheDocument();
+    expect(screen.getByText('2 children')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Parent task' }));
+    expect(screen.getByText('Child task')).toBeInTheDocument();
+    expect(screen.getByText('Second child')).toBeInTheDocument();
+    expect(screen.queryByText('2 children')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Parent task' }));
+    expect(screen.queryByText('Child task')).not.toBeInTheDocument();
+    expect(screen.getByText('2 children')).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Focus' })[0]);
+    expect(screen.getByText('Focused task')).toBeInTheDocument();
+    expect(screen.getAllByText('Parent task').length).toBeGreaterThan(0);
+    expect(screen.getByText('Child task')).toBeInTheDocument();
+    expect(screen.getByText('Second child')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Back to all tasks' }));
+    expect(screen.getByText('Other top-level task')).toBeInTheDocument();
+    expect(screen.getByText('Child task')).toBeInTheDocument();
+
+    expect(tasks).toEqual(storedRows);
+    expect(services.repositories.tasks.list).toHaveBeenCalledTimes(1);
+    expect(services.repositories.tasks.create).not.toHaveBeenCalled();
+    expect(services.repositories.tasks.update).not.toHaveBeenCalled();
+    expect(services.repositories.tasks.archive).not.toHaveBeenCalled();
+  });
+
+  it('rejects a third nesting level with a visible message before the task write', async () => {
+    const parent = task({ id: 'parent', title: 'Parent task' });
+    const child = task({ id: 'child', title: 'Child task', parent_task_id: 'parent' });
+    const services = makeServices([project()], [parent, child]);
+
+    render(<App services={services} initialSession={session} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Expand Parent task' }));
+    const addChildButtons = screen.getAllByRole('button', { name: '+ child' });
+    fireEvent.click(addChildButtons[1]);
+
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'Grandchild task' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+
+    expect((await screen.findAllByRole('alert'))[0]).toHaveTextContent(
+      'Tasks can have at most one level of subtasks',
+    );
+    expect(services.repositories.tasks.create).not.toHaveBeenCalled();
+  });
 });
