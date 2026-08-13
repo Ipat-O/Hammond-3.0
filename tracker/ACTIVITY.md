@@ -208,3 +208,17 @@
 - The account holds three Supabase projects. The push targeted only the linked project, "Hammond", verified before applying.
 - The auditor's `infrastructure_limitation` is now resolved, and the human check is unblocked. HAM3-002 remains `testing` pending that check and owner-authorized merge.
 - Deferred deliberately: `README.md` still lists Claude Sonnet 5 as an execution participant, which D-012 retired. The fix is held until PR #3 merges, because that pull request also edits `README.md` and an approved head should not be disturbed for a cosmetic correction.
+
+## 2026-08-13 — HAM3-002 human check passed; ready for merge
+
+- The owner performed the named human check against the running desktop application and the hosted database. It passed.
+- The orchestrator declined two steps on principle and the owner performed them: `ownerAuth.setup` is `auth.signUp`, so creating the owner account and signing in would have meant creating an account and entering a password. Separately, an agent performing the human check would defeat its purpose, since the gate exists for a person to observe the capability.
+- Orchestrator verification, run against the live hosted project rather than inferred, with the owner executing anything requiring the session:
+  - Unauthenticated access is refused at the grant level, not merely filtered by policy: `permission denied for table projects` and the same for `instruction_templates`, confirming the auditor's finding that `anon` holds zero public-table privileges.
+  - Nine base categories exist and are readable by the authenticated owner: roles `auditor`, `orchestrator`, `worker` across providers `codex`, `claude_code`, `kilo_code`. This confirms the nine-not-six resolution against live data and against `docs/ARCHITECTURE.md`.
+  - Owner-scoped write and read succeed, with `owner_id` defaulting to `auth.uid()` without the caller supplying it.
+  - `pathGuard` is genuinely enforced at the write seam. An attempt to store a Windows absolute path was rejected with `Supabase payloads must not contain absolute local paths`. This was the acceptance criterion most likely to be nominal rather than real.
+- The persistence criterion was proved by a genuine cold start. The orchestrator confirmed the desktop process had fully exited and port 1420 was free before relaunching, so the restart was not a reload. After relaunch the owner confirmed the same owner id and the seed project returned with no repeated setup.
+- All six acceptance criteria for HAM3-002 are now satisfied.
+- Readiness confirmed: the branch head still equals the approved SHA `acd0b5e99013b89aaf6d323727ac81dfe01b9bdc`, the PR is a draft targeting `dev` and names the task, and a merge dry run produced no conflicts. Stage 7 exact-head validation was satisfied by the auditor's independent reproduction, per D-009.
+- HAM3-002 awaits only owner-authorized merge.

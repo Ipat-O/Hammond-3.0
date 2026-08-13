@@ -32,7 +32,7 @@ None.
 ## testing
 
 - [HAM3-002](./tasks/HAM3-002.md) — Supabase project memory and owner access  
-  PR [#3](https://github.com/Ipat-O/Hammond-3.0/pull/3) · approved head `acd0b5e99013b89aaf6d323727ac81dfe01b9bdc` · exact-head validation complete · hosted schema applied · **human check outstanding**
+  PR [#3](https://github.com/Ipat-O/Hammond-3.0/pull/3) · approved head `acd0b5e99013b89aaf6d323727ac81dfe01b9bdc` · exact-head validation complete · hosted schema applied · human check passed · awaiting owner-authorized merge
 
 ## merged
 

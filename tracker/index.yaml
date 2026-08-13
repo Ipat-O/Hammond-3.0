@@ -53,8 +53,9 @@ tasks:
     audit_verdict: APPROVE
     audit_report: https://github.com/Ipat-O/Hammond-3.0/pull/3#issuecomment-5278455333
     owner_prerequisites: satisfied; Docker daemon running at 29.7.2 and .env.local present with the Vite Supabase variables
-    outstanding: human check not yet performed; it is now unblocked
+    outstanding: none
     hosted_migration: applied; 20260813075651 present on both local and remote for project polphkuvlleadblxmjyz after owner-authenticated CLI login and link
+    human_check: passed; the owner signed in once, then a cold restart of the desktop app returned the same owner id and the seed project without repeating setup
   - id: HAM3-003
     title: Local directory contexts and bindings
     state: in_design
