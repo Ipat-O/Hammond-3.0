@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { assertTaskDepth, TASK_STATUSES, type Database } from '../data';
+import { assertNoParentCycle, TASK_STATUSES, type Database } from '../data';
 import type { TrackerServices } from './contracts';
 import type { TaskStatus } from '../data';
 
@@ -326,13 +326,21 @@ function TaskOutliner({
   const taskIds = new Set(tasks.map((task) => task.id));
   const roots = tasks.filter((task) => !task.parent_task_id || !taskIds.has(task.parent_task_id));
 
-  function renderTask(task: Task, depth: number): React.ReactNode {
+  function renderTask(task: Task): React.ReactNode {
     const children = childrenByParent.get(task.id) ?? [];
     const hasChildren = children.length > 0;
     const isExpanded = expandedTaskIds.has(task.id);
+    const isArchived = Boolean(task.archived_at);
+    const rowClassName = [
+      'outliner-row',
+      task.id === selectedTaskId ? 'outliner-row-selected' : '',
+      isArchived ? 'outliner-row-archived' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
     return (
-      <li className={`outliner-item outliner-item-depth-${depth}`} key={task.id}>
-        <div className={`outliner-row ${task.id === selectedTaskId ? 'outliner-row-selected' : ''}`}>
+      <li className="outliner-item" key={task.id}>
+        <div className={rowClassName}>
           {hasChildren ? (
             <button
               className="outliner-toggle"
@@ -347,7 +355,9 @@ function TaskOutliner({
             <span className="outliner-toggle-spacer" aria-hidden="true" />
           )}
           <button className="outliner-task-button" type="button" onClick={() => onEdit(task)}>
-            <span className="outliner-task-title">{task.title}</span>
+            <span className={`outliner-task-title ${isArchived ? 'outliner-task-title-archived' : ''}`}>
+              {task.title}
+            </span>
             <span className={`outliner-status outliner-status-${task.status}`}>{STATUS_LABELS[task.status]}</span>
           </button>
           {hasChildren && !isExpanded && (
@@ -357,6 +367,7 @@ function TaskOutliner({
           )}
           <div className="outliner-row-actions">
             <select
+              className="outliner-action-status"
               aria-label={`Move ${task.title}`}
               value={task.status}
               onChange={(event) => onMove(task, event.target.value as TaskStatus)}
@@ -367,33 +378,37 @@ function TaskOutliner({
                 </option>
               ))}
             </select>
-            <button className="mini-button" type="button" onClick={() => onFocus(task.id)}>
+            <button className="outliner-action outliner-action-focus" type="button" onClick={() => onFocus(task.id)}>
               Focus
             </button>
             <button
-              className="mini-button"
+              className="outliner-action outliner-action-child"
               type="button"
               onClick={() => onNewChild(task.id)}
               aria-label="+ child"
             >
               + child
             </button>
-            <button
-              className="mini-button mini-button-danger"
-              type="button"
-              onClick={() => onArchive(task)}
-              aria-label="Archive"
-            >
-              Archive
-            </button>
+            {isArchived ? (
+              <span className="outliner-action outliner-action-archived">Archived</span>
+            ) : (
+              <button
+                className="outliner-action outliner-action-archive"
+                type="button"
+                onClick={() => onArchive(task)}
+                aria-label="Archive"
+              >
+                Archive
+              </button>
+            )}
           </div>
         </div>
-        {hasChildren && isExpanded && <ul className="outliner-children">{children.map((child) => renderTask(child, depth + 1))}</ul>}
+        {hasChildren && isExpanded && <ul className="outliner-children">{children.map((child) => renderTask(child))}</ul>}
       </li>
     );
   }
 
-  return <ul className="task-outliner">{roots.map((task) => renderTask(task, 0))}</ul>;
+  return <ul className="task-outliner">{roots.map((task) => renderTask(task))}</ul>;
 }
 
 interface TrackerPageProps {
@@ -646,12 +661,13 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
     }
     if (!selectedProject) return;
     const editingTask = taskEditor === 'edit' ? selectedTask : null;
-    try {
-      const existingTasks = editingTask ? tasks.filter((task) => task.id !== editingTask.id) : tasks;
-      assertTaskDepth(existingTasks, draft.parent_task_id, editingTask?.id);
-    } catch (error) {
-      setTaskSaveError(errorMessage(error));
-      return;
+    if (editingTask) {
+      try {
+        assertNoParentCycle(tasks, editingTask.id, draft.parent_task_id);
+      } catch (error) {
+        setTaskSaveError(errorMessage(error));
+        return;
+      }
     }
     setTaskSaving(true);
     setTaskSaveError(null);

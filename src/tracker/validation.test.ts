@@ -1,4 +1,4 @@
-import { assertNoParentCycle, assertTaskDepth, assertValidTaskStatus } from '../data';
+import { assertNoParentCycle, assertValidTaskStatus } from '../data';
 
 describe('tracker validation', () => {
   it('rejects a parent relationship that would create a cycle', () => {
@@ -18,36 +18,46 @@ describe('tracker validation', () => {
     expect(() => assertValidTaskStatus('shipped')).not.toThrow();
   });
 
-  it('rejects a parent that would place a task beyond the two-level product cap', () => {
+  it('allows a legal hierarchy to nest at least four levels deep', () => {
     const tasks = [
-      { id: 'parent', parent_task_id: null },
-      { id: 'child', parent_task_id: 'parent' },
+      { id: 'l1', parent_task_id: null },
+      { id: 'l2', parent_task_id: 'l1' },
+      { id: 'l3', parent_task_id: 'l2' },
+      { id: 'l4', parent_task_id: 'l3' },
     ];
 
-    expect(() => assertTaskDepth(tasks, 'parent')).not.toThrow();
-    expect(() => assertTaskDepth(tasks, 'child')).toThrow(
-      'Tasks can have at most one level of subtasks',
-    );
+    expect(() => assertNoParentCycle(tasks, 'l5', 'l4')).not.toThrow();
+    expect(() => assertNoParentCycle(tasks, 'l6', 'l5')).not.toThrow();
   });
 
-  it('rejects re-parenting a task that already has subtasks under another task', () => {
+  it('rejects a direct self-parent at any nesting depth', () => {
     const tasks = [
-      { id: 'A', parent_task_id: null },
-      { id: 'B', parent_task_id: null },
-      { id: 'C', parent_task_id: 'B' },
+      { id: 'l1', parent_task_id: null },
+      { id: 'l2', parent_task_id: 'l1' },
+      { id: 'l3', parent_task_id: 'l2' },
+      { id: 'l4', parent_task_id: 'l3' },
     ];
 
-    expect(() => assertTaskDepth(tasks, 'A', 'B')).toThrow(
-      'This task has subtasks and must stay top-level',
-    );
+    expect(() => assertNoParentCycle(tasks, 'l4', 'l4')).toThrow(/own parent/);
   });
 
-  it('allows re-parenting a childless task under a top-level task', () => {
+  it('rejects re-parenting a task under its own deep descendant', () => {
     const tasks = [
-      { id: 'A', parent_task_id: null },
-      { id: 'D', parent_task_id: null },
+      { id: 'l1', parent_task_id: null },
+      { id: 'l2', parent_task_id: 'l1' },
+      { id: 'l3', parent_task_id: 'l2' },
+      { id: 'l4', parent_task_id: 'l3' },
     ];
 
-    expect(() => assertTaskDepth(tasks, 'A', 'D')).not.toThrow();
+    expect(() => assertNoParentCycle(tasks, 'l1', 'l4')).toThrow(/cycle/);
+  });
+
+  it('rejects a parent relationship built on a pre-existing cycle in stored data', () => {
+    const tasks = [
+      { id: 'a', parent_task_id: 'b' },
+      { id: 'b', parent_task_id: 'a' },
+    ];
+
+    expect(() => assertNoParentCycle(tasks, 'new-task', 'a')).toThrow(/already contain a cycle/);
   });
 });

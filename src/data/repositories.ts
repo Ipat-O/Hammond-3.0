@@ -3,7 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseClient } from './client';
 import type { Database } from './database.types';
 import { assertNoAbsoluteLocalPaths } from './pathGuard';
-import { assertNoParentCycle, assertTaskDepth, assertValidTaskStatus } from './taskValidation';
+import { assertNoParentCycle, assertValidTaskStatus } from './taskValidation';
 
 type Tables = Database['public']['Tables'];
 type ProjectInsert = Tables['projects']['Insert'];
@@ -61,10 +61,9 @@ export class TaskRepository {
   async create(input: TaskInsert) {
     assertNoAbsoluteLocalPaths(input);
     if (input.status !== undefined) assertValidTaskStatus(input.status);
-    if (input.parent_task_id) {
+    if (input.parent_task_id && input.id) {
       const existingTasks = await this.list(input.project_id, { includeArchived: true });
-      if (input.id) assertNoParentCycle(existingTasks, input.id, input.parent_task_id);
-      assertTaskDepth(existingTasks, input.parent_task_id);
+      assertNoParentCycle(existingTasks, input.id, input.parent_task_id);
     }
     return dataOrThrow(await this.client.from('tasks').insert(input).select().single());
   }
@@ -80,7 +79,6 @@ export class TaskRepository {
           ? input.parent_task_id
           : (currentTask?.parent_task_id ?? null);
       assertNoParentCycle(existingTasks, id, parentTaskId);
-      assertTaskDepth(existingTasks, parentTaskId, id);
     }
     return dataOrThrow(
       await this.client.from('tasks').update(input).eq('id', id).select().single(),
