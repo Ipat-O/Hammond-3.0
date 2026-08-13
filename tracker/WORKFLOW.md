@@ -4,13 +4,12 @@
 
 - Human owner: chooses product direction, manually transfers prompts, performs named human checks, and authorizes merge.
 - Active orchestrator: Anthropic / Claude Code / Claude Opus 5.
-- OpenAI participant: OpenAI / Luna.
-- Anthropic participant: Claude Code / Claude Sonnet 5.
-- Kilo participant: Kilo Code / DeepSeek V4 Pro.
+- Implementation worker, all tasks: OpenAI / Luna.
+- Independent auditor, all tasks: Kilo Code / DeepSeek V4 Pro.
 
-The orchestrator does not write feature code and never acts as worker or auditor on a task it orchestrates. The three execution families rotate as worker and auditor. No provider family audits its own implementation.
+The orchestrator does not write feature code and never acts as worker or auditor. Under D-012 the Anthropic family holds no execution role at all, so the orchestrating family is entirely separate from the implementing and auditing families.
 
-The orchestrator and the Sonnet participant share a provider and tool, differing only by model. Audit independence is therefore enforced by the routing matrix per task, not inferred from provider identity.
+Every task is implemented by OpenAI and audited by Kilo. No provider family audits its own implementation.
 
 Execution identities are recorded here at family level. The exact harness and model version are bound in each work order at dispatch time, alongside the exact start SHA.
 
@@ -83,24 +82,15 @@ The orchestrator confirms the PR targets `dev`, is conflict-free, names the task
 
 ## Routing matrix
 
-| Task | Worker | Auditor |
-|---|---|---|
-| HAM3-001 | OpenAI / Luna | Kilo Code / DeepSeek V4 Pro |
-| HAM3-002 | OpenAI / Luna | Claude Code / Claude Sonnet 5 |
-| HAM3-003 | Kilo Code / DeepSeek V4 Pro | Claude Code / Claude Sonnet 5 |
-| HAM3-004 | OpenAI / Luna | Kilo Code / DeepSeek V4 Pro |
-| HAM3-005 | Claude Code / Claude Sonnet 5 | OpenAI / Luna |
-| HAM3-006 | Kilo Code / DeepSeek V4 Pro | Claude Code / Claude Sonnet 5 |
-| HAM3-007 | OpenAI / Luna | Kilo Code / DeepSeek V4 Pro |
-| HAM3-008 | Claude Code / Claude Sonnet 5 | OpenAI / Luna |
-| HAM3-009 | Kilo Code / DeepSeek V4 Pro | Claude Code / Claude Sonnet 5 |
-| HAM3-010 | OpenAI / Luna | Kilo Code / DeepSeek V4 Pro |
-| HAM3-011 | Claude Code / Claude Sonnet 5 | OpenAI / Luna |
-| HAM3-012 | Kilo Code / DeepSeek V4 Pro | Claude Code / Claude Sonnet 5 |
+Every task, HAM3-001 through HAM3-012:
+
+| Worker | Auditor |
+|---|---|
+| OpenAI / Luna | Kilo Code / DeepSeek V4 Pro |
 
 No task is audited by its author's family. Routing may be changed by the owner before dispatch. The exact work order always overrides the planning default and must explicitly name every participant.
 
-The matrix was originally balanced at four worker and four auditor slots per family. The owner reassigned HAM3-002 from Sonnet to Luna before dispatch, which moved that task's audit to Sonnet. Load is therefore five/three in Luna's favour on implementation and three/five on audit, with Kilo unchanged. Rebalancing is deliberately not attempted mid-plan; the constraint that matters is that no family audits itself, and that still holds on every row.
+This replaces an earlier three-family rotation balanced at four implementations and four audits per family. The owner consolidated implementation onto a single family; see D-012, including the implementation-diversity tradeoff that consolidation accepts.
 
 ## Execution order
 

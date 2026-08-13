@@ -50,6 +50,18 @@ The orchestrator shares a provider and tool with the Sonnet participant, differi
 
 Execution identities are recorded at family level in the workflow and task index. The exact harness and model version are bound in each work order at dispatch time, alongside the exact start SHA, so a worker can verify itself against its packet.
 
+## D-012 — Luna implements; DeepSeek audits
+
+Supersedes the three-family rotation in D-010. The orchestrator identity in D-010 is unchanged.
+
+Every task is implemented by OpenAI / Luna and independently audited by Kilo Code / DeepSeek V4 Pro. Claude Code / Claude Sonnet 5 is removed from the execution roster.
+
+The Anthropic family therefore holds no execution role. It orchestrates only. This is stronger separation than the previous arrangement, where the orchestrator shared a provider and tool with an execution participant and independence had to be argued from the routing matrix rather than read off the roster.
+
+The tradeoff this accepts, recorded so it is not rediscovered later: a single family now writes the entire codebase. Implementation diversity is gone, so any systematic weakness in the implementing family is present in every task, and the independent audit is the only check on it. That raises the stakes on the auditor's verdicts and on the requirement that audits reproduce verification independently rather than reading the worker's report. The HAM3-001 audit did exactly that and caught two real defects; that standard is now load-bearing rather than merely good practice.
+
+The invariant that survives unchanged: no provider family audits its own implementation.
+
 ## D-011 — Sequential delivery
 
 Supersedes the concurrent-dispatch allowance in the original workflow.

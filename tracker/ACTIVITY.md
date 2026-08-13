@@ -160,3 +160,14 @@
 - The packet tells Luna explicitly that this is an owner override, why the audit moved, and that having delivered HAM3-001 confers no standing on this task.
 - The auditor for this task shares a provider and tool with the orchestrator. Independence rests on the routing matrix per D-010: the work is authored by OpenAI and audited by Anthropic.
 - GitHub issue #1 closed with the full delivery record: approved head `0eec339`, merge commit `757c58d`, PR #2, worker and auditor identities, and the passed human check. No issue was opened for HAM3-002; the packet records `not_available` with a stated reason rather than leaving a blank field, since an unfilled identity field previously caused a worker to stop.
+
+## 2026-08-12 — Roster consolidated to two families; HAM3-002 dispatch aborted on a stale base
+
+- The owner directed that all implementation go to OpenAI / Luna and all audits to Kilo Code / DeepSeek V4 Pro. Claude Code / Claude Sonnet 5 is removed from the execution roster.
+- Recorded as D-012, superseding the three-family rotation in D-010. The orchestrator identity is unchanged. Applied across the workflow, routing matrix, task index, board, and all twelve task files so no canonical document contradicts the dispatched packets.
+- The Anthropic family now holds no execution role and orchestrates only. This is stronger separation than before, when the orchestrator shared a provider and tool with an execution participant and independence had to be argued from the matrix rather than read off the roster.
+- The tradeoff was stated to the owner before proceeding and recorded in D-012: implementation diversity is gone, so a systematic weakness in the implementing family would appear in every task with the independent audit as the only check.
+- A dispatch of HAM3-002 was attempted and the worker correctly aborted without modifying files. Its identity check found the base SHA stale and the worktree dirty.
+- Cause attributed to the orchestrator, not the worker. The packet was bound to `c35c4dc647d3a9a75db0b444ff74f9deaafe9d66`, after which the orchestrator continued committing tracker updates, advancing `dev` to `7cd3c1e3aae01c651e5becb888fdf1a4c77d87bd`, and was mid-edit on the routing change when dispatch occurred, leaving the worktree dirty.
+- The worker also reported the expected branch as a mismatch because it was on `dev`. That is the correct starting state, since the packet asks the worker to create the branch. The wording made a branch that does not yet exist look like a precondition, and has been corrected.
+- Process consequence recorded: a work order binds a SHA at the moment it is issued, so tracker commits must stop between binding and dispatch, or the packet must be rebound immediately before handover. Rebinding at handover is adopted as the practice.
