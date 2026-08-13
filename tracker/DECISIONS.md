@@ -62,6 +62,24 @@ The tradeoff this accepts, recorded so it is not rediscovered later: a single fa
 
 The invariant that survives unchanged: no provider family audits its own implementation.
 
+## D-013 — Task hierarchy is presented as a main-pane outliner with focus
+
+Recorded after the HAM3-004 human check, when the owner found parent and child relationships functional but thinly presented and asked for a foldable tree.
+
+The sidebar holds projects only. The task tree lives in the main pane at full width.
+
+Rationale: Hammond task rows carry status now and will carry head SHA, pull request, and evidence later. A narrow sidebar cannot show that, so a sidebar tree would force a click on every row to learn anything. Notion's sidebar works because its items are only page titles.
+
+Scale is handled by focus, not by folding alone. Clicking a task makes it the temporary root with a breadcrumb back, so the whole tree is never rendered and both depth and volume stop mattering. Folding alone fails once there are many top-level tasks, because the user then scrolls through collapsed rows instead of expanded ones.
+
+Supporting rules:
+
+- Children default to collapsed, with a child count badge. The badge is what makes collapsing safe, since hidden work stays visible as a number.
+- Nesting is capped at two levels, task and subtask. The schema permits unlimited depth through `parent_task_id`, so this is a product constraint rather than a database one. Deep trees in trackers are consistently regretted; they invite taxonomy building instead of work.
+- List virtualization is deferred until a project exceeds a few hundred rows. At the current scale plain DOM is correct.
+
+The owner asked for this at the nearest occasion. Its natural owner is HAM3-011, tracker depth, with focus and breadcrumb navigation possibly belonging to HAM3-008. Both sit behind dependencies, so delivering it sooner requires a dedicated task, which is an owner decision about the shape of the plan.
+
 ## D-011 — Sequential delivery
 
 Supersedes the concurrent-dispatch allowance in the original workflow.

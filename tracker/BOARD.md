@@ -30,13 +30,14 @@ None.
 
 ## testing
 
-- [HAM3-004](./tasks/HAM3-004.md) — Core project and task tracker  
-  PR [#4](https://github.com/Ipat-O/Hammond-3.0/pull/4) · approved head `d0f775e21b31690eeacea026e11ffeaa71dd124f` · hosted migration applied · human check passed · awaiting owner-authorized merge
+None.
 
 ## merged
 
 - [HAM3-002](./tasks/HAM3-002.md) — Supabase project memory and owner access  
-  PR [#3](https://github.com/Ipat-O/Hammond-3.0/pull/3) · approved head `acd0b5e99013b89aaf6d323727ac81dfe01b9bdc` · merge commit `20f6155d770f06062eab63bb0d8d0b89ec019270` · held at `merged`: the persistence layer has no UI and release builds have no devtools, so the capability cannot be observed until HAM3-004 provides screens
+  PR [#3](https://github.com/Ipat-O/Hammond-3.0/pull/3) · approved head `acd0b5e99013b89aaf6d323727ac81dfe01b9bdc` · merge commit `20f6155d770f06062eab63bb0d8d0b89ec019270` · now observable through the HAM3-004 UI; awaiting a packaged build to ship
+- [HAM3-004](./tasks/HAM3-004.md) — Core project and task tracker  
+  PR [#4](https://github.com/Ipat-O/Hammond-3.0/pull/4) · approved head `d0f775e21b31690eeacea026e11ffeaa71dd124f` · merge commit `1dc533f6ef01d9ba302bf48eb67b74e2be82ebd5` · awaiting owner observation in the packaged app to become `shipped`
 
 ## shipped
 

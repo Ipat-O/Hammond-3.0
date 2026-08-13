@@ -282,3 +282,12 @@
 - All acceptance criteria for HAM3-004 are satisfied. The task awaits only owner-authorized merge.
 - Owner feedback recorded but deliberately not acted on: the parent and child relationship is functional but thinly presented, and the owner asked for a foldable tree in the side panel. This is a new requirement, not a defect against the accepted criteria, and folding it into this branch would create a new commit that invalidates the audit verdict bound to `d0f775e21b31690eeacea026e11ffeaa71dd124f`. It belongs in a follow-up task.
 - HAM3-011, tracker depth and activity, is the natural home for hierarchy presentation, with HAM3-008 owning project home and navigation. The requirement is recorded here so it is not lost between them.
+
+## 2026-08-13 — HAM3-004 merged; hierarchy presentation agreed as D-013
+
+- The owner authorized the merge. The branch head was re-checked immediately beforehand and still equalled the approved SHA. PR #4 was marked ready and merged into `dev` as merge commit `1dc533f6ef01d9ba302bf48eb67b74e2be82ebd5`, with `d0f775e` preserved as an ancestor.
+- Delivery record: worker OpenAI / Codex Desktop / GPT-5; auditor Kilo Code / DeepSeek V4 Pro; orchestrator Anthropic / Claude Code / Claude Opus 5. No corrections were required. Three of four delivered tasks have now needed no correction.
+- The owner approved the proposed hierarchy presentation and asked for it at the nearest occasion. Recorded as D-013: projects in the sidebar, the task tree as a full-width main-pane outliner, scale handled by focus rather than folding alone, children collapsed by default with a count badge, nesting capped at two levels as a product constraint, and virtualization deferred.
+- D-013 cannot be delivered immediately under the current plan. Its natural owner HAM3-011 depends on HAM3-009 and HAM3-010, and HAM3-008 depends on HAM3-003 and HAM3-006. Honouring "nearest occasion" therefore requires either a dedicated task or accepting the wait, which is an owner decision about the shape of the twelve-task plan rather than an orchestration call.
+- A tracker drift was found and corrected: `index.yaml` still recorded HAM3-004 as `in_review` after the board had moved it to `testing`, because an earlier update changed the board without changing the index. Both now read `merged`.
+- HAM3-002's shipping blocker is resolved. The merged UI makes the persistence layer observable, so both HAM3-002 and HAM3-004 can ship from one packaged build.

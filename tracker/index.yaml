@@ -58,7 +58,7 @@ tasks:
     outstanding: none
     hosted_migration: applied; 20260813075651 present on both local and remote for project polphkuvlleadblxmjyz after owner-authenticated CLI login and link
     human_check: passed; the owner signed in once, then a cold restart of the desktop app returned the same owner id and the seed project without repeating setup
-    shipped_blocked_by: no UI and no devtools in release builds, so the capability cannot be observed in a packaged app; expected to ship once HAM3-004 provides project and task screens
+    shipped_blocked_by: resolved; HAM3-004 merged and provides project and task screens, so the capability is now observable in a packaged build
   - id: HAM3-003
     title: Local directory contexts and bindings
     state: in_design
@@ -67,7 +67,8 @@ tasks:
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-004
     title: Core project and task tracker
-    state: in_review
+    state: merged
+    merge_commit: 1dc533f6ef01d9ba302bf48eb67b74e2be82ebd5
     depends_on: [HAM3-002]
     worker: OpenAI / Luna
     auditor: Kilo Code / DeepSeek V4 Pro
