@@ -18,7 +18,8 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## ready_for_development
 
-None.
+- [HAM3-013](./tasks/HAM3-013.md) — Task hierarchy outliner  
+  Branch `openai/HAM3-013-hierarchy-outliner` · worker OpenAI / Codex Desktop / GPT-5 · auditor Kilo Code / DeepSeek V4 Pro · design fixed by D-013
 
 ## in_development
 

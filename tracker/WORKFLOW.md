@@ -82,7 +82,7 @@ The orchestrator confirms the PR targets `dev`, is conflict-free, names the task
 
 ## Routing matrix
 
-Every task, HAM3-001 through HAM3-012:
+Every task, HAM3-001 through HAM3-013:
 
 | Worker | Auditor |
 |---|---|

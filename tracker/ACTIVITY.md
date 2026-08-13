@@ -291,3 +291,12 @@
 - D-013 cannot be delivered immediately under the current plan. Its natural owner HAM3-011 depends on HAM3-009 and HAM3-010, and HAM3-008 depends on HAM3-003 and HAM3-006. Honouring "nearest occasion" therefore requires either a dedicated task or accepting the wait, which is an owner decision about the shape of the twelve-task plan rather than an orchestration call.
 - A tracker drift was found and corrected: `index.yaml` still recorded HAM3-004 as `in_review` after the board had moved it to `testing`, because an earlier update changed the board without changing the index. Both now read `merged`.
 - HAM3-002's shipping blocker is resolved. The merged UI makes the persistence layer observable, so both HAM3-002 and HAM3-004 can ship from one packaged build.
+
+## 2026-08-13 — HAM3-013 added and promoted
+
+- The owner chose to add a dedicated task rather than wait for HAM3-011. The foundation plan grows from twelve tasks to thirteen. This is a change to the plan's shape, made by the owner rather than assumed by the orchestrator.
+- HAM3-013, task hierarchy outliner, created with its design fixed by D-013 rather than left to the worker. It depends only on the merged HAM3-004, so it was dispatchable immediately and was promoted straight to `ready_for_development`.
+- Scope deliberately bounded: outliner in the main pane, chevron expand and collapse, child count badges, focus with a breadcrumb, and a two-level nesting cap enforced in the application.
+- Non-scope stated explicitly to prevent drift. No migration, because `parent_task_id` already permits deeper nesting and the two-level cap is a product constraint rather than a database one. No drag and drop, keyboard tree navigation, multi-select, or bulk edit. No virtualization, which stays deferred until a project exceeds a few hundred rows.
+- Acceptance includes a regression guard: HAM3-004's statuses, cycle rejection, comments, and persistence must all still work, since this task rewrites the surface that sits on top of them.
+- Routing unchanged under D-012: OpenAI / Luna implements, Kilo Code / DeepSeek V4 Pro audits.
