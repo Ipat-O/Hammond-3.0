@@ -28,12 +28,12 @@ None.
 
 ## in_review
 
-- [HAM3-001](./tasks/HAM3-001.md) — Desktop application foundation  
-  PR [#2](https://github.com/Ipat-O/Hammond-3.0/pull/2) · reviewed head `0eec339c586fc65685d0de531c64315cb716a563` · re-audit round 2 by Kilo Code / DeepSeek V4 Pro
+None.
 
 ## testing
 
-None.
+- [HAM3-001](./tasks/HAM3-001.md) — Desktop application foundation  
+  PR [#2](https://github.com/Ipat-O/Hammond-3.0/pull/2) · approved head `0eec339c586fc65685d0de531c64315cb716a563` · exact-head validation complete · human check passed · awaiting owner-authorized merge
 
 ## merged
 

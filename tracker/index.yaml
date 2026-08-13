@@ -16,7 +16,7 @@ execution_families:
 tasks:
   - id: HAM3-001
     title: Desktop application foundation
-    state: in_review
+    state: testing
     corrections_completed: 2
     depends_on: []
     worker: OpenAI / Luna
@@ -24,12 +24,14 @@ tasks:
     dispatched_worker_identity: OpenAI / Codex Desktop / GPT-5
     branch: openai/HAM3-001-desktop-foundation
     base_sha: beb106a335a4943c5b3f3f0298da86054b66e90a
-    audited_head_sha: e482dd1d46d73eca2c10e1a35d186f88acc80434
-    audit_verdict: CHANGES
+    audited_head_sha: 0eec339c586fc65685d0de531c64315cb716a563
+    audit_verdict: APPROVE
+    audit_round: 2
+    audit_report: https://github.com/Ipat-O/Hammond-3.0/pull/2#issuecomment-5277248106
     current_head_sha: 0eec339c586fc65685d0de531c64315cb716a563
     pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/2
-    native_verification: performed by the worker; cargo fmt, clippy, and tests pass; release executable and MSI produced; independent reproduction requested in re-audit
-    outstanding: npm run tauri:build exits 1 at the NSIS step on a repeated external download failure; classification requested from the auditor
+    native_verification: independently reproduced by the auditor from a clean detached worktree; fmt, clippy, cargo test 2/2, vitest 1/1, lint, typecheck, prettier all exit 0; tauri:build exit 0 on retry with MSI and NSIS bundles
+    outstanding: none
     human_check: passed; the owner ran the release executable at 0eec339 and observed the Hammond shell
   - id: HAM3-002
     title: Supabase project memory and owner access

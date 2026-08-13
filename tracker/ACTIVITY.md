@@ -101,3 +101,13 @@
 - This is the first time the Hammond 3.0 desktop application has been observed running. It confirms the acceptance criterion that the packaged application opens a desktop window without a browser server.
 - The human check does not by itself advance the task. HAM3-001 remains `in_review` pending a cross-family audit verdict bound to the same exact head, followed by owner-authorized merge.
 - `shipped` remains distinct from `merged` and will be recorded only after the capability is observed in the packaged application following merge.
+
+## 2026-08-12 — HAM3-001 approved at 0eec339; ready for owner-authorized merge
+
+- Kilo Code / DeepSeek V4 Pro returned `AUDIT-VERDICT: APPROVE 0eec339c586fc65685d0de531c64315cb716a563`. Report: https://github.com/Ipat-O/Hammond-3.0/pull/2#issuecomment-5277248106
+- The auditor had a Rust toolchain this round and reproduced the native verification independently from a clean detached worktree: `cargo fmt` 0, `clippy` 0 with zero warnings on a full from-scratch compile, `cargo test` 2/2, `vitest` 1/1, lint 0, typecheck 0, `prettier --check` 0. The code is no longer verified by only the party that wrote it.
+- The NSIS failure was classified an infrastructure limitation and then resolved on its own: the auditor reproduced the failure on one attempt and got `tauri:build` exit 0 on an independent retry, producing both MSI and NSIS bundles. No repository configuration contributes to it. The item recorded as outstanding at correction 2 is closed.
+- Both prior advisory deferrals were re-accepted by the auditor: `csp: null` to HAM3-002, and single-smoke-test frontend coverage as satisfying the "test entry points" requirement.
+- Orchestrator readiness check completed: the branch head still equals the approved SHA so the approval is current; the PR targets `dev`, names the task, and carries matching provenance; a local merge dry-run against `dev` at `d74c2578a9d679a9172b8ef1742a6fb8c11cb455` produced no conflicts across 29 application files and would not disturb the tracker records on `dev`.
+- Stage 7 exact-head validation is treated as satisfied by the auditor's from-scratch run rather than repeated. Per D-009, focused verification is the default and a full suite is not re-executed to compensate for uncertainty when an independent party has already executed it at the exact head.
+- HAM3-001 moved from `in_review` to `testing`. It awaits two owner actions that the orchestrator will not take unilaterally: marking PR #2 ready for review, and authorizing the merge. Neither worker nor auditor merges its own work.
