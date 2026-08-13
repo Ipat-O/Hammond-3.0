@@ -397,3 +397,12 @@
 - The typecheck discrepancy was classified dependency-environment rather than a Correction 2 defect. The project does not directly declare `@types/node`; current passing environments resolve a machine-global copy. Hiding that copy reproduces TS2591. This pre-existing dependency hygiene issue is recorded for later planning and does not invalidate the exact-head product approval.
 - HAM3-013 moved from `in_review` to `testing`. The owner must rerun the exact second-child flow that failed at `6b7269c`, then complete collapse/expand, focus/breadcrumb, visible third-level rejection, and cold-restart persistence checks on a build from `b3cd265`.
 - No merge was authorized or performed.
+
+## 2026-08-13 — HAM3-013 owner check revised the product; Correction 3 routed
+
+- The owner confirmed that two levels work at `b3cd265` but rejected the fixed-depth product rule: tasks must be able to nest to arbitrary practical depth. The visible third-level rejection is therefore no longer correct behavior.
+- The same owner check identified two presentation requirements in the outliner: archived tasks are not distinct enough when shown, and the status, Focus, + child, and Archive controls are too low-contrast and visually interchangeable.
+- Source inspection at exact PR head `b3cd2653ccc937e58a639d6028dda1837187c019` keeps the correction bounded. The schema already stores recursive `parent_task_id`; `TaskOutliner.renderTask` is recursive; focus traversal already handles descendants. The fixed limit is application validation in `assertTaskDepth` and its UI/repository call sites, plus one depth-specific CSS selector. No migration is warranted.
+- D-015 supersedes only D-013's depth cap and adds explicit archived/action visual semantics. Cycle prevention, the main-pane outliner, collapse, child counts, focus, persistence, and the virtualization deferral remain unchanged.
+- PR #5 was re-verified open, draft, mergeable, targeting `dev`, with pushed head exactly `b3cd265`. The round-3 DeepSeek approval remains a valid historical statement about that SHA, but it cannot authorize merge after the owner changed the acceptance requirements.
+- HAM3-013 moved from `testing` to `in_development` for Correction 3. Anthropic / Claude Code / Claude Sonnet 5 continues on the same branch and PR from exact head `b3cd265`; Kilo Code / DeepSeek V4 Pro must independently audit the resulting exact SHA in round 4. No feature code was changed by the orchestrator.

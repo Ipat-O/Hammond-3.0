@@ -95,3 +95,11 @@ The owner transferred the active orchestrator role from Anthropic / Claude Code 
 For future tasks, Anthropic / Claude Code / Claude Sonnet is the default implementation worker, OpenAI / Luna is an eligible owner-selected fallback, and Kilo Code / DeepSeek V4 Pro is the default independent auditor. Exact tool and model identities remain bound in each work order at dispatch.
 
 Sonnet is the default because it restores provider-family separation between the OpenAI orchestrator, Anthropic implementation, and Kilo audit. If the owner selects Luna, orchestrator and worker share the OpenAI family; that is allowed only with an independently reproduced Kilo audit and an explicit record in the work order. No provider family may audit its own implementation, and the orchestrator may not fill either execution role. Historical tasks retain their actual delivery identities.
+
+## D-015 — Task hierarchy permits arbitrary depth and uses explicit row semantics
+
+Supersedes only D-013's two-level nesting rule. D-013's main-pane outliner, collapsed children, child counts, focus navigation, and virtualization deferral remain in force.
+
+The owner rejected the artificial two-level cap during the HAM3-013 human check. Tasks may nest to arbitrary practical depth through the existing `parent_task_id`; application validation must prevent cycles but must not impose a fixed depth maximum. This is an application-only correction because the schema already supports the relationship and has no depth constraint.
+
+When archived tasks are shown, archived rows must be unmistakable through an explicit textual indicator and distinct row treatment. Color alone is insufficient. Row controls also need a functional visual hierarchy: status is a state control, Focus is navigation, + child is constructive, and Archive is destructive. Their labels, contrast, hover, keyboard-focus, and disabled states must remain readable in the dark theme. This is a presentation change, not permission to redesign task persistence, add restore behavior, or introduce new task actions.
