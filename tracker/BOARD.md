@@ -7,7 +7,6 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 ## in_design
 
 - [HAM3-003](./tasks/HAM3-003.md) — Local directory contexts and bindings
-- [HAM3-004](./tasks/HAM3-004.md) — Core project and task tracker
 - [HAM3-005](./tasks/HAM3-005.md) — Versioned instruction template domain
 - [HAM3-006](./tasks/HAM3-006.md) — Harness adapters and managed-file injection
 - [HAM3-007](./tasks/HAM3-007.md) — Instruction Studio UI
@@ -19,7 +18,8 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## ready_for_development
 
-None.
+- [HAM3-004](./tasks/HAM3-004.md) — Core project and task tracker  
+  Branch `openai/HAM3-004-core-tracker` · worker OpenAI / Codex Desktop / GPT-5 · auditor Kilo Code / DeepSeek V4 Pro · base SHA bound at dispatch
 
 ## in_development
 
@@ -35,12 +35,13 @@ None.
 
 ## merged
 
-- [HAM3-001](./tasks/HAM3-001.md) — Desktop application foundation  
-  PR [#2](https://github.com/Ipat-O/Hammond-3.0/pull/2) · approved head `0eec339c586fc65685d0de531c64315cb716a563` · merge commit `757c58d7b67cdacb0bf442b43d4a68d6a9bdc8c8` · awaiting owner observation in the packaged app to become `shipped`
 - [HAM3-002](./tasks/HAM3-002.md) — Supabase project memory and owner access  
-  PR [#3](https://github.com/Ipat-O/Hammond-3.0/pull/3) · approved head `acd0b5e99013b89aaf6d323727ac81dfe01b9bdc` · merge commit `20f6155d770f06062eab63bb0d8d0b89ec019270` · awaiting owner observation in the packaged app to become `shipped`
+  PR [#3](https://github.com/Ipat-O/Hammond-3.0/pull/3) · approved head `acd0b5e99013b89aaf6d323727ac81dfe01b9bdc` · merge commit `20f6155d770f06062eab63bb0d8d0b89ec019270` · held at `merged`: the persistence layer has no UI and release builds have no devtools, so the capability cannot be observed until HAM3-004 provides screens
 
 ## shipped
+
+- [HAM3-001](./tasks/HAM3-001.md) — Desktop application foundation  
+  Observed by the owner in the packaged release built from merged `dev` at `cca4e82b88b131a7f06f7511b6698ce372ba8d87`
 
 None.
 

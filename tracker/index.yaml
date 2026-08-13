@@ -19,9 +19,10 @@ execution_families:
 tasks:
   - id: HAM3-001
     title: Desktop application foundation
-    state: merged
+    state: shipped
     corrections_completed: 2
     merge_commit: 757c58d7b67cdacb0bf442b43d4a68d6a9bdc8c8
+    shipped_evidence: the owner observed the Hammond shell in the packaged release built from merged dev at cca4e82b88b131a7f06f7511b6698ce372ba8d87
     depends_on: []
     worker: OpenAI / Luna
     auditor: Kilo Code / DeepSeek V4 Pro
@@ -57,6 +58,7 @@ tasks:
     outstanding: none
     hosted_migration: applied; 20260813075651 present on both local and remote for project polphkuvlleadblxmjyz after owner-authenticated CLI login and link
     human_check: passed; the owner signed in once, then a cold restart of the desktop app returned the same owner id and the seed project without repeating setup
+    shipped_blocked_by: no UI and no devtools in release builds, so the capability cannot be observed in a packaged app; expected to ship once HAM3-004 provides project and task screens
   - id: HAM3-003
     title: Local directory contexts and bindings
     state: in_design
@@ -65,10 +67,13 @@ tasks:
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-004
     title: Core project and task tracker
-    state: in_design
+    state: ready_for_development
     depends_on: [HAM3-002]
     worker: OpenAI / Luna
     auditor: Kilo Code / DeepSeek V4 Pro
+    dispatched_worker_identity: OpenAI / Codex Desktop / GPT-5
+    dispatched_auditor_identity: Kilo / Kilo Code / DeepSeek V4 Pro
+    branch: openai/HAM3-004-core-tracker
   - id: HAM3-005
     title: Versioned instruction template domain
     state: in_design
