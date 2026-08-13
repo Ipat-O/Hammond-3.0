@@ -360,3 +360,12 @@
 - One safety-preserving UI observation is carried into merge readiness rather than discarded. In create mode, the shared UI pre-check may pass the previously selected task id and falsely reject adding another child to a selected parent that already has children. Repository create correctly omits the moving id, so this cannot allow invalid depth or corrupt persistence, but it may obstruct a normal legal operation.
 - The observation does not overturn the independent approval. It becomes a required human check: create two children under the same selected parent through the ordinary `+ child` flow without deselecting or using a workaround. If that fails, HAM3-013 returns for a narrow correction and any new head requires another Kilo audit.
 - HAM3-013 moved from `in_review` to `testing`. It is not merge-ready until the full owner check passes; no merge was authorized or performed.
+
+## 2026-08-13 — HAM3-013 owner check failed; Correction 2 routed
+
+- The owner reproduced the exact UI observation carried out of audit round 2. In new-task mode, using `+ child` under a selected parent that already has a child produces: `This task has subtasks and must stay top-level. Move or remove its subtasks before re-parenting it.`
+- Screenshot evidence shows the form is explicitly in `NEW TASK` mode and the intended parent is selected, so this is not a re-parent operation and the message is inapplicable. The human check therefore failed; this is a product defect, not user error.
+- Root-cause boundary is already established by the independent auditor: `saveTask` shares create and edit validation but passes `selectedTask?.id` as the moving task id in both modes. Create mode must pass no moving id, matching `TaskRepository.create`. Its task-list filtering must likewise exclude an id only during edit mode so create validation sees the full hierarchy.
+- Safety remains intact. Repository create validates the full stored task set without a moving id, so invalid depth cannot persist. The defect is an over-restrictive UI pre-check that blocks a legal operation.
+- PR #5 was re-verified open, draft, mergeable, and still headed by `6b7269ccce71d0d8069bc7706970a62817fda4d4`. No unauthorized commit or merge occurred.
+- HAM3-013 moved from `testing` to `in_development` for Correction 2 by the original OpenAI / Luna worker on the same branch and PR. Any new head invalidates the round-2 approval for merge purposes and requires DeepSeek audit round 3.

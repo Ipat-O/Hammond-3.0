@@ -22,7 +22,8 @@ None.
 
 ## in_development
 
-None.
+- [HAM3-013](./tasks/HAM3-013.md) — Task hierarchy outliner
+  Correction 2 required after owner check reproduced create-mode false rejection at approved head `6b7269ccce71d0d8069bc7706970a62817fda4d4`
 
 ## in_review
 
@@ -30,8 +31,7 @@ None.
 
 ## testing
 
-- [HAM3-013](./tasks/HAM3-013.md) — Task hierarchy outliner
-  PR [#5](https://github.com/Ipat-O/Hammond-3.0/pull/5) · approved head `6b7269ccce71d0d8069bc7706970a62817fda4d4` · audit [round 2](https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5284456202) · owner human check pending
+None.
 
 ## merged
 
