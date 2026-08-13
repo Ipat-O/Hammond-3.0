@@ -318,3 +318,13 @@
 - One limitation reported honestly: there is no automated restart or end-to-end persistence test, so the owner human check remains required.
 - A working-directory hazard recurred and was contained. The worker left its branch checked out, so the orchestrator's tracker edits were sitting on the wrong branch. The branch guard adopted after the earlier misplaced-commit incident aborted the commit chain before anything was written, and the edits were moved to `dev` with a stash rather than committed in place. The guard is now demonstrated to work rather than merely intended.
 - HAM3-013 moved to `in_review`, bound to exact head `8903ff0f4870155bbe0dc45c290d16c276f9c728`.
+
+## 2026-08-13 — HAM3-013 audited; CHANGES at 8903ff0
+
+- Kilo Code / DeepSeek V4 Pro returned `AUDIT-VERDICT: CHANGES 8903ff0f4870155bbe0dc45c290d16c276f9c728`. Report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5281244859
+- One material finding, and it is a genuine defect rather than a style objection. `assertTaskDepth` measures the ancestor depth of the **new parent** but not the depth of the **subtree being moved**. Re-parenting a task that already has children therefore produces a three-level chain, `C -> A -> B`, silently violating the two-level cap the task exists to enforce.
+- The auditor demonstrated the gap with a temporary pure-function test and removed it afterwards, rather than asserting the defect from reading the code.
+- Everything else verified clean and is not in scope for correction: the off-by-one semantics of `MAX_TASK_NESTING_DEPTH = 1` are correct in both boundary directions; `assertTaskDepth` is invoked on create, update, and the client-side save pre-check; the depth and cycle guards do not mask one another; the mutation proof reproduced with the worktree left clean; view state provably does not mutate stored data; child counts are accurate; D-013 conformance holds; HAM3-004 is not regressed at 18/18 tests; the migration was correctly omitted and the schema still carries no depth constraint.
+- The missing automated restart test was classified `acceptable` for this task, so it is not part of the correction.
+- Worth recording about the orchestration itself: the audit packet asked whether the guard was enforced on all write paths, and it was. The real gap was narrower and subtler — the guard measures the wrong side of the relationship. The independent audit found what a targeted question did not.
+- HAM3-013 moved from `in_review` to `in_development` for Correction 1, routed to the original worker on the same branch and pull request. Any new commit invalidates the prior review.

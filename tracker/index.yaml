@@ -139,7 +139,8 @@ tasks:
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-013
     title: Task hierarchy outliner
-    state: in_review
+    state: in_development
+    correction: 1
     depends_on: [HAM3-004]
     worker: OpenAI / Luna
     auditor: Kilo Code / DeepSeek V4 Pro
@@ -149,5 +150,9 @@ tasks:
     base_sha: a4f322bfe0cf4e95cc029089b9bc1cd81199ff81
     head_sha: 8903ff0f4870155bbe0dc45c290d16c276f9c728
     pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/5
+    audited_head_sha: 8903ff0f4870155bbe0dc45c290d16c276f9c728
+    audit_verdict: CHANGES
+    audit_report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5281244859
+    finding: the depth guard measures the new parent's ancestor depth but not the moved subtree's own depth, so re-parenting a task that already has children silently produces a third level
     design_decision: D-013
     added: after the HAM3-004 human check at the owner's request; extends the foundation plan from twelve tasks to thirteen
