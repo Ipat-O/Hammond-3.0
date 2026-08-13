@@ -647,7 +647,7 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
     if (!selectedProject) return;
     try {
       const existingTasks = tasks.filter((task) => task.id !== selectedTask?.id);
-      assertTaskDepth(existingTasks, draft.parent_task_id);
+      assertTaskDepth(existingTasks, draft.parent_task_id, selectedTask?.id);
     } catch (error) {
       setTaskSaveError(errorMessage(error));
       return;

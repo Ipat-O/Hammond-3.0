@@ -53,16 +53,10 @@ export function assertNoParentCycle(
   }
 }
 
-export function assertTaskDepth(
-  tasks: ReadonlyArray<Pick<TaskRecord, 'id' | 'parent_task_id'>>,
-  parentTaskId: string | null | undefined,
-): void {
-  if (parentTaskId == null) return;
-
-  const parentById = new Map(tasks.map((task) => [task.id, task.parent_task_id]));
+function measureAncestorDepth(parentById: Map<string, string | null>, taskId: string): number {
   const visited = new Set<string>();
-  let currentId: string | null = parentTaskId;
   let depth = 0;
+  let currentId: string | null = taskId;
 
   while (currentId) {
     if (visited.has(currentId)) {
@@ -70,11 +64,62 @@ export function assertTaskDepth(
     }
     visited.add(currentId);
     depth += 1;
-    if (depth > MAX_TASK_NESTING_DEPTH) {
+    currentId = parentById.get(currentId) ?? null;
+  }
+
+  return depth;
+}
+
+function measureSubtreeHeight(
+  tasks: ReadonlyArray<Pick<TaskRecord, 'id' | 'parent_task_id'>>,
+  rootId: string,
+): number {
+  const childrenById = new Map<string, string[]>();
+  for (const task of tasks) {
+    if (task.parent_task_id == null) continue;
+    const siblings = childrenById.get(task.parent_task_id);
+    if (siblings) siblings.push(task.id);
+    else childrenById.set(task.parent_task_id, [task.id]);
+  }
+
+  const visited = new Set<string>();
+  const stack: Array<{ id: string; depth: number }> = [{ id: rootId, depth: 0 }];
+  let height = 0;
+
+  while (stack.length > 0) {
+    const { id, depth } = stack.pop()!;
+    if (visited.has(id)) {
+      throw new Error('Parent relationships already contain a cycle');
+    }
+    visited.add(id);
+    height = Math.max(height, depth);
+    for (const childId of childrenById.get(id) ?? []) {
+      stack.push({ id: childId, depth: depth + 1 });
+    }
+  }
+
+  return height;
+}
+
+export function assertTaskDepth(
+  tasks: ReadonlyArray<Pick<TaskRecord, 'id' | 'parent_task_id'>>,
+  parentTaskId: string | null | undefined,
+  movingTaskId?: string | null,
+): void {
+  if (parentTaskId == null) return;
+
+  const parentById = new Map(tasks.map((task) => [task.id, task.parent_task_id]));
+  const parentChainLength = measureAncestorDepth(parentById, parentTaskId);
+  const subtreeHeight = movingTaskId ? measureSubtreeHeight(tasks, movingTaskId) : 0;
+
+  if (parentChainLength + subtreeHeight > MAX_TASK_NESTING_DEPTH) {
+    if (subtreeHeight > 0) {
       throw new Error(
-        'Tasks can have at most one level of subtasks. Choose a top-level task as the parent.',
+        'This task has subtasks and must stay top-level. Move or remove its subtasks before re-parenting it.',
       );
     }
-    currentId = parentById.get(currentId) ?? null;
+    throw new Error(
+      'Tasks can have at most one level of subtasks. Choose a top-level task as the parent.',
+    );
   }
 }

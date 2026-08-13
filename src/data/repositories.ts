@@ -80,7 +80,7 @@ export class TaskRepository {
           ? input.parent_task_id
           : (currentTask?.parent_task_id ?? null);
       assertNoParentCycle(existingTasks, id, parentTaskId);
-      assertTaskDepth(existingTasks, parentTaskId);
+      assertTaskDepth(existingTasks, parentTaskId, id);
     }
     return dataOrThrow(
       await this.client.from('tasks').update(input).eq('id', id).select().single(),

@@ -29,4 +29,25 @@ describe('tracker validation', () => {
       'Tasks can have at most one level of subtasks',
     );
   });
+
+  it('rejects re-parenting a task that already has subtasks under another task', () => {
+    const tasks = [
+      { id: 'A', parent_task_id: null },
+      { id: 'B', parent_task_id: null },
+      { id: 'C', parent_task_id: 'B' },
+    ];
+
+    expect(() => assertTaskDepth(tasks, 'A', 'B')).toThrow(
+      'This task has subtasks and must stay top-level',
+    );
+  });
+
+  it('allows re-parenting a childless task under a top-level task', () => {
+    const tasks = [
+      { id: 'A', parent_task_id: null },
+      { id: 'D', parent_task_id: null },
+    ];
+
+    expect(() => assertTaskDepth(tasks, 'A', 'D')).not.toThrow();
+  });
 });
