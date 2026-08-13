@@ -377,3 +377,13 @@
 - Sonnet must continue from exact head `6b7269ccce71d0d8069bc7706970a62817fda4d4` on the existing `openai/HAM3-013-hierarchy-outliner` branch and PR #5. The branch prefix records the task's historical OpenAI authorship and is not changed mid-flight.
 - Live GitHub state was re-verified before rebinding: PR #5 is open, draft, mergeable, targets `dev`, and still has exact head `6b7269c`. No implementation commit has arrived since the failed owner check.
 - The Correction 2 packet now binds Anthropic / Claude Code / Claude Sonnet 5. No feature code was changed by the orchestrator.
+
+## 2026-08-13 — HAM3-013 Correction 2 delivered at b3cd265
+
+- Claude Code / Claude Sonnet 5 delivered Correction 2 at exact head `b3cd2653ccc937e58a639d6028dda1837187c019` on the existing branch and draft PR. Report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5285273885
+- Evidence intake verified live GitHub state: PR #5 is open, draft, mergeable, targets `dev`, and its pushed head equals the reported SHA. The prior approved head `6b7269c` is a true ancestor.
+- The correction is one commit and changes exactly two intended files: `src/tracker/TrackerPage.tsx` and `src/App.test.tsx`, with 33 insertions and 3 deletions. No tracker, migration, repository-depth, Rust, or packaging file changed.
+- The fix matches the packet: `editingTask` is derived before validation; only edit mode filters and passes the moving id; create mode validates the full task set with no moving id. The added UI test covers the owner's exact second-child path.
+- The worker reported 21/21 tests, lint, and format passing, but reported an environment-specific `vite.config.ts` typecheck failure that it also saw at `6b7269c`. The orchestrator did not accept that as a universal project limitation: typecheck passed in the existing exact-head `6b7269c` environment and also passed after a fresh `npm ci` at `b3cd265`.
+- Independent intake verification at the new exact head: 5 files and 21 tests pass; typecheck, lint, and format check all exit 0. The worker's typecheck failure is therefore recorded as environment-specific and superseded for readiness by the clean exact-head reproduction, not converted into a product correction.
+- HAM3-013 returned to `in_review`. DeepSeek audit round 3 must review only `b3cd265`; the approval at `6b7269c` does not carry forward.

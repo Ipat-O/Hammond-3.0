@@ -22,12 +22,12 @@ None.
 
 ## in_development
 
-- [HAM3-013](./tasks/HAM3-013.md) — Task hierarchy outliner
-  Correction 2 assigned by owner override to Claude Code / Claude Sonnet 5 after the owner check reproduced create-mode false rejection at approved head `6b7269ccce71d0d8069bc7706970a62817fda4d4`
+None.
 
 ## in_review
 
-None.
+- [HAM3-013](./tasks/HAM3-013.md) — Task hierarchy outliner
+  PR [#5](https://github.com/Ipat-O/Hammond-3.0/pull/5) · Correction 2 head `b3cd2653ccc937e58a639d6028dda1837187c019` · DeepSeek audit round 3 pending
 
 ## testing
 
