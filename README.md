@@ -30,6 +30,40 @@ npm run tauri:dev
 See [module boundaries](./docs/MODULE_BOUNDARIES.md) before adding filesystem, Supabase, or local
 settings behavior.
 
+## Supabase project memory
+
+Hammond reads `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` from `.env.local`.
+Copy `.env.example`, then use the hosted project's URL and publishable key. Never place a
+service-role or secret key in the desktop app.
+
+The Supabase client persists its owner session in the Tauri webview's local storage and refreshes
+it automatically. This fits Hammond's client-only desktop runtime; there is no server or cookie
+request cycle. Call `ownerAuth.setup` once, then `ownerAuth.getPersistedSession` on later launches.
+Signing out explicitly removes the persisted session.
+
+Local schema workflow:
+
+```powershell
+npm run supabase:start
+npm run supabase:reset
+npm run supabase:test
+npm run supabase:types
+```
+
+Create future migrations with `npx supabase migration new <name>`. After changing migrations,
+reset from clean, run the database tests, regenerate `src/data/database.types.ts`, and commit the
+generated types. To apply migrations to the owner's hosted project, authenticate the CLI, link the
+project, review with `npx supabase db push --dry-run`, then run `npx supabase db push`. CLI
+authentication and database credentials remain device-local and must not be committed.
+
+Owner human check:
+
+1. Start Hammond with the hosted `.env.local`, call the one-time `ownerAuth.setup` flow, and create
+   a seed project through `ProjectRepository`.
+2. Close Hammond completely and reopen it.
+3. Confirm `ownerAuth.getPersistedSession` returns the same owner and `ProjectRepository.list`
+   returns the project without repeating setup.
+
 ## Canonical planning documents
 
 - [Architecture](./docs/ARCHITECTURE.md)
