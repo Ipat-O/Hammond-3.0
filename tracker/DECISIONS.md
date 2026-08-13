@@ -85,3 +85,13 @@ The owner asked for this at the nearest occasion. Its natural owner is HAM3-011,
 Supersedes the concurrent-dispatch allowance in the original workflow.
 
 Exactly one task is dispatched at a time and must reach `merged` before the next is promoted to `ready_for_development`. Each work order therefore binds the current `dev` head at the moment it is issued. Concurrent dispatch, and the expected-file-ownership check it would require, is reintroduced only by explicit owner authorization.
+
+## D-014 — Sol orchestrates; Sonnet defaults to implementation; DeepSeek defaults to audit
+
+Supersedes D-010's orchestrator identity and D-012's fixed execution roster.
+
+The owner transferred the active orchestrator role from Anthropic / Claude Code / Claude Opus 5 to OpenAI / Codex Desktop / GPT-5.6 Sol. The owner explicitly activated the transfer on 2026-08-13. The orchestrator retains the existing boundaries: it does not implement feature code, does not audit a task it orchestrates, and does not merge without owner authorization.
+
+For future tasks, Anthropic / Claude Code / Claude Sonnet is the default implementation worker, OpenAI / Luna is an eligible owner-selected fallback, and Kilo Code / DeepSeek V4 Pro is the default independent auditor. Exact tool and model identities remain bound in each work order at dispatch.
+
+Sonnet is the default because it restores provider-family separation between the OpenAI orchestrator, Anthropic implementation, and Kilo audit. If the owner selects Luna, orchestrator and worker share the OpenAI family; that is allowed only with an independently reproduced Kilo audit and an explicit record in the work order. No provider family may audit its own implementation, and the orchestrator may not fill either execution role. Historical tasks retain their actual delivery identities.

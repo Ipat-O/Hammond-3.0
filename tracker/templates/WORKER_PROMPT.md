@@ -7,9 +7,9 @@ task_id: <task-id>
 stage: implementation
 human_owner: <owner>
 active_orchestrator:
-  provider: Anthropic
-  tool: Claude Code
-  model: Claude Opus 5
+  provider: OpenAI
+  tool: Codex Desktop
+  model: GPT-5.6 Sol
 assigned_worker:
   provider: <OpenAI-or-Anthropic-or-Kilo>
   tool: <exact-harness>
@@ -72,7 +72,7 @@ provider: <provider>
 tool: <tool>
 model: <model>
 role: worker
-active_orchestrator: Anthropic / Claude Code / Claude Opus 5
+active_orchestrator: OpenAI / Codex Desktop / GPT-5.6 Sol
 branch: <branch>
 base_sha: <sha>
 head_sha: <sha>

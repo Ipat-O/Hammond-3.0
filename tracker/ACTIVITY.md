@@ -339,3 +339,14 @@
 - Both required tests are present: the reported case is rejected, and a childless task can still be re-parented, so the fix does not over-reject. The worker reported the mutation proof forcing `subtreeHeight` to zero causing the test to fail, then passing on restoration with a clean worktree.
 - The worker did not run `supabase:test`, the cargo checks, or `tauri:build`, judging them unaffected because the change touches only TypeScript validation and its call sites with no SQL, Rust, or packaging impact. The packet permitted that judgment provided it was stated plainly, and it was. The auditor is asked to confirm it.
 - HAM3-013 returned to `in_review` at exact head `6b7269ccce71d0d8069bc7706970a62817fda4d4`. The `CHANGES` verdict was bound to `8903ff0` and does not carry forward.
+
+## 2026-08-13 — Orchestrator transfer activated; D-014 routing established
+
+- The owner activated the transfer from Anthropic / Claude Code / Claude Opus 5 to OpenAI / Codex Desktop / GPT-5.6 Sol. The incoming orchestrator accepted the no-feature-code, no-self-audit, exact-SHA, and owner-only-merge boundaries.
+- D-014 supersedes D-010's orchestrator identity and D-012's fixed execution roster. For future tasks, Claude Code / Claude Sonnet is the default worker, OpenAI / Luna remains an owner-selectable fallback, and Kilo Code / DeepSeek V4 Pro is the default auditor.
+- Sonnet is the planning default because it restores three-family separation across orchestration, implementation, and audit. If Luna is selected, the shared OpenAI family between orchestrator and worker must be stated in the work order and the independent Kilo audit remains load-bearing.
+- No provider family may audit its own implementation. The orchestrator remains barred from worker and auditor roles, and exact identities are still bound per work order rather than inferred from the planning roster.
+- Historical delivery identities were preserved. HAM3-013 remains authored by OpenAI / Codex Desktop / GPT-5 and returns to Kilo Code / DeepSeek V4 Pro for audit round 2.
+- Live coordinates re-verified before packet preparation: `dev` and `origin/dev` are `397c087230c4630df496f968aa9f0e2dcee26e10`; PR #5 is open, draft, mergeable, targets `dev`, and its pushed head is `6b7269ccce71d0d8069bc7706970a62817fda4d4`.
+- Corrected a stale task-file state: `tracker/tasks/HAM3-013.md` still said `in_design` while the board and index correctly recorded `in_review`.
+- Prepared audit round 2 bound to exact correction head `6b7269c`. The earlier `CHANGES` verdict remains bound only to `8903ff0`.

@@ -6,7 +6,7 @@ Correction returns to the original worker. The previous auditor remains the audi
 task_id: <task-id>
 stage: correction
 correction: <number>
-active_orchestrator: Anthropic / Claude Code / Claude Opus 5
+active_orchestrator: OpenAI / Codex Desktop / GPT-5.6 Sol
 assigned_worker: <original-worker-provider/tool/model>
 assigned_reauditor: <other-provider/tool/model>
 previous_head_sha: <sha>

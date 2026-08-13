@@ -3,13 +3,14 @@
 ## Fixed identities
 
 - Human owner: chooses product direction, manually transfers prompts, performs named human checks, and authorizes merge.
-- Active orchestrator: Anthropic / Claude Code / Claude Opus 5.
-- Implementation worker, all tasks: OpenAI / Luna.
-- Independent auditor, all tasks: Kilo Code / DeepSeek V4 Pro.
+- Active orchestrator: OpenAI / Codex Desktop / GPT-5.6 Sol.
+- Default implementation worker for future tasks: Anthropic / Claude Code / Claude Sonnet.
+- Eligible implementation fallback: OpenAI / Luna, when selected by the owner and bound in the work order.
+- Default independent auditor: Kilo Code / DeepSeek V4 Pro.
 
-The orchestrator does not write feature code and never acts as worker or auditor. Under D-012 the Anthropic family holds no execution role at all, so the orchestrating family is entirely separate from the implementing and auditing families.
+The orchestrator does not write feature code and never acts as worker or auditor. Exact worker and auditor identities are bound per task. Sonnet is the default future worker because it restores provider-family separation from the OpenAI orchestrator; Luna remains available when the owner chooses it.
 
-Every task is implemented by OpenAI and audited by Kilo. No provider family audits its own implementation.
+DeepSeek is the default auditor. No provider family audits its own implementation. If the owner changes a task's worker or auditor, the orchestrator must re-check that invariant before dispatch.
 
 Execution identities are recorded here at family level. The exact harness and model version are bound in each work order at dispatch time, alongside the exact start SHA.
 
@@ -82,15 +83,14 @@ The orchestrator confirms the PR targets `dev`, is conflict-free, names the task
 
 ## Routing matrix
 
-Every task, HAM3-001 through HAM3-013:
+For future dispatches under D-014:
 
-| Worker | Auditor |
-|---|---|
-| OpenAI / Luna | Kilo Code / DeepSeek V4 Pro |
+| Priority | Worker | Auditor |
+|---|---|---|
+| Default | Anthropic / Claude Code / Claude Sonnet | Kilo Code / DeepSeek V4 Pro |
+| Owner-selected fallback | OpenAI / Luna | Kilo Code / DeepSeek V4 Pro |
 
-No task is audited by its author's family. Routing may be changed by the owner before dispatch. The exact work order always overrides the planning default and must explicitly name every participant.
-
-This replaces an earlier three-family rotation balanced at four implementations and four audits per family. The owner consolidated implementation onto a single family; see D-012, including the implementation-diversity tradeoff that consolidation accepts.
+No task is audited by its author's family. The orchestrator is never an auditor or worker. Routing may be changed by the owner before dispatch, but the exact work order must explicitly name every participant and re-check family independence. Historical task records retain the identities that actually delivered them.
 
 ## Execution order
 

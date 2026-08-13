@@ -1,8 +1,8 @@
 project: Hammond 3.0
 active_orchestrator:
-  provider: Anthropic
-  tool: Claude Code
-  model: Claude Opus 5
+  provider: OpenAI
+  tool: Codex Desktop
+  model: GPT-5.6 Sol
 default_base_branch: dev
 initial_state: in_design
 execution_order: sequential
@@ -10,11 +10,13 @@ execution_order: sequential
 # and model version are bound in each work order at dispatch time, alongside the
 # exact start SHA.
 #
-# Per D-012 every task is implemented by OpenAI / Luna and audited by
-# Kilo Code / DeepSeek V4 Pro. The Anthropic family orchestrates only and holds
-# no execution role.
+# Per D-014 Claude Code / Claude Sonnet is the default worker for future tasks,
+# OpenAI / Luna is an owner-selectable fallback, and Kilo Code / DeepSeek V4 Pro
+# is the default auditor. Exact identities are bound per work order, and no
+# provider family may audit its own implementation.
 execution_families:
   - OpenAI / Luna
+  - Anthropic / Claude Code / Claude Sonnet
   - Kilo Code / DeepSeek V4 Pro
 tasks:
   - id: HAM3-001
@@ -64,7 +66,7 @@ tasks:
     title: Local directory contexts and bindings
     state: in_design
     depends_on: [HAM3-001]
-    worker: OpenAI / Luna
+    worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-004
     title: Core project and task tracker
@@ -93,49 +95,49 @@ tasks:
     title: Versioned instruction template domain
     state: in_design
     depends_on: [HAM3-002]
-    worker: OpenAI / Luna
+    worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-006
     title: Harness adapters and managed-file injection
     state: in_design
     depends_on: [HAM3-003, HAM3-005]
-    worker: OpenAI / Luna
+    worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-007
     title: Instruction Studio UI
     state: in_design
     depends_on: [HAM3-005, HAM3-006]
-    worker: OpenAI / Luna
+    worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-008
     title: Project home, directory switching, and resume
     state: in_design
     depends_on: [HAM3-003, HAM3-004, HAM3-006]
-    worker: OpenAI / Luna
+    worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-009
     title: Work-order generation and dispatch records
     state: in_design
     depends_on: [HAM3-004, HAM3-005]
-    worker: OpenAI / Luna
+    worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-010
     title: Exact-SHA evidence and approval workflow
     state: in_design
     depends_on: [HAM3-004]
-    worker: OpenAI / Luna
+    worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-011
     title: Tracker depth, activity, search, and export
     state: in_design
     depends_on: [HAM3-004, HAM3-009, HAM3-010]
-    worker: OpenAI / Luna
+    worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-012
     title: Integrated desktop release and human QA
     state: in_design
     depends_on: [HAM3-007, HAM3-008, HAM3-009, HAM3-010, HAM3-011]
-    worker: OpenAI / Luna
+    worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-013
     title: Task hierarchy outliner
@@ -155,6 +157,8 @@ tasks:
     audit_report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5281244859
     finding: the depth guard measured the new parent's ancestor depth but not the moved subtree's own depth, so re-parenting a task that already has children silently produced a third level
     correction_1_head: 6b7269ccce71d0d8069bc7706970a62817fda4d4
+    current_head_sha: 6b7269ccce71d0d8069bc7706970a62817fda4d4
+    next_audit_round: 2
     correction_1_fix: assertTaskDepth now sums the parent chain length and the moving subtree's height against the cap, with a distinct actionable message for the subtask case; verified by the orchestrator to be applied at all three call sites, correctly omitting the moving id on the create path where a new task has no children
     design_decision: D-013
     added: after the HAM3-004 human check at the owner's request; extends the foundation plan from twelve tasks to thirteen

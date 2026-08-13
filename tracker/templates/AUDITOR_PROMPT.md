@@ -6,7 +6,7 @@
 task_id: <task-id>
 stage: independent_audit
 human_owner: <owner>
-active_orchestrator: Anthropic / Claude Code / Claude Opus 5
+active_orchestrator: OpenAI / Codex Desktop / GPT-5.6 Sol
 author_worker: <provider/tool/model>
 assigned_auditor: <different-provider/tool/model>
 reviewed_head_sha: <exact-sha>
@@ -50,7 +50,7 @@ provider: <provider>
 tool: <tool>
 model: <model>
 role: auditor
-active_orchestrator: Anthropic / Claude Code / Claude Opus 5
+active_orchestrator: OpenAI / Codex Desktop / GPT-5.6 Sol
 author_provider: <provider>
 reviewed_head_sha: <sha>
 pull_request_url: <url>

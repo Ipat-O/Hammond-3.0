@@ -76,11 +76,12 @@ Owner human check:
 ## Delivery authority
 
 - Human owner: product authority and prompt dispatcher.
-- Claude Opus 5 through Claude Code: active orchestrator; plans, routes, records evidence, and decides readiness. The orchestrator does not implement feature code and never acts as worker or auditor on a task it orchestrates.
-- Luna through OpenAI: implementation worker on every task.
-- DeepSeek V4 Pro through Kilo Code: independent auditor on every task.
+- GPT-5.6 Sol through OpenAI Codex Desktop: active orchestrator; plans, routes, records evidence, and decides readiness. The orchestrator does not implement feature code and never acts as worker or auditor on a task it orchestrates.
+- Claude Sonnet through Claude Code: default implementation worker for future tasks.
+- Luna through OpenAI: eligible implementation worker when the owner selects it.
+- DeepSeek V4 Pro through Kilo Code: default independent auditor.
 
-Per D-012 the Anthropic family orchestrates only and holds no execution role, so the orchestrating family is entirely separate from the implementing and auditing families. No provider family audits its own implementation.
+Per D-014, exact worker and auditor identities are bound in each work order. Sonnet is the default worker because it preserves provider-family separation from the OpenAI orchestrator; Luna remains eligible by owner override. No provider family audits its own implementation, and the orchestrator never fills an execution role.
 
 - Git: authority for code, commits, issues, PRs, exact SHAs, and posted reports.
 - Hammond: authority for project/task state, instruction versions, dispatch history, and evidence presentation.

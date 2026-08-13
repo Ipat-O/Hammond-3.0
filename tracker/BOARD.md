@@ -1,6 +1,6 @@
 # Hammond 3.0 Foundation Board
 
-Active orchestrator: Anthropic / Claude Code / Claude Opus 5  
+Active orchestrator: OpenAI / Codex Desktop / GPT-5.6 Sol  
 Initial condition: every task is `in_design`  
 Dispatch rule: dependencies must be merged before a task becomes `ready_for_development`
 
