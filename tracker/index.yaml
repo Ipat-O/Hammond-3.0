@@ -36,10 +36,15 @@ tasks:
     human_check: passed; the owner ran the release executable at 0eec339 and observed the Hammond shell
   - id: HAM3-002
     title: Supabase project memory and owner access
-    state: in_design
+    state: ready_for_development
     depends_on: [HAM3-001]
     worker: Claude Code / Claude Sonnet 5
     auditor: OpenAI / Luna
+    dispatched_worker_identity: Anthropic / Claude Code / Claude Sonnet 5
+    dispatched_auditor_identity: OpenAI / Codex Desktop / GPT-5
+    branch: anthropic/HAM3-002-supabase-memory
+    base_sha: c35c4dc647d3a9a75db0b444ff74f9deaafe9d66
+    owner_prerequisites: Docker Desktop running for the local Supabase stack; a hosted Supabase project with credentials placed in a git-ignored env file by the owner
   - id: HAM3-003
     title: Local directory contexts and bindings
     state: in_design

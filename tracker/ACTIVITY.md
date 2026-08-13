@@ -121,3 +121,15 @@
 - Delivery record: worker OpenAI / Codex Desktop / GPT-5; auditor Kilo Code / DeepSeek V4 Pro; orchestrator Anthropic / Claude Code / Claude Opus 5. No participant audited or merged its own work.
 - HAM3-001 is `merged`, not `shipped`. `shipped` requires the owner to observe the capability in the packaged application built from merged `dev`. The earlier human check was performed against the pre-merge branch build and is deliberately not carried forward to satisfy this.
 - HAM3-002 and HAM3-003 are now unblocked by dependency. Under D-011 exactly one is promoted at a time; neither has been promoted, and no work order has been prepared.
+
+## 2026-08-12 — HAM3-002 promoted to ready_for_development
+
+- The owner selected HAM3-002 as the next sequential task. HAM3-003 remains `in_design`.
+- Design control completed. Sol's original design packet routed this task to Kilo as worker with Sonnet auditing; that is superseded by D-010. The regenerated work order routes Claude Code / Claude Sonnet 5 as worker and OpenAI / Codex Desktop / GPT-5 as auditor, preserving cross-family audit.
+- The worker for this task shares a provider and tool with the orchestrator and differs only by model. The packet states explicitly that independence rests on the routing matrix and that the audit belongs to the OpenAI family, per D-010.
+- Work order bound to exact `dev` head `c35c4dc647d3a9a75db0b444ff74f9deaafe9d66`, branch `anthropic/HAM3-002-supabase-memory`.
+- Environment preflight performed before dispatch rather than after, applying the lesson from HAM3-001 where a missing Rust toolchain was discovered only when the worker was already blocked. Findings: the Supabase CLI is not installed and is not a project dependency, which is within worker scope to add; Docker is installed at 29.6.1 but its daemon is not running, which the local Supabase stack requires; no `.env` file or Supabase credentials exist.
+- Two owner prerequisites recorded in the packet: starting Docker Desktop, and creating a hosted Supabase project with credentials placed in a git-ignored env file by the owner personally. The packet forbids the worker from asking for, echoing, logging, or committing credentials, and forbids weakening RLS to make a test pass without them.
+- The packet requires the RLS isolation test to be demonstrated with two real identities and mutation-proved, rather than argued from policy text.
+- The HAM3-001 audit's deferral of `tauri.conf.json` `csp: null` to HAM3-002 is recorded in the packet as explicitly out of scope for this task unless the owner directs otherwise, so it is not silently bundled into a persistence change.
+- Outstanding repository hygiene, not yet actioned: GitHub issue #1 remains open even though HAM3-001 merged, because the pull request carried no closing keyword. No issue exists for HAM3-002.

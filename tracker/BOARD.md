@@ -6,7 +6,6 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## in_design
 
-- [HAM3-002](./tasks/HAM3-002.md) — Supabase project memory and owner access
 - [HAM3-003](./tasks/HAM3-003.md) — Local directory contexts and bindings
 - [HAM3-004](./tasks/HAM3-004.md) — Core project and task tracker
 - [HAM3-005](./tasks/HAM3-005.md) — Versioned instruction template domain
@@ -20,7 +19,8 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## ready_for_development
 
-None.
+- [HAM3-002](./tasks/HAM3-002.md) — Supabase project memory and owner access  
+  Base `c35c4dc647d3a9a75db0b444ff74f9deaafe9d66` · branch `anthropic/HAM3-002-supabase-memory` · worker Claude Code / Claude Sonnet 5 · auditor OpenAI / Codex Desktop / GPT-5
 
 ## in_development
 
