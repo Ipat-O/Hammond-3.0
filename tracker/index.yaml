@@ -40,8 +40,9 @@ tasks:
     human_check: passed; the owner ran the release executable at 0eec339 and observed the Hammond shell
   - id: HAM3-002
     title: Supabase project memory and owner access
-    state: merged
+    state: shipped
     merge_commit: 20f6155d770f06062eab63bb0d8d0b89ec019270
+    shipped_evidence: the owner observed project memory loading and persisting through the HAM3-004 UI in the packaged release built from dev at 6514d07
     depends_on: [HAM3-001]
     worker: OpenAI / Luna
     auditor: Kilo Code / DeepSeek V4 Pro
@@ -67,8 +68,9 @@ tasks:
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-004
     title: Core project and task tracker
-    state: merged
+    state: shipped
     merge_commit: 1dc533f6ef01d9ba302bf48eb67b74e2be82ebd5
+    shipped_evidence: the owner observed projects, tasks, nesting, comments, and statuses through the UI in the packaged release built from dev at 6514d07
     depends_on: [HAM3-002]
     worker: OpenAI / Luna
     auditor: Kilo Code / DeepSeek V4 Pro

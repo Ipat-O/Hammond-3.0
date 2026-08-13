@@ -300,3 +300,10 @@
 - Non-scope stated explicitly to prevent drift. No migration, because `parent_task_id` already permits deeper nesting and the two-level cap is a product constraint rather than a database one. No drag and drop, keyboard tree navigation, multi-select, or bulk edit. No virtualization, which stays deferred until a project exceeds a few hundred rows.
 - Acceptance includes a regression guard: HAM3-004's statuses, cycle rejection, comments, and persistence must all still work, since this task rewrites the surface that sits on top of them.
 - Routing unchanged under D-012: OpenAI / Luna implements, Kilo Code / DeepSeek V4 Pro audits.
+
+## 2026-08-13 — HAM3-002 and HAM3-004 shipped
+
+- A packaged release was built from `dev` at `6514d07`, producing the executable, an MSI, and an NSIS installer. The owner ran it and observed both capabilities: project memory loading and persisting from Supabase, and projects, tasks, nesting, comments, and statuses through the user interface.
+- Both tasks moved from `merged` to `shipped`. Three of the thirteen planned tasks are now shipped.
+- HAM3-002's deferral is resolved exactly as predicted. It was held at `merged` because a persistence layer with no UI and no devtools in release builds could not be observed, and it shipped the moment HAM3-004 supplied screens. The state was never rubber-stamped in the interim.
+- Recorded for accuracy: the binary was compiled from `6514d07` while `dev` had advanced to `a4f322b`. That commit is tracker-only, so the application code in the observed build is identical to `dev`.
