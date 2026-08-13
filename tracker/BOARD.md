@@ -31,7 +31,7 @@ None.
 ## testing
 
 - [HAM3-004](./tasks/HAM3-004.md) — Core project and task tracker  
-  PR [#4](https://github.com/Ipat-O/Hammond-3.0/pull/4) · approved head `d0f775e21b31690eeacea026e11ffeaa71dd124f` · hosted migration must be pushed before merge · human check outstanding
+  PR [#4](https://github.com/Ipat-O/Hammond-3.0/pull/4) · approved head `d0f775e21b31690eeacea026e11ffeaa71dd124f` · hosted migration applied · human check outstanding
 
 ## merged
 

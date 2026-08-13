@@ -82,7 +82,8 @@ tasks:
     audit_verdict: APPROVE
     audit_report: not_available; the auditor could not post to the pull request and returned its structured verdict block directly
     cycle_prevention: database prevents self-parenting only; multi-level cycles are prevented in application code and accepted by the auditor under a single-writer threat model, to be revisited as a database trigger only if Hammond gains multiple writers, shared projects, or a public API
-    outstanding: the new migration must be pushed to the hosted project before merge, per the auditor; the owner human check through the UI depends on it
+    hosted_migration: applied before merge as the auditor directed; 20260813075651 and 20260813120000 are both present locally and remotely for project polphkuvlleadblxmjyz
+    outstanding: owner human check through the UI, then owner-authorized merge
   - id: HAM3-005
     title: Versioned instruction template domain
     state: in_design

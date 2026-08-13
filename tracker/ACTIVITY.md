@@ -266,3 +266,11 @@
 - The auditor directed that the hosted migration be pushed **before** merge, not after.
 - One evidence gap recorded rather than glossed: `audit_report_url` is `not_available`. The auditor could not post a top-level report to the pull request, which the workflow normally requires, and returned its structured verdict block directly instead. The verdict block is the audit record for this task. The worker hit a related GitHub connector 403 during delivery, so the cause appears environmental rather than a refusal to publish evidence.
 - HAM3-004 moved from `in_review` to `testing`, awaiting the hosted migration push, the owner human check through the UI, and owner-authorized merge.
+
+## 2026-08-13 — HAM3-004 hosted migration applied before merge
+
+- The owner authorized the push. A dry run first confirmed exactly one migration and no seed or role changes, then `supabase db push` applied `20260813120000_expand_tracker_fields.sql` to project `polphkuvlleadblxmjyz`.
+- Confirmed rather than assumed from the exit code: `supabase migration list` now reports both `20260813075651` and `20260813120000` present locally and remotely.
+- The ordering followed the auditor's explicit direction to push before merge rather than after, so the schema the owner exercises during the human check is the schema the audit reviewed.
+- The change is additive. No column or table was dropped or rewritten, and the seed project created during the HAM3-002 human check is unaffected.
+- HAM3-004 remains `testing`, awaiting the owner human check through the new UI and then owner-authorized merge.
