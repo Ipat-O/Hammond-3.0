@@ -64,7 +64,7 @@ tasks:
     shipped_blocked_by: resolved; HAM3-004 merged and provides project and task screens, so the capability is now observable in a packaged build
   - id: HAM3-003
     title: Local directory contexts and bindings
-    state: in_review
+    state: testing
     depends_on: [HAM3-001]
     worker: Anthropic / Claude Code / Claude Sonnet 5
     auditor: Kilo Code / DeepSeek V4 Pro
@@ -76,14 +76,20 @@ tasks:
     current_head_sha: b1362ee44108b68f8160b58eb59f76f3bca8cf4c
     pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/6
     worker_report: https://github.com/Ipat-O/Hammond-3.0/pull/6#issuecomment-5297097501
+    audited_head_sha: b1362ee44108b68f8160b58eb59f76f3bca8cf4c
+    audit_verdict: APPROVE
+    audit_round: 1
+    audit_report: https://github.com/Ipat-O/Hammond-3.0/pull/6#issuecomment-5297622312
     issue_url: not_available; no HAM3-003 GitHub issue exists
     work_order: tracker/work-orders/HAM3-003-worker.md (device-local transfer packet)
     audit_packet: tracker/work-orders/HAM3-003-auditor.md (device-local transfer packet)
     intake_verification: exact remote head and ancestry verified; clean npm ci; 10 files and 70 frontend tests pass; typecheck, lint, and format check pass; 24 Windows-applicable Rust tests pass while three Unix-only symlink tests account for the worker's 27; cargo fmt and clippy pass; Windows tauri build produces MSI and NSIS bundles
     incidental_fixes: direct @types/node dev dependency plus generated cross-platform Tauri icon set; both are disclosed, build-enabling, lockfile-backed, and require auditor judgment
     supabase_boundary: no src/data, migration, generated database type, RLS, auth, or repository change; absolute paths remain device-local; supabase:test skipped as out of boundary
-    audit_risk: path_exists returns false before target validation when the root itself is missing; auditor must judge the mismatch with the claim that malformed targets still error and the acceptance requirement that malformed targets are rejected
-    owner_smoke_test: pending after approval; Windows picker select/cancel, reveal, normal folder/repository/worktree linking, switching, unlink-without-delete, missing-directory recovery, and cold restart
+    audit_risk: resolved as non-blocking documentation inaccuracy; path_exists returns false before malformed-target validation only when the root is missing, touches no target, and the sole production reachability caller passes an empty target
+    audit_verification: 257 packages and 0 vulnerabilities; 10 files and 70 frontend tests; 24 Windows-applicable Rust tests; typecheck, lint, format, cargo fmt, and clippy pass; Windows MSI and NSIS build; real junction escape rejected; four audit probes/mutations restored
+    current_audit_status: APPROVE by DeepSeek at exact head b1362ee44108b68f8160b58eb59f76f3bca8cf4c; owner native UI smoke test required before merge
+    owner_smoke_test: pending; Windows picker select/cancel, reveal, normal folder/repository/worktree linking, two contexts on one project, switching, unlink-without-delete, missing-directory recovery/replacement, and cold restart
   - id: HAM3-004
     title: Core project and task tracker
     state: shipped
