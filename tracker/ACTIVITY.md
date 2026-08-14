@@ -416,3 +416,13 @@
 - Fresh isolated intake at exact `d2dbd88` after `npm ci`: 5 files and 29 tests pass; typecheck, lint, and format check all exit 0. The worker's TS2591 typecheck result does not reproduce in this environment and is recorded as dependency-environment evidence, not a product failure; DeepSeek must classify it independently in round 4.
 - Focused TypeScript/UI verification is sufficient for intake because no SQL, Rust, or packaging boundary changed. The worker's mutation proofs are claims for the auditor to reproduce, not treated as independently verified by the orchestrator.
 - HAM3-013 moved from `in_development` to `in_review`. Audit round 4 is bound only to `d2dbd88`; earlier approvals do not carry forward. No merge was authorized or performed.
+
+## 2026-08-14 — HAM3-013 approved at d2dbd88; owner visual check required
+
+- Kilo Code / DeepSeek V4 Pro returned `AUDIT-VERDICT: APPROVE d2dbd880cf99ee4b0ea4c25d795d29cee34a1936` for audit round 4. Report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5290778057.
+- Live evidence intake verified the report binds the verdict to the current pushed head. PR #5 remains open, draft, mergeable, targets `dev`, and no later implementation commit exists.
+- All ten audit judgments pass: the fixed depth cap is absent; deep create and re-parent writes succeed; self-parent, descendant re-parent, pre-existing-cycle, create, update, UI pre-check, and retry boundaries are correct; the four-level UI behaves without stored-row mutation; archived state is explicit and accessible; control variants are function-specific.
+- DeepSeek independently reproduced both required mutation proofs. Reintroducing a depth rejection failed the two positive deep-hierarchy tests; neutralizing cycle rejection failed six cycle tests; the exact reviewed tree was restored.
+- Verification is clean: 5 files and 29 tests pass; typecheck, lint, and format check exit 0. Typecheck resolves a machine-global `@types/node` on this machine, so the worker's TS2591 remains a dependency-environment discrepancy rather than a Correction 3 defect.
+- Focused verification is sufficient because the correction does not cross Supabase, migration, generated database type, Rust, or packaging boundaries. No secrets were exposed.
+- HAM3-013 moved from `in_review` to `testing`. The remaining gate is the owner's visual check of deep indentation/action usability, non-color-only archived distinction, and readable function-specific controls. No merge was authorized or performed.

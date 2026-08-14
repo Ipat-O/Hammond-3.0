@@ -141,7 +141,7 @@ tasks:
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-013
     title: Task hierarchy outliner
-    state: in_review
+    state: testing
     corrections_completed: 3
     depends_on: [HAM3-004]
     worker: OpenAI / Luna
@@ -153,10 +153,10 @@ tasks:
     original_head_sha: 8903ff0f4870155bbe0dc45c290d16c276f9c728
     head_sha: d2dbd880cf99ee4b0ea4c25d795d29cee34a1936
     pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/5
-    audited_head_sha: b3cd2653ccc937e58a639d6028dda1837187c019
+    audited_head_sha: d2dbd880cf99ee4b0ea4c25d795d29cee34a1936
     audit_verdict: APPROVE
-    audit_round: 3
-    audit_report: not_available; auditor returned the structured SHA-bound verdict directly
+    audit_round: 4
+    audit_report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5290778057
     prior_approved_head_sha: 6b7269ccce71d0d8069bc7706970a62817fda4d4
     prior_approval_report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5284456202
     prior_audit_verdict: CHANGES at 8903ff0f4870155bbe0dc45c290d16c276f9c728
@@ -187,7 +187,10 @@ tasks:
     correction_3_report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5286259133
     correction_3_scope: removed the fixed nesting-depth guard and all cap-only exports/call sites while preserving cycle checks; generalized recursive outliner styling; added explicit archived-row state and function-specific row controls; added four-level, cycle, archive, and control tests
     correction_3_intake_verification: exact pushed head and ancestry verified; eight intended src files changed with no tracker or migration changes; fresh npm ci exact-head intake passes 5 files and 29 tests, typecheck, lint, and format check; worker typecheck failure did not reproduce and remains dependency-environment evidence for audit classification
-    current_audit_status: pending DeepSeek round 4 at d2dbd880cf99ee4b0ea4c25d795d29cee34a1936
+    current_audit_status: APPROVE by DeepSeek round 4 at d2dbd880cf99ee4b0ea4c25d795d29cee34a1936; owner visual check still required
+    audit_round_4_verification: all ten judgments pass; no fixed depth cap; deep create/re-parent and cycle boundaries verified; create/edit/retry modes correct; four-level UI, archived state, and function-specific controls correct; both mutation proofs reproduced; 5 files and 29 tests, typecheck, lint, and format check pass; focused verification accepted
+    audit_round_4_typecheck: exit 0 using machine-global @types/node; discrepancy classified dependency-environment because correction 3 does not touch vite.config.ts, tsconfig.json, or package.json
+    owner_visual_check: pending at d2dbd880cf99ee4b0ea4c25d795d29cee34a1936; inspect deep indentation and action usability, confirm archived rows are immediately distinct without color alone, and confirm status, Focus, + child, and Archive controls are readable and functionally distinct
     round_3_approval_status: historical exact-SHA approval at b3cd2653ccc937e58a639d6028dda1837187c019; not merge-valid for the owner-revised D-015 requirements
     design_decision: D-015; supersedes D-013 only for nesting depth and adds archived/action visual semantics
     added: after the HAM3-004 human check at the owner's request; extends the foundation plan from twelve tasks to thirteen
