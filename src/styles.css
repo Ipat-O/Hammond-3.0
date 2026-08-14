@@ -699,6 +699,95 @@ label {
   margin-top: 90px;
 }
 
+.directory-context-section {
+  margin-top: 20px;
+  border: 1px solid rgba(145, 162, 214, 0.16);
+  border-radius: 15px;
+  background: rgba(16, 23, 46, 0.64);
+  padding: 21px 22px;
+}
+
+.directory-context-current {
+  margin: 4px 0 0;
+  color: #8e9bb9;
+  font-size: 11px;
+}
+
+.directory-context-current code {
+  color: #cbd4e9;
+}
+
+.directory-context-list {
+  display: grid;
+  gap: 8px;
+  margin: 15px 0 0;
+}
+
+.directory-context-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  border-left: 2px solid rgba(120, 209, 194, 0.42);
+  border-radius: 4px;
+  background: rgba(18, 27, 50, 0.6);
+  padding: 10px 12px;
+}
+
+.directory-context-item-active {
+  border-left-color: #78d1c2;
+}
+
+.directory-context-info {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.directory-context-label {
+  color: #e4f1f0;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.directory-context-path {
+  overflow: hidden;
+  color: #8e9bb9;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.directory-context-status {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgba(112, 137, 230, 0.13);
+  padding: 3px 7px;
+  color: #aebcf1;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.directory-context-status-active {
+  background: rgba(120, 209, 194, 0.13);
+  color: #a3d8d0;
+}
+
+.directory-context-status-missing {
+  background: rgba(221, 106, 117, 0.13);
+  color: #e4a5ae;
+}
+
+.directory-context-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
 .board-section {
   margin-top: 30px;
 }

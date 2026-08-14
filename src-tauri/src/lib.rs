@@ -1,9 +1,26 @@
 mod commands;
+mod fs_commands;
+mod fs_guard;
+mod local_settings;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![commands::get_app_info])
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .manage(local_settings::LocalSettingsState::default())
+        .invoke_handler(tauri::generate_handler![
+            commands::get_app_info,
+            fs_commands::select_directory,
+            fs_commands::read_text_file,
+            fs_commands::write_text_file,
+            fs_commands::remove_path,
+            fs_commands::path_exists,
+            fs_commands::reveal_path,
+            local_settings::local_settings_read,
+            local_settings::local_settings_write,
+            local_settings::local_settings_remove,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Hammond");
 }

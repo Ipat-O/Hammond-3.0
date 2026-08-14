@@ -4,6 +4,13 @@ import type { Session } from '@supabase/supabase-js';
 
 import App from './App';
 import type { Database } from './data';
+import { LOCAL_SETTINGS_KEY, type LocalSettingsStateV1 } from './settings/state';
+import {
+  createFakeDirectoryContextServices,
+  createFakeFilesystem,
+  createFakeLocalSettings,
+} from './settings/testFakes';
+import type { DirectoryContextServices } from './settings/contracts';
 import type { TrackerRepositories, TrackerServices } from './tracker/contracts';
 import type { TaskStatus } from './data';
 
@@ -67,6 +74,7 @@ function makeServices(projects: Project[] = [], tasks: Task[] = []): TrackerServ
   return {
     repositories,
     auth: {} as TrackerServices['auth'],
+    directoryContext: createFakeDirectoryContextServices(),
   };
 }
 
@@ -580,5 +588,80 @@ describe('task archive cascades to the complete subtree', () => {
       screen.getByText('Parent task', { selector: '.outliner-task-title' }),
     ).toBeInTheDocument();
     expect(screen.getByText('Other top-level task')).toBeInTheDocument();
+  });
+});
+
+describe('directory context restoration on cold restart', () => {
+  function seededState(overrides: Partial<LocalSettingsStateV1['directoryContexts'][number]> = {}) {
+    const context = {
+      id: 'ctx-1',
+      projectId: 'project-b',
+      path: '/home/owner/project-b-repo',
+      label: 'project-b-repo',
+      createdAt: '2026-08-01T00:00:00.000Z',
+      lastOpenedAt: '2026-08-01T00:00:00.000Z',
+      ...overrides,
+    };
+    const state: LocalSettingsStateV1 = {
+      version: 1,
+      directoryContexts: [context],
+      lastOpenContextId: context.id,
+      resumeScreen: 'workspace',
+    };
+    return { state, context };
+  }
+
+  it('restores the last-open directory context and switches to its project on mount', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const { state } = seededState();
+    const filesystem = createFakeFilesystem();
+    filesystem.existingRoots.add(state.directoryContexts[0].path);
+    const settings = createFakeLocalSettings();
+    await settings.write(LOCAL_SETTINGS_KEY, state);
+    const directoryContext: DirectoryContextServices = { filesystem, settings };
+
+    const services = makeServices([projectA, projectB], []);
+    services.directoryContext = directoryContext;
+
+    render(<App services={services} initialSession={session} />);
+
+    expect((await screen.findAllByRole('heading', { name: 'Project B' })).length).toBeGreaterThan(
+      0,
+    );
+    expect(
+      await screen.findByText('/home/owner/project-b-repo', {
+        selector: '.directory-context-path',
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Current')).toBeInTheDocument();
+  });
+
+  it('reports a missing last-open directory without blocking the rest of the app', async () => {
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const { state } = seededState();
+    // The context's path is deliberately never added to existingRoots, simulating a
+    // directory that was deleted or moved while Hammond was closed.
+    const filesystem = createFakeFilesystem();
+    const settings = createFakeLocalSettings();
+    await settings.write(LOCAL_SETTINGS_KEY, state);
+    const directoryContext: DirectoryContextServices = { filesystem, settings };
+
+    const services = makeServices([projectB], [task()]);
+    services.directoryContext = directoryContext;
+
+    render(<App services={services} initialSession={session} />);
+
+    expect((await screen.findAllByRole('heading', { name: 'Project B' })).length).toBeGreaterThan(
+      0,
+    );
+    expect(
+      await screen.findByText('Missing — this directory could not be found.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Locate replacement' })).toBeInTheDocument();
+    // The rest of the workspace still renders and is usable.
+    expect(
+      await screen.findByText('First task', { selector: '.outliner-task-title' }),
+    ).toBeInTheDocument();
   });
 });

@@ -5,6 +5,7 @@ import type {
   ProjectRepository,
   TaskRepository,
 } from '../data';
+import type { DirectoryContextServices } from '../settings/contracts';
 
 export type TrackerSession = Pick<Session, 'user'>;
 
@@ -25,4 +26,5 @@ export interface TrackerAuth {
 export interface TrackerServices {
   auth: TrackerAuth;
   repositories: TrackerRepositories;
+  directoryContext: DirectoryContextServices;
 }
