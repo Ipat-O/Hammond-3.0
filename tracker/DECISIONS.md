@@ -103,3 +103,9 @@ Supersedes only D-013's two-level nesting rule. D-013's main-pane outliner, coll
 The owner rejected the artificial two-level cap during the HAM3-013 human check. Tasks may nest to arbitrary practical depth through the existing `parent_task_id`; application validation must prevent cycles but must not impose a fixed depth maximum. This is an application-only correction because the schema already supports the relationship and has no depth constraint.
 
 When archived tasks are shown, archived rows must be unmistakable through an explicit textual indicator and distinct row treatment. Color alone is insufficient. Row controls also need a functional visual hierarchy: status is a state control, Focus is navigation, + child is constructive, and Archive is destructive. Their labels, contrast, hover, keyboard-focus, and disabled states must remain readable in the dark theme. This is a presentation change, not permission to redesign task persistence, add restore behavior, or introduce new task actions.
+
+## D-016 — Task archive applies to the complete descendant subtree
+
+Archiving a task archives the selected task and every transitive descendant. An active child must never reappear as a top-level orphan merely because its parent is hidden by the archived filter. Archiving a leaf affects only that leaf.
+
+The subtree is resolved from the task hierarchy including already archived rows, and all affected rows are persisted through one filtered bulk update with a common archive timestamp. This avoids partial per-child completion and keeps the optimistic UI aligned with the repository result. The existing owner/project RLS boundary remains authoritative. No archive restore behavior, project-archive cascade, delete cascade, or schema migration is introduced by this decision.

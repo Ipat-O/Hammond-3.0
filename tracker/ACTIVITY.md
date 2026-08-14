@@ -426,3 +426,12 @@
 - Verification is clean: 5 files and 29 tests pass; typecheck, lint, and format check exit 0. Typecheck resolves a machine-global `@types/node` on this machine, so the worker's TS2591 remains a dependency-environment discrepancy rather than a Correction 3 defect.
 - Focused verification is sufficient because the correction does not cross Supabase, migration, generated database type, Rust, or packaging boundaries. No secrets were exposed.
 - HAM3-013 moved from `in_review` to `testing`. The remaining gate is the owner's visual check of deep indentation/action usability, non-color-only archived distinction, and readable function-specific controls. No merge was authorized or performed.
+
+## 2026-08-14 — HAM3-013 owner archive check failed; Correction 4 routed
+
+- During the exact-head owner check, the owner established a missing hierarchy invariant: archiving a parent task must archive every transitive descendant. The current `d2dbd88` implementation archives only the clicked row, so filtering archived tasks can promote still-active children into misleading top-level roots.
+- D-016 records the required behavior. Archiving any task applies to its complete subtree; archiving a leaf remains isolated. This applies to task archive only and does not add restore behavior, project-archive cascade, delete cascade, or unrelated hierarchy semantics.
+- Source inspection confirms a bounded correction. `TrackerPage.archiveTask` optimistically changes only the clicked id and `TaskRepository.archive` delegates to the single-row `update`. The existing iterative descendant traversal can be extracted/shared rather than re-invented.
+- Current Supabase JavaScript documentation confirms that filters apply to `update()` and that chaining `.select()` returns affected rows. The correction can therefore compute the subtree including archived rows, then update its ID set with one common timestamp in one filtered bulk statement. No migration is warranted; existing RLS remains authoritative.
+- PR #5 was re-verified open, draft, mergeable, targeting `dev`, with pushed head exactly `d2dbd88`. DeepSeek's round-4 approval remains valid historical evidence for that SHA but cannot authorize merge after the owner changed archive acceptance.
+- HAM3-013 moved from `testing` to `in_development` for Correction 4. Anthropic / Claude Code / Claude Sonnet 5 continues on the same branch and PR from exact head `d2dbd88`; Kilo Code / DeepSeek V4 Pro must independently audit the resulting exact SHA in round 5. The orchestrator changed no feature code.

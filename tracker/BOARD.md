@@ -22,7 +22,8 @@ None.
 
 ## in_development
 
-None.
+- [HAM3-013](./tasks/HAM3-013.md) — Task hierarchy outliner
+  Correction 4 on draft PR [#5](https://github.com/Ipat-O/Hammond-3.0/pull/5) · Sonnet 5 · task archive cascades through the complete descendant subtree · starts from `d2dbd880cf99ee4b0ea4c25d795d29cee34a1936`
 
 ## in_review
 
@@ -30,8 +31,7 @@ None.
 
 ## testing
 
-- [HAM3-013](./tasks/HAM3-013.md) — Task hierarchy outliner
-  Draft PR [#5](https://github.com/Ipat-O/Hammond-3.0/pull/5) · approved head `d2dbd880cf99ee4b0ea4c25d795d29cee34a1936` · DeepSeek audit round 4 · owner visual check pending
+None.
 
 ## merged
 

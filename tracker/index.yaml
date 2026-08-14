@@ -141,7 +141,7 @@ tasks:
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-013
     title: Task hierarchy outliner
-    state: testing
+    state: in_development
     corrections_completed: 3
     depends_on: [HAM3-004]
     worker: OpenAI / Luna
@@ -187,10 +187,17 @@ tasks:
     correction_3_report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5286259133
     correction_3_scope: removed the fixed nesting-depth guard and all cap-only exports/call sites while preserving cycle checks; generalized recursive outliner styling; added explicit archived-row state and function-specific row controls; added four-level, cycle, archive, and control tests
     correction_3_intake_verification: exact pushed head and ancestry verified; eight intended src files changed with no tracker or migration changes; fresh npm ci exact-head intake passes 5 files and 29 tests, typecheck, lint, and format check; worker typecheck failure did not reproduce and remains dependency-environment evidence for audit classification
-    current_audit_status: APPROVE by DeepSeek round 4 at d2dbd880cf99ee4b0ea4c25d795d29cee34a1936; owner visual check still required
+    current_audit_status: round-4 APPROVE remains historical at d2dbd880cf99ee4b0ea4c25d795d29cee34a1936; Correction 4 delivery and DeepSeek round 5 required before owner testing resumes
     audit_round_4_verification: all ten judgments pass; no fixed depth cap; deep create/re-parent and cycle boundaries verified; create/edit/retry modes correct; four-level UI, archived state, and function-specific controls correct; both mutation proofs reproduced; 5 files and 29 tests, typecheck, lint, and format check pass; focused verification accepted
     audit_round_4_typecheck: exit 0 using machine-global @types/node; discrepancy classified dependency-environment because correction 3 does not touch vite.config.ts, tsconfig.json, or package.json
     owner_visual_check: pending at d2dbd880cf99ee4b0ea4c25d795d29cee34a1936; inspect deep indentation and action usability, confirm archived rows are immediately distinct without color alone, and confirm status, Focus, + child, and Archive controls are readable and functionally distinct
+    owner_archive_check: failed at d2dbd880cf99ee4b0ea4c25d795d29cee34a1936; archiving a parent updates only that row and leaves active descendants to reappear as top-level roots when the parent is filtered out
+    correction_4_required: archive the selected task and every transitive descendant with one common timestamp and one filtered bulk repository update; optimistic UI and retry must cover the identical subtree; leaf archive remains isolated; active view must not surface orphaned descendants
+    correction_4_worker: Anthropic / Claude Code / Claude Sonnet 5
+    correction_4_base_sha: d2dbd880cf99ee4b0ea4c25d795d29cee34a1936
+    correction_4_auditor: Kilo / Kilo Code / DeepSeek V4 Pro
+    correction_4_audit_round: 5
+    round_4_approval_status: historical exact-SHA approval at d2dbd880cf99ee4b0ea4c25d795d29cee34a1936; not merge-valid for the owner-revised D-016 archive invariant
+    design_decision: D-015 and D-016; D-016 requires task archive to cover the complete descendant subtree
     round_3_approval_status: historical exact-SHA approval at b3cd2653ccc937e58a639d6028dda1837187c019; not merge-valid for the owner-revised D-015 requirements
-    design_decision: D-015; supersedes D-013 only for nesting depth and adds archived/action visual semantics
     added: after the HAM3-004 human check at the owner's request; extends the foundation plan from twelve tasks to thirteen
