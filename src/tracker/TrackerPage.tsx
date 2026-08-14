@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { TASK_STATUSES, type Database } from '../data';
+import { assertNoParentCycle, getTaskSubtreeIds, TASK_STATUSES, type Database } from '../data';
 import type { TrackerServices } from './contracts';
 import type { TaskStatus } from '../data';
 
@@ -43,6 +43,17 @@ function displayDate(value: string) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'The save failed. Your changes are still here.';
+}
+
+function getChildrenByParent(tasks: Task[]) {
+  const childrenByParent = new Map<string, Task[]>();
+  for (const task of tasks) {
+    if (!task.parent_task_id) continue;
+    const children = childrenByParent.get(task.parent_task_id) ?? [];
+    children.push(task);
+    childrenByParent.set(task.parent_task_id, children);
+  }
+  return childrenByParent;
 }
 
 interface ProjectFormProps {
@@ -272,6 +283,118 @@ function CommentPanel({ task, comments, draft, saving, loading, error, onDraftCh
   );
 }
 
+interface TaskOutlinerProps {
+  tasks: Task[];
+  selectedTaskId: string | null;
+  expandedTaskIds: Set<string>;
+  onToggle: (taskId: string) => void;
+  onEdit: (task: Task) => void;
+  onFocus: (taskId: string) => void;
+  onNewChild: (taskId: string) => void;
+  onMove: (task: Task, status: TaskStatus) => void;
+  onArchive: (task: Task) => void;
+}
+
+function TaskOutliner({
+  tasks,
+  selectedTaskId,
+  expandedTaskIds,
+  onToggle,
+  onEdit,
+  onFocus,
+  onNewChild,
+  onMove,
+  onArchive,
+}: TaskOutlinerProps) {
+  const childrenByParent = getChildrenByParent(tasks);
+  const taskIds = new Set(tasks.map((task) => task.id));
+  const roots = tasks.filter((task) => !task.parent_task_id || !taskIds.has(task.parent_task_id));
+
+  function renderTask(task: Task): React.ReactNode {
+    const children = childrenByParent.get(task.id) ?? [];
+    const hasChildren = children.length > 0;
+    const isExpanded = expandedTaskIds.has(task.id);
+    const isArchived = Boolean(task.archived_at);
+    const rowClassName = [
+      'outliner-row',
+      task.id === selectedTaskId ? 'outliner-row-selected' : '',
+      isArchived ? 'outliner-row-archived' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    return (
+      <li className="outliner-item" key={task.id}>
+        <div className={rowClassName}>
+          {hasChildren ? (
+            <button
+              className="outliner-toggle"
+              type="button"
+              aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${task.title}`}
+              aria-expanded={isExpanded}
+              onClick={() => onToggle(task.id)}
+            >
+              {isExpanded ? '⌄' : '›'}
+            </button>
+          ) : (
+            <span className="outliner-toggle-spacer" aria-hidden="true" />
+          )}
+          <button className="outliner-task-button" type="button" onClick={() => onEdit(task)}>
+            <span className={`outliner-task-title ${isArchived ? 'outliner-task-title-archived' : ''}`}>
+              {task.title}
+            </span>
+            <span className={`outliner-status outliner-status-${task.status}`}>{STATUS_LABELS[task.status]}</span>
+          </button>
+          {hasChildren && !isExpanded && (
+            <span className="child-count-badge">
+              {children.length} {children.length === 1 ? 'child' : 'children'}
+            </span>
+          )}
+          <div className="outliner-row-actions">
+            <select
+              className="outliner-action-status"
+              aria-label={`Move ${task.title}`}
+              value={task.status}
+              onChange={(event) => onMove(task, event.target.value as TaskStatus)}
+            >
+              {TASK_STATUSES.map((option) => (
+                <option key={option} value={option}>
+                  {STATUS_LABELS[option]}
+                </option>
+              ))}
+            </select>
+            <button className="outliner-action outliner-action-focus" type="button" onClick={() => onFocus(task.id)}>
+              Focus
+            </button>
+            <button
+              className="outliner-action outliner-action-child"
+              type="button"
+              onClick={() => onNewChild(task.id)}
+              aria-label="+ child"
+            >
+              + child
+            </button>
+            {isArchived ? (
+              <span className="outliner-action outliner-action-archived">Archived</span>
+            ) : (
+              <button
+                className="outliner-action outliner-action-archive"
+                type="button"
+                onClick={() => onArchive(task)}
+                aria-label="Archive"
+              >
+                Archive
+              </button>
+            )}
+          </div>
+        </div>
+        {hasChildren && isExpanded && <ul className="outliner-children">{children.map((child) => renderTask(child))}</ul>}
+      </li>
+    );
+  }
+
+  return <ul className="task-outliner">{roots.map((task) => renderTask(task))}</ul>;
+}
+
 interface TrackerPageProps {
   services: TrackerServices;
   ownerId: string;
@@ -285,6 +408,8 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
+  const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(() => new Set());
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -308,25 +433,29 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
   const visibleProjects = projects.filter((project) => showArchived || !project.archived_at);
   const visibleTasks = tasks.filter((task) => showArchived || !task.archived_at);
-  const activeTasks = visibleTasks;
-
-  const tasksByStatus = useMemo(
+  const taskStatusCounts = useMemo(
     () =>
-      TASK_STATUSES.reduce<Record<TaskStatus, Task[]>>(
-        (grouped, status) => ({ ...grouped, [status]: activeTasks.filter((task) => task.status === status) }),
+      TASK_STATUSES.reduce<Record<TaskStatus, number>>(
+        (counts, status) => ({ ...counts, [status]: visibleTasks.filter((task) => task.status === status).length }),
         {
-          backlog: [],
-          ready: [],
-          in_progress: [],
-          blocked: [],
-          done: [],
-          merged: [],
-          shipped: [],
-          cancelled: [],
+          backlog: 0,
+          ready: 0,
+          in_progress: 0,
+          blocked: 0,
+          done: 0,
+          merged: 0,
+          shipped: 0,
+          cancelled: 0,
         },
       ),
-    [activeTasks],
+    [visibleTasks],
   );
+  const focusedTask = visibleTasks.find((task) => task.id === focusedTaskId) ?? null;
+  const outlinerTasks = useMemo(() => {
+    if (!focusedTaskId) return visibleTasks;
+    const focusedTaskIds = getTaskSubtreeIds(visibleTasks, focusedTaskId);
+    return visibleTasks.filter((task) => focusedTaskIds.has(task.id));
+  }, [focusedTaskId, visibleTasks]);
 
   useEffect(() => {
     let mounted = true;
@@ -349,10 +478,14 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
     if (!selectedProjectId) {
       setTasks([]);
       setSelectedTaskId(null);
+      setFocusedTaskId(null);
+      setExpandedTaskIds(new Set());
       return;
     }
     let mounted = true;
     setContentError(null);
+    setFocusedTaskId(null);
+    setExpandedTaskIds(new Set());
     void repositories.tasks
       .list(selectedProjectId, { includeArchived: true })
       .then((result) => {
@@ -471,6 +604,24 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
     setTaskEditor('new');
   }
 
+  function toggleTask(taskId: string) {
+    setExpandedTaskIds((current) => {
+      const next = new Set(current);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      return next;
+    });
+  }
+
+  function focusTask(taskId: string) {
+    setFocusedTaskId(taskId);
+    setExpandedTaskIds((current) => new Set(current).add(taskId));
+  }
+
+  function unfocusTask() {
+    setFocusedTaskId(null);
+  }
+
   function openEditTask(task: Task) {
     setSelectedTaskId(task.id);
     setTaskDraft({
@@ -493,10 +644,18 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
       return;
     }
     if (!selectedProject) return;
+    const editingTask = taskEditor === 'edit' ? selectedTask : null;
+    if (editingTask) {
+      try {
+        assertNoParentCycle(tasks, editingTask.id, draft.parent_task_id);
+      } catch (error) {
+        setTaskSaveError(errorMessage(error));
+        return;
+      }
+    }
     setTaskSaving(true);
     setTaskSaveError(null);
     setTaskRetry(null);
-    const editingTask = taskEditor === 'edit' ? selectedTask : null;
     const existingTaskDraft = taskEditor === 'new' && selectedTask?.id.startsWith('draft-task-') ? selectedTask : null;
     const optimisticId = editingTask?.id ?? existingTaskDraft?.id ?? draftId('task');
     const optimisticTask: Task = {
@@ -556,12 +715,26 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
   }
 
   async function archiveTask(task: Task) {
-    setTasks((current) => current.map((item) => item.id === task.id ? { ...item, archived_at: new Date().toISOString() } : item));
+    const subtreeIds = getTaskSubtreeIds(tasks, task.id);
+    const archivedAt = new Date().toISOString();
+    setTasks((current) =>
+      current.map((item) => (subtreeIds.has(item.id) ? { ...item, archived_at: archivedAt } : item)),
+    );
     setTaskRetry({ kind: 'archive', taskId: task.id });
     setTaskSaveError(null);
+    if (!showArchived) {
+      if (selectedTaskId && subtreeIds.has(selectedTaskId)) {
+        setSelectedTaskId(null);
+        setTaskEditor(null);
+      }
+      if (focusedTaskId && subtreeIds.has(focusedTaskId)) {
+        setFocusedTaskId(null);
+      }
+    }
     try {
       const saved = await repositories.tasks.archive(task.id);
-      setTasks((current) => current.map((item) => item.id === task.id ? saved : item));
+      const savedById = new Map(saved.map((item) => [item.id, item]));
+      setTasks((current) => current.map((item) => savedById.get(item.id) ?? item));
       setTaskRetry(null);
     } catch (error) {
       setTaskSaveError(errorMessage(error));
@@ -637,6 +810,8 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
               onClick={() => {
                 setSelectedProjectId(project.id);
                 setSelectedTaskId(null);
+                setFocusedTaskId(null);
+                setExpandedTaskIds(new Set());
                 setTaskEditor(null);
               }}
             >
@@ -708,36 +883,58 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
                 </div>
                 {projectSaveError && <div className="save-error" role="alert"><span>{projectSaveError}</span>{!projectEditor && <button className="button button-small" type="button" onClick={() => selectedProject.archived_at ? void restoreProject() : void archiveProject()}>Retry save</button>}</div>}
               </section>
-              <section className="board-section" aria-labelledby="board-heading">
-                <div className="section-heading"><div><p className="eyebrow">Workboard</p><h2 id="board-heading">Move work with intention.</h2></div><button className="button button-secondary" type="button" onClick={() => openNewTask()}>New task</button></div>
-                <div className="board-grid">
+              <section className="outliner-section" aria-labelledby="outliner-heading">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">Task hierarchy</p>
+                    <h2 id="outliner-heading">See the work in context.</h2>
+                  </div>
+                  <button className="button button-secondary" type="button" onClick={() => openNewTask()}>
+                    New task
+                  </button>
+                </div>
+                {focusedTask && (
+                  <div className="focus-breadcrumb" aria-label="Task focus">
+                    <span>Focused task</span>
+                    <strong>{focusedTask.title}</strong>
+                    <button className="button button-quiet" type="button" onClick={unfocusTask}>
+                      Back to all tasks
+                    </button>
+                  </div>
+                )}
+                <div className="outliner-summary" aria-label="Task status counts">
                   {TASK_STATUSES.map((status) => (
-                    <section className="board-column" key={status} aria-labelledby={`column-${status}`}>
-                      <div className="column-heading"><h3 id={`column-${status}`}>{STATUS_LABELS[status]}</h3><span>{tasksByStatus[status].length}</span></div>
-                      <div className="task-stack">
-                        {tasksByStatus[status].map((task) => {
-                          const childCount = visibleTasks.filter((child) => child.parent_task_id === task.id).length;
-                          return <article className={`task-card ${task.id === selectedTaskId ? 'task-card-selected' : ''}`} key={task.id}>
-                            <button className="task-card-open" type="button" onClick={() => openEditTask(task)}>
-                              <span className="task-priority">{task.priority > 0 ? `P${task.priority}` : 'Task'}</span>
-                              <strong>{task.title}</strong>
-                              <span className="task-meta">{childCount ? `${childCount} child${childCount === 1 ? '' : 'ren'}` : 'Top-level work'}{task.archived_at ? ' · Archived' : ''}</span>
-                            </button>
-                            <div className="task-card-actions">
-                              <select aria-label={`Move ${task.title}`} value={task.status} onChange={(event) => void moveTask(task, event.target.value as TaskStatus)}>
-                                {TASK_STATUSES.map((option) => <option key={option} value={option}>{STATUS_LABELS[option]}</option>)}
-                              </select>
-                              <button className="mini-button" type="button" onClick={() => openNewTask(task.id)}>+ child</button>
-                              <button className="mini-button mini-button-danger" type="button" onClick={() => void archiveTask(task)}>Archive</button>
-                            </div>
-                          </article>;
-                        })}
-                        {tasksByStatus[status].length === 0 && <p className="column-empty">Nothing here yet.</p>}
-                      </div>
-                    </section>
+                    <div key={status} className="outliner-summary-item">
+                      <h3>{STATUS_LABELS[status]}</h3>
+                      <strong>{taskStatusCounts[status]}</strong>
+                    </div>
                   ))}
                 </div>
-                {taskSaveError && <div className="save-error" role="alert"><span>{taskSaveError}</span>{(taskRetry || taskEditor) && <button className="button button-small" type="button" onClick={() => taskRetry ? void retryTaskSave() : void saveTask()}>Retry save</button>}</div>}
+                {outlinerTasks.length > 0 ? (
+                  <TaskOutliner
+                    tasks={outlinerTasks}
+                    selectedTaskId={selectedTaskId}
+                    expandedTaskIds={expandedTaskIds}
+                    onToggle={toggleTask}
+                    onEdit={openEditTask}
+                    onFocus={focusTask}
+                    onNewChild={openNewTask}
+                    onMove={(task, status) => void moveTask(task, status)}
+                    onArchive={(task) => void archiveTask(task)}
+                  />
+                ) : (
+                  <p className="outliner-empty">No tasks in this view yet.</p>
+                )}
+                {taskSaveError && (
+                  <div className="save-error" role="alert">
+                    <span>{taskSaveError}</span>
+                    {(taskRetry || taskEditor) && (
+                      <button className="button button-small" type="button" onClick={() => taskRetry ? void retryTaskSave() : void saveTask()}>
+                        Retry save
+                      </button>
+                    )}
+                  </div>
+                )}
               </section>
             </div>
             <aside className="detail-panel" aria-label="Selected task detail">

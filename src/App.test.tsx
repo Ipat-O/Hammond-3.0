@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { vi } from 'vitest';
 import type { Session } from '@supabase/supabase-js';
 
@@ -170,5 +170,415 @@ describe('Hammond tracker workspace', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '+ child' }));
     expect(screen.getByLabelText('Parent task')).toHaveValue('task-1');
+  });
+
+  it('renders a collapsed outliner, expands exact children, focuses, and preserves stored rows', async () => {
+    const parent = task({ id: 'parent', title: 'Parent task', status: 'ready' });
+    const child = task({
+      id: 'child',
+      title: 'Child task',
+      parent_task_id: 'parent',
+      status: 'in_progress',
+    });
+    const secondChild = task({
+      id: 'child-2',
+      title: 'Second child',
+      parent_task_id: 'parent',
+      status: 'done',
+    });
+    const other = task({ id: 'other', title: 'Other top-level task', status: 'blocked' });
+    const tasks = [parent, child, secondChild, other];
+    const storedRows = structuredClone(tasks);
+    const services = makeServices([project()], tasks);
+
+    render(<App services={services} initialSession={session} />);
+    expect(await screen.findByRole('button', { name: /Parent taskReady/ })).toBeInTheDocument();
+    expect(screen.queryByText('Child task')).not.toBeInTheDocument();
+    expect(screen.getByText('2 children')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Parent task' }));
+    expect(screen.getByText('Child task')).toBeInTheDocument();
+    expect(screen.getByText('Second child')).toBeInTheDocument();
+    expect(screen.queryByText('2 children')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Parent task' }));
+    expect(screen.queryByText('Child task')).not.toBeInTheDocument();
+    expect(screen.getByText('2 children')).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Focus' })[0]);
+    expect(screen.getByText('Focused task')).toBeInTheDocument();
+    expect(screen.getAllByText('Parent task').length).toBeGreaterThan(0);
+    expect(screen.getByText('Child task')).toBeInTheDocument();
+    expect(screen.getByText('Second child')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Back to all tasks' }));
+    expect(screen.getByText('Other top-level task')).toBeInTheDocument();
+    expect(screen.getByText('Child task')).toBeInTheDocument();
+
+    expect(tasks).toEqual(storedRows);
+    expect(services.repositories.tasks.list).toHaveBeenCalledTimes(1);
+    expect(services.repositories.tasks.create).not.toHaveBeenCalled();
+    expect(services.repositories.tasks.update).not.toHaveBeenCalled();
+    expect(services.repositories.tasks.archive).not.toHaveBeenCalled();
+  });
+
+  it('creates a second child from a selected parent without a false depth rejection', async () => {
+    const parent = task({ id: 'parent', title: 'Parent task' });
+    const child = task({ id: 'child', title: 'Child task', parent_task_id: 'parent' });
+    const services = makeServices([project()], [parent, child]);
+    const secondChild = task({
+      id: 'second-child',
+      title: 'Second child',
+      parent_task_id: 'parent',
+    });
+    const create = services.repositories.tasks.create as ReturnType<typeof vi.fn>;
+    create.mockResolvedValue(secondChild);
+
+    render(<App services={services} initialSession={session} />);
+
+    // Select the parent (opens edit, then cancel) so selectedTaskId still identifies
+    // the parent when the ordinary "+ child" create flow is opened from its row.
+    fireEvent.click(await screen.findByRole('button', { name: /^Parent task/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '+ child' }));
+    expect(screen.getByLabelText('Parent task')).toHaveValue('parent');
+
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'Second child' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ parent_task_id: 'parent' }));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('renders, expands, and operates a four-level outliner without task writes or stored-row mutation', async () => {
+    const level1 = task({ id: 'level-1', title: 'Level one', status: 'backlog' });
+    const level2 = task({
+      id: 'level-2',
+      title: 'Level two',
+      parent_task_id: 'level-1',
+      status: 'ready',
+    });
+    const level3 = task({
+      id: 'level-3',
+      title: 'Level three',
+      parent_task_id: 'level-2',
+      status: 'in_progress',
+    });
+    const level4 = task({
+      id: 'level-4',
+      title: 'Level four',
+      parent_task_id: 'level-3',
+      status: 'blocked',
+    });
+    const tasks = [level1, level2, level3, level4];
+    const storedRows = structuredClone(tasks);
+    const services = makeServices([project()], tasks);
+
+    render(<App services={services} initialSession={session} />);
+
+    expect(await screen.findByRole('button', { name: /Level oneBacklog/ })).toBeInTheDocument();
+    expect(screen.queryByText('Level two')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Level one' }));
+    expect(screen.getByText('Level two')).toBeInTheDocument();
+    expect(screen.queryByText('Level three')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Level two' }));
+    expect(screen.getByText('Level three')).toBeInTheDocument();
+    expect(screen.queryByText('Level four')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Level three' }));
+    expect(screen.getByText('Level four')).toBeInTheDocument();
+
+    // + child at the deepest visible row pre-selects that row as the parent.
+    const addChildButtons = screen.getAllByRole('button', { name: '+ child' });
+    fireEvent.click(addChildButtons[addChildButtons.length - 1]);
+    expect(screen.getByLabelText('Parent task')).toHaveValue('level-4');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    // Collapsing the root hides every descendant regardless of depth.
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Level one' }));
+    expect(screen.queryByText('Level two')).not.toBeInTheDocument();
+    expect(screen.queryByText('Level four')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Level one' }));
+    expect(screen.getByText('Level four')).toBeInTheDocument();
+
+    // Focus the third-level task and confirm only its subtree renders.
+    const focusButtons = screen.getAllByRole('button', { name: 'Focus' });
+    fireEvent.click(focusButtons[2]);
+    expect(screen.getByText('Focused task')).toBeInTheDocument();
+    expect(screen.getAllByText('Level three').length).toBeGreaterThan(0);
+    expect(screen.getByText('Level four')).toBeInTheDocument();
+    expect(screen.queryByText('Level one')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to all tasks' }));
+    expect(screen.getByText('Level one')).toBeInTheDocument();
+
+    expect(tasks).toEqual(storedRows);
+    expect(services.repositories.tasks.list).toHaveBeenCalledTimes(1);
+    expect(services.repositories.tasks.create).not.toHaveBeenCalled();
+    expect(services.repositories.tasks.update).not.toHaveBeenCalled();
+    expect(services.repositories.tasks.archive).not.toHaveBeenCalled();
+  });
+
+  it('persists a legal re-parent at least four levels deep from the task editor', async () => {
+    const level1 = task({ id: 'level-1', title: 'Level one' });
+    const level2 = task({ id: 'level-2', title: 'Level two', parent_task_id: 'level-1' });
+    const level3 = task({ id: 'level-3', title: 'Level three', parent_task_id: 'level-2' });
+    const level4 = task({ id: 'level-4', title: 'Level four', parent_task_id: 'level-3' });
+    const newTopLevel = task({ id: 'new-task', title: 'Movable task' });
+    const services = makeServices([project()], [level1, level2, level3, level4, newTopLevel]);
+    const reparented = { ...newTopLevel, parent_task_id: 'level-4' };
+    const update = services.repositories.tasks.update as ReturnType<typeof vi.fn>;
+    update.mockResolvedValue(reparented);
+
+    render(<App services={services} initialSession={session} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Movable task/ }));
+    fireEvent.change(screen.getByLabelText('Parent task'), { target: { value: 'level-4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    expect(update).toHaveBeenCalledWith(
+      'new-task',
+      expect.objectContaining({ parent_task_id: 'level-4' }),
+    );
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('gives status, Focus, + child, and Archive controls distinct functional classes', async () => {
+    const parent = task({ id: 'parent', title: 'Parent task' });
+    const services = makeServices([project()], [parent]);
+
+    render(<App services={services} initialSession={session} />);
+    const title = await screen.findByText('Parent task', { selector: '.outliner-task-title' });
+    const row = within(title.closest('.outliner-row') as HTMLElement);
+
+    expect(row.getByLabelText('Move Parent task')).toHaveClass('outliner-action-status');
+    expect(row.getByRole('button', { name: 'Focus' })).toHaveClass('outliner-action-focus');
+    expect(row.getByRole('button', { name: '+ child' })).toHaveClass('outliner-action-child');
+    expect(row.getByRole('button', { name: 'Archive' })).toHaveClass('outliner-action-archive');
+  });
+
+  it('shows an explicit non-interactive Archived state for an archived task under Show archived', async () => {
+    const archived = task({
+      id: 'archived-task',
+      title: 'Archived task',
+      archived_at: '2026-08-13T10:00:00.000Z',
+    });
+    const services = makeServices([project()], [archived]);
+
+    render(<App services={services} initialSession={session} />);
+    fireEvent.click(await screen.findByLabelText('Show archived'));
+
+    const title = await screen.findByText('Archived task');
+    expect(title).toHaveClass('outliner-task-title-archived');
+    const row = within(title.closest('.outliner-row') as HTMLElement);
+    expect(row.getByText('Archived')).toHaveClass('outliner-action-archived');
+    expect(title.closest('.outliner-row')).toHaveClass('outliner-row-archived');
+    expect(row.queryByRole('button', { name: 'Archive' })).not.toBeInTheDocument();
+    expect(services.repositories.tasks.archive).not.toHaveBeenCalled();
+  });
+});
+
+describe('task archive cascades to the complete subtree', () => {
+  function buildLineage() {
+    const parent = task({ id: 'parent', title: 'Parent task', status: 'ready' });
+    const child = task({
+      id: 'child',
+      title: 'Child task',
+      parent_task_id: 'parent',
+      status: 'in_progress',
+    });
+    const grandchild = task({
+      id: 'grandchild',
+      title: 'Grandchild task',
+      parent_task_id: 'child',
+      status: 'blocked',
+    });
+    const other = task({ id: 'other', title: 'Other top-level task', status: 'backlog' });
+    return { parent, child, grandchild, other };
+  }
+
+  function archivedRows(rows: Task[], archivedAt: string): Task[] {
+    return rows.map((row) => ({ ...row, archived_at: archivedAt }));
+  }
+
+  it('optimistically removes the whole subtree from the active outliner and status counts, promoting no child to root', async () => {
+    const { parent, child, grandchild, other } = buildLineage();
+    const tasks = [parent, child, grandchild, other];
+    const services = makeServices([project()], tasks);
+    const archive = services.repositories.tasks.archive as ReturnType<typeof vi.fn>;
+    archive.mockReturnValue(new Promise(() => {})); // never resolves; assert on the optimistic state
+
+    render(<App services={services} initialSession={session} />);
+    expect(
+      await screen.findByText('Parent task', { selector: '.outliner-task-title' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Ready' }).nextSibling).toHaveTextContent('1');
+    expect(screen.getByRole('heading', { name: 'In progress' }).nextSibling).toHaveTextContent('1');
+    expect(screen.getByRole('heading', { name: 'Blocked' }).nextSibling).toHaveTextContent('1');
+    expect(screen.getByRole('heading', { name: 'Backlog' }).nextSibling).toHaveTextContent('1');
+
+    const parentTitle = screen.getByText('Parent task', { selector: '.outliner-task-title' });
+    const parentRow = within(parentTitle.closest('.outliner-row') as HTMLElement);
+    fireEvent.click(parentRow.getByRole('button', { name: 'Archive' }));
+
+    expect(
+      screen.queryByText('Parent task', { selector: '.outliner-task-title' }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('Child task')).not.toBeInTheDocument();
+    expect(screen.queryByText('Grandchild task')).not.toBeInTheDocument();
+    expect(screen.getByText('Other top-level task')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Ready' }).nextSibling).toHaveTextContent('0');
+    expect(screen.getByRole('heading', { name: 'In progress' }).nextSibling).toHaveTextContent('0');
+    expect(screen.getByRole('heading', { name: 'Blocked' }).nextSibling).toHaveTextContent('0');
+    expect(screen.getByRole('heading', { name: 'Backlog' }).nextSibling).toHaveTextContent('1');
+  });
+
+  it('reveals the archived parent and every descendant with explicit archived states once Show archived is on, reconciling the repository rows', async () => {
+    const { parent, child, grandchild, other } = buildLineage();
+    const tasks = [parent, child, grandchild, other];
+    const services = makeServices([project()], tasks);
+    const archivedAt = '2026-08-14T10:00:00.000Z';
+    const archive = services.repositories.tasks.archive as ReturnType<typeof vi.fn>;
+    archive.mockResolvedValue(archivedRows([parent, child, grandchild], archivedAt));
+
+    render(<App services={services} initialSession={session} />);
+    const parentTitle = await screen.findByText('Parent task', {
+      selector: '.outliner-task-title',
+    });
+    const parentRow = within(parentTitle.closest('.outliner-row') as HTMLElement);
+    fireEvent.click(parentRow.getByRole('button', { name: 'Archive' }));
+
+    await waitFor(() => expect(archive).toHaveBeenCalledTimes(1));
+    expect(archive).toHaveBeenCalledWith('parent');
+
+    fireEvent.click(screen.getByLabelText('Show archived'));
+    const revealedParentTitle = await screen.findByText('Parent task', {
+      selector: '.outliner-task-title',
+    });
+    expect(revealedParentTitle).toHaveClass('outliner-task-title-archived');
+    expect(revealedParentTitle.closest('.outliner-row')).toHaveClass('outliner-row-archived');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Parent task' }));
+    const childTitle = screen.getByText('Child task', { selector: '.outliner-task-title' });
+    expect(childTitle).toHaveClass('outliner-task-title-archived');
+    expect(childTitle.closest('.outliner-row')).toHaveClass('outliner-row-archived');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Child task' }));
+    const grandchildTitle = screen.getByText('Grandchild task', {
+      selector: '.outliner-task-title',
+    });
+    expect(grandchildTitle).toHaveClass('outliner-task-title-archived');
+    expect(grandchildTitle.closest('.outliner-row')).toHaveClass('outliner-row-archived');
+
+    expect(screen.getByText('Other top-level task')).not.toHaveClass(
+      'outliner-task-title-archived',
+    );
+  });
+
+  it('leaves siblings and ancestors active when a leaf task is archived', async () => {
+    const { parent, child, grandchild } = buildLineage();
+    const tasks = [parent, child, grandchild];
+    const services = makeServices([project()], tasks);
+    const archivedAt = '2026-08-14T10:00:00.000Z';
+    const archive = services.repositories.tasks.archive as ReturnType<typeof vi.fn>;
+    archive.mockResolvedValue(archivedRows([grandchild], archivedAt));
+
+    render(<App services={services} initialSession={session} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Expand Parent task' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Child task' }));
+
+    const grandchildTitle = screen.getByText('Grandchild task', {
+      selector: '.outliner-task-title',
+    });
+    const grandchildRow = within(grandchildTitle.closest('.outliner-row') as HTMLElement);
+    fireEvent.click(grandchildRow.getByRole('button', { name: 'Archive' }));
+
+    await waitFor(() => expect(archive).toHaveBeenCalledWith('grandchild'));
+    expect(screen.queryByText('Grandchild task')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Parent task', { selector: '.outliner-task-title' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Child task', { selector: '.outliner-task-title' })).not.toHaveClass(
+      'outliner-task-title-archived',
+    );
+    expect(screen.getByRole('heading', { name: 'Ready' }).nextSibling).toHaveTextContent('1');
+    expect(screen.getByRole('heading', { name: 'In progress' }).nextSibling).toHaveTextContent('1');
+  });
+
+  it('exposes retry on a failed archive and retries the same subtree bound to the original root', async () => {
+    const { parent, child, other } = buildLineage();
+    const tasks = [parent, child, other];
+    const services = makeServices([project()], tasks);
+    const archivedAt = '2026-08-14T10:00:00.000Z';
+    const archive = services.repositories.tasks.archive as ReturnType<typeof vi.fn>;
+    archive
+      .mockRejectedValueOnce(new Error('induced archive failure'))
+      .mockResolvedValueOnce(archivedRows([parent, child], archivedAt));
+
+    render(<App services={services} initialSession={session} />);
+    const parentTitle = await screen.findByText('Parent task', {
+      selector: '.outliner-task-title',
+    });
+    const parentRow = within(parentTitle.closest('.outliner-row') as HTMLElement);
+    fireEvent.click(parentRow.getByRole('button', { name: 'Archive' }));
+
+    expect(
+      (await screen.findAllByRole('alert')).some((alert) =>
+        alert.textContent?.includes('induced archive failure'),
+      ),
+    ).toBe(true);
+    // The optimistic cascade already removed the subtree from the active view, even though the write failed.
+    expect(
+      screen.queryByText('Parent task', { selector: '.outliner-task-title' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('Other top-level task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry save' }));
+
+    await waitFor(() => expect(archive).toHaveBeenCalledTimes(2));
+    expect(archive).toHaveBeenNthCalledWith(1, 'parent');
+    expect(archive).toHaveBeenNthCalledWith(2, 'parent');
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+  });
+
+  it('clears a selected or focused descendant instead of leaving it as a hidden ghost once the subtree is archived', async () => {
+    const { parent, child, grandchild, other } = buildLineage();
+    const tasks = [parent, child, grandchild, other];
+    const services = makeServices([project()], tasks);
+    const archive = services.repositories.tasks.archive as ReturnType<typeof vi.fn>;
+    archive.mockReturnValue(new Promise(() => {}));
+
+    render(<App services={services} initialSession={session} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Expand Parent task' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Child task' }));
+
+    // Select the grandchild (open its editor, then cancel so the detail panel shows the plain summary).
+    fireEvent.click(screen.getByRole('button', { name: /^Grandchild task/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByText('Selected task')).toBeInTheDocument();
+
+    // Focus the child, which is both the archive root and an ancestor of the selected grandchild.
+    const focusButtons = screen.getAllByRole('button', { name: 'Focus' });
+    fireEvent.click(focusButtons[1]);
+    expect(screen.getByText('Focused task')).toBeInTheDocument();
+
+    const childTitle = screen.getByText('Child task', { selector: '.outliner-task-title' });
+    const childRow = within(childTitle.closest('.outliner-row') as HTMLElement);
+    fireEvent.click(childRow.getByRole('button', { name: 'Archive' }));
+
+    expect(screen.queryByText('Focused task')).not.toBeInTheDocument();
+    expect(screen.queryByText('Selected task')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Select a task to inspect its context, hierarchy, and comments.'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Parent task', { selector: '.outliner-task-title' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Other top-level task')).toBeInTheDocument();
   });
 });
