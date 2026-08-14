@@ -141,8 +141,8 @@ tasks:
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-013
     title: Task hierarchy outliner
-    state: in_development
-    corrections_completed: 3
+    state: in_review
+    corrections_completed: 4
     depends_on: [HAM3-004]
     worker: OpenAI / Luna
     auditor: Kilo Code / DeepSeek V4 Pro
@@ -151,7 +151,7 @@ tasks:
     branch: openai/HAM3-013-hierarchy-outliner
     base_sha: a4f322bfe0cf4e95cc029089b9bc1cd81199ff81
     original_head_sha: 8903ff0f4870155bbe0dc45c290d16c276f9c728
-    head_sha: d2dbd880cf99ee4b0ea4c25d795d29cee34a1936
+    head_sha: 28e07e3828da171806258d90f3ca2ea3e481ef65
     pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/5
     audited_head_sha: d2dbd880cf99ee4b0ea4c25d795d29cee34a1936
     audit_verdict: APPROVE
@@ -171,7 +171,7 @@ tasks:
     correction_2_worker: Anthropic / Claude Code / Claude Sonnet 5
     correction_2_routing: owner override from the original OpenAI worker; continue on the existing openai-prefixed branch and PR because the name records historical provenance
     correction_2_head: b3cd2653ccc937e58a639d6028dda1837187c019
-    current_head_sha: d2dbd880cf99ee4b0ea4c25d795d29cee34a1936
+    current_head_sha: 28e07e3828da171806258d90f3ca2ea3e481ef65
     correction_2_report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5285273885
     correction_2_scope: derive editingTask before the UI depth pre-check; edit mode excludes and passes only the edited task id, while create mode validates the full task set with no moving id; adds the owner's second-child regression test
     correction_2_intake_verification: fresh npm ci at exact head; 5 files and 21 tests pass; typecheck, lint, and format check all exit 0; worker-reported typecheck failure did not reproduce and is treated as environment-specific rather than a current project failure
@@ -187,7 +187,7 @@ tasks:
     correction_3_report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5286259133
     correction_3_scope: removed the fixed nesting-depth guard and all cap-only exports/call sites while preserving cycle checks; generalized recursive outliner styling; added explicit archived-row state and function-specific row controls; added four-level, cycle, archive, and control tests
     correction_3_intake_verification: exact pushed head and ancestry verified; eight intended src files changed with no tracker or migration changes; fresh npm ci exact-head intake passes 5 files and 29 tests, typecheck, lint, and format check; worker typecheck failure did not reproduce and remains dependency-environment evidence for audit classification
-    current_audit_status: round-4 APPROVE remains historical at d2dbd880cf99ee4b0ea4c25d795d29cee34a1936; Correction 4 delivery and DeepSeek round 5 required before owner testing resumes
+    current_audit_status: pending DeepSeek round 5 at 28e07e3828da171806258d90f3ca2ea3e481ef65; round-4 approval remains historical at d2dbd880cf99ee4b0ea4c25d795d29cee34a1936
     audit_round_4_verification: all ten judgments pass; no fixed depth cap; deep create/re-parent and cycle boundaries verified; create/edit/retry modes correct; four-level UI, archived state, and function-specific controls correct; both mutation proofs reproduced; 5 files and 29 tests, typecheck, lint, and format check pass; focused verification accepted
     audit_round_4_typecheck: exit 0 using machine-global @types/node; discrepancy classified dependency-environment because correction 3 does not touch vite.config.ts, tsconfig.json, or package.json
     owner_visual_check: pending at d2dbd880cf99ee4b0ea4c25d795d29cee34a1936; inspect deep indentation and action usability, confirm archived rows are immediately distinct without color alone, and confirm status, Focus, + child, and Archive controls are readable and functionally distinct
@@ -197,6 +197,10 @@ tasks:
     correction_4_base_sha: d2dbd880cf99ee4b0ea4c25d795d29cee34a1936
     correction_4_auditor: Kilo / Kilo Code / DeepSeek V4 Pro
     correction_4_audit_round: 5
+    correction_4_head: 28e07e3828da171806258d90f3ca2ea3e481ef65
+    correction_4_report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5291524765
+    correction_4_scope: shared cycle-safe subtree helper used by focus, repository archive, and optimistic UI; repository discovers with includeArchived and performs one update-in-select bulk write; UI archives and reconciles the same subtree, preserves leaf isolation and retry root, and clears hidden selected/focused state
+    correction_4_intake_verification: exact pushed head, report, and ancestry verified; seven intended src files changed with no tracker, migration, RLS, generated database type, Rust, packaging, or secret changes; fresh npm ci exact-head intake passes 7 files and 45 tests, typecheck, lint, and format check; worker typecheck failure did not reproduce and remains dependency-environment evidence
     round_4_approval_status: historical exact-SHA approval at d2dbd880cf99ee4b0ea4c25d795d29cee34a1936; not merge-valid for the owner-revised D-016 archive invariant
     design_decision: D-015 and D-016; D-016 requires task archive to cover the complete descendant subtree
     round_3_approval_status: historical exact-SHA approval at b3cd2653ccc937e58a639d6028dda1837187c019; not merge-valid for the owner-revised D-015 requirements
