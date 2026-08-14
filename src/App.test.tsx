@@ -382,3 +382,203 @@ describe('Hammond tracker workspace', () => {
     expect(services.repositories.tasks.archive).not.toHaveBeenCalled();
   });
 });
+
+describe('task archive cascades to the complete subtree', () => {
+  function buildLineage() {
+    const parent = task({ id: 'parent', title: 'Parent task', status: 'ready' });
+    const child = task({
+      id: 'child',
+      title: 'Child task',
+      parent_task_id: 'parent',
+      status: 'in_progress',
+    });
+    const grandchild = task({
+      id: 'grandchild',
+      title: 'Grandchild task',
+      parent_task_id: 'child',
+      status: 'blocked',
+    });
+    const other = task({ id: 'other', title: 'Other top-level task', status: 'backlog' });
+    return { parent, child, grandchild, other };
+  }
+
+  function archivedRows(rows: Task[], archivedAt: string): Task[] {
+    return rows.map((row) => ({ ...row, archived_at: archivedAt }));
+  }
+
+  it('optimistically removes the whole subtree from the active outliner and status counts, promoting no child to root', async () => {
+    const { parent, child, grandchild, other } = buildLineage();
+    const tasks = [parent, child, grandchild, other];
+    const services = makeServices([project()], tasks);
+    const archive = services.repositories.tasks.archive as ReturnType<typeof vi.fn>;
+    archive.mockReturnValue(new Promise(() => {})); // never resolves; assert on the optimistic state
+
+    render(<App services={services} initialSession={session} />);
+    expect(
+      await screen.findByText('Parent task', { selector: '.outliner-task-title' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Ready' }).nextSibling).toHaveTextContent('1');
+    expect(screen.getByRole('heading', { name: 'In progress' }).nextSibling).toHaveTextContent('1');
+    expect(screen.getByRole('heading', { name: 'Blocked' }).nextSibling).toHaveTextContent('1');
+    expect(screen.getByRole('heading', { name: 'Backlog' }).nextSibling).toHaveTextContent('1');
+
+    const parentTitle = screen.getByText('Parent task', { selector: '.outliner-task-title' });
+    const parentRow = within(parentTitle.closest('.outliner-row') as HTMLElement);
+    fireEvent.click(parentRow.getByRole('button', { name: 'Archive' }));
+
+    expect(
+      screen.queryByText('Parent task', { selector: '.outliner-task-title' }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('Child task')).not.toBeInTheDocument();
+    expect(screen.queryByText('Grandchild task')).not.toBeInTheDocument();
+    expect(screen.getByText('Other top-level task')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Ready' }).nextSibling).toHaveTextContent('0');
+    expect(screen.getByRole('heading', { name: 'In progress' }).nextSibling).toHaveTextContent('0');
+    expect(screen.getByRole('heading', { name: 'Blocked' }).nextSibling).toHaveTextContent('0');
+    expect(screen.getByRole('heading', { name: 'Backlog' }).nextSibling).toHaveTextContent('1');
+  });
+
+  it('reveals the archived parent and every descendant with explicit archived states once Show archived is on, reconciling the repository rows', async () => {
+    const { parent, child, grandchild, other } = buildLineage();
+    const tasks = [parent, child, grandchild, other];
+    const services = makeServices([project()], tasks);
+    const archivedAt = '2026-08-14T10:00:00.000Z';
+    const archive = services.repositories.tasks.archive as ReturnType<typeof vi.fn>;
+    archive.mockResolvedValue(archivedRows([parent, child, grandchild], archivedAt));
+
+    render(<App services={services} initialSession={session} />);
+    const parentTitle = await screen.findByText('Parent task', {
+      selector: '.outliner-task-title',
+    });
+    const parentRow = within(parentTitle.closest('.outliner-row') as HTMLElement);
+    fireEvent.click(parentRow.getByRole('button', { name: 'Archive' }));
+
+    await waitFor(() => expect(archive).toHaveBeenCalledTimes(1));
+    expect(archive).toHaveBeenCalledWith('parent');
+
+    fireEvent.click(screen.getByLabelText('Show archived'));
+    const revealedParentTitle = await screen.findByText('Parent task', {
+      selector: '.outliner-task-title',
+    });
+    expect(revealedParentTitle).toHaveClass('outliner-task-title-archived');
+    expect(revealedParentTitle.closest('.outliner-row')).toHaveClass('outliner-row-archived');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Parent task' }));
+    const childTitle = screen.getByText('Child task', { selector: '.outliner-task-title' });
+    expect(childTitle).toHaveClass('outliner-task-title-archived');
+    expect(childTitle.closest('.outliner-row')).toHaveClass('outliner-row-archived');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Child task' }));
+    const grandchildTitle = screen.getByText('Grandchild task', {
+      selector: '.outliner-task-title',
+    });
+    expect(grandchildTitle).toHaveClass('outliner-task-title-archived');
+    expect(grandchildTitle.closest('.outliner-row')).toHaveClass('outliner-row-archived');
+
+    expect(screen.getByText('Other top-level task')).not.toHaveClass(
+      'outliner-task-title-archived',
+    );
+  });
+
+  it('leaves siblings and ancestors active when a leaf task is archived', async () => {
+    const { parent, child, grandchild } = buildLineage();
+    const tasks = [parent, child, grandchild];
+    const services = makeServices([project()], tasks);
+    const archivedAt = '2026-08-14T10:00:00.000Z';
+    const archive = services.repositories.tasks.archive as ReturnType<typeof vi.fn>;
+    archive.mockResolvedValue(archivedRows([grandchild], archivedAt));
+
+    render(<App services={services} initialSession={session} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Expand Parent task' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Child task' }));
+
+    const grandchildTitle = screen.getByText('Grandchild task', {
+      selector: '.outliner-task-title',
+    });
+    const grandchildRow = within(grandchildTitle.closest('.outliner-row') as HTMLElement);
+    fireEvent.click(grandchildRow.getByRole('button', { name: 'Archive' }));
+
+    await waitFor(() => expect(archive).toHaveBeenCalledWith('grandchild'));
+    expect(screen.queryByText('Grandchild task')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Parent task', { selector: '.outliner-task-title' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Child task', { selector: '.outliner-task-title' })).not.toHaveClass(
+      'outliner-task-title-archived',
+    );
+    expect(screen.getByRole('heading', { name: 'Ready' }).nextSibling).toHaveTextContent('1');
+    expect(screen.getByRole('heading', { name: 'In progress' }).nextSibling).toHaveTextContent('1');
+  });
+
+  it('exposes retry on a failed archive and retries the same subtree bound to the original root', async () => {
+    const { parent, child, other } = buildLineage();
+    const tasks = [parent, child, other];
+    const services = makeServices([project()], tasks);
+    const archivedAt = '2026-08-14T10:00:00.000Z';
+    const archive = services.repositories.tasks.archive as ReturnType<typeof vi.fn>;
+    archive
+      .mockRejectedValueOnce(new Error('induced archive failure'))
+      .mockResolvedValueOnce(archivedRows([parent, child], archivedAt));
+
+    render(<App services={services} initialSession={session} />);
+    const parentTitle = await screen.findByText('Parent task', {
+      selector: '.outliner-task-title',
+    });
+    const parentRow = within(parentTitle.closest('.outliner-row') as HTMLElement);
+    fireEvent.click(parentRow.getByRole('button', { name: 'Archive' }));
+
+    expect(
+      (await screen.findAllByRole('alert')).some((alert) =>
+        alert.textContent?.includes('induced archive failure'),
+      ),
+    ).toBe(true);
+    // The optimistic cascade already removed the subtree from the active view, even though the write failed.
+    expect(
+      screen.queryByText('Parent task', { selector: '.outliner-task-title' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('Other top-level task')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry save' }));
+
+    await waitFor(() => expect(archive).toHaveBeenCalledTimes(2));
+    expect(archive).toHaveBeenNthCalledWith(1, 'parent');
+    expect(archive).toHaveBeenNthCalledWith(2, 'parent');
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+  });
+
+  it('clears a selected or focused descendant instead of leaving it as a hidden ghost once the subtree is archived', async () => {
+    const { parent, child, grandchild, other } = buildLineage();
+    const tasks = [parent, child, grandchild, other];
+    const services = makeServices([project()], tasks);
+    const archive = services.repositories.tasks.archive as ReturnType<typeof vi.fn>;
+    archive.mockReturnValue(new Promise(() => {}));
+
+    render(<App services={services} initialSession={session} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Expand Parent task' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Child task' }));
+
+    // Select the grandchild (open its editor, then cancel so the detail panel shows the plain summary).
+    fireEvent.click(screen.getByRole('button', { name: /^Grandchild task/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByText('Selected task')).toBeInTheDocument();
+
+    // Focus the child, which is both the archive root and an ancestor of the selected grandchild.
+    const focusButtons = screen.getAllByRole('button', { name: 'Focus' });
+    fireEvent.click(focusButtons[1]);
+    expect(screen.getByText('Focused task')).toBeInTheDocument();
+
+    const childTitle = screen.getByText('Child task', { selector: '.outliner-task-title' });
+    const childRow = within(childTitle.closest('.outliner-row') as HTMLElement);
+    fireEvent.click(childRow.getByRole('button', { name: 'Archive' }));
+
+    expect(screen.queryByText('Focused task')).not.toBeInTheDocument();
+    expect(screen.queryByText('Selected task')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Select a task to inspect its context, hierarchy, and comments.'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Parent task', { selector: '.outliner-task-title' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Other top-level task')).toBeInTheDocument();
+  });
+});

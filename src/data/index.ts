@@ -10,3 +10,4 @@ export {
   type TaskStatus,
 } from './taskValidation';
 export { ProjectMemoryRepository, ProjectRepository, TaskRepository } from './repositories';
+export { getTaskSubtreeIds } from './taskSubtree';

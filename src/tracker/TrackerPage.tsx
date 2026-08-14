@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { assertNoParentCycle, TASK_STATUSES, type Database } from '../data';
+import { assertNoParentCycle, getTaskSubtreeIds, TASK_STATUSES, type Database } from '../data';
 import type { TrackerServices } from './contracts';
 import type { TaskStatus } from '../data';
 
@@ -54,22 +54,6 @@ function getChildrenByParent(tasks: Task[]) {
     childrenByParent.set(task.parent_task_id, children);
   }
   return childrenByParent;
-}
-
-function getDescendantTaskIds(tasks: Task[], rootTaskId: string) {
-  const childrenByParent = getChildrenByParent(tasks);
-  const descendantIds = new Set<string>([rootTaskId]);
-  const pending = [rootTaskId];
-  while (pending.length > 0) {
-    const parentId = pending.pop();
-    if (!parentId) continue;
-    for (const child of childrenByParent.get(parentId) ?? []) {
-      if (descendantIds.has(child.id)) continue;
-      descendantIds.add(child.id);
-      pending.push(child.id);
-    }
-  }
-  return descendantIds;
 }
 
 interface ProjectFormProps {
@@ -469,7 +453,7 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
   const focusedTask = visibleTasks.find((task) => task.id === focusedTaskId) ?? null;
   const outlinerTasks = useMemo(() => {
     if (!focusedTaskId) return visibleTasks;
-    const focusedTaskIds = getDescendantTaskIds(visibleTasks, focusedTaskId);
+    const focusedTaskIds = getTaskSubtreeIds(visibleTasks, focusedTaskId);
     return visibleTasks.filter((task) => focusedTaskIds.has(task.id));
   }, [focusedTaskId, visibleTasks]);
 
@@ -731,12 +715,26 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
   }
 
   async function archiveTask(task: Task) {
-    setTasks((current) => current.map((item) => item.id === task.id ? { ...item, archived_at: new Date().toISOString() } : item));
+    const subtreeIds = getTaskSubtreeIds(tasks, task.id);
+    const archivedAt = new Date().toISOString();
+    setTasks((current) =>
+      current.map((item) => (subtreeIds.has(item.id) ? { ...item, archived_at: archivedAt } : item)),
+    );
     setTaskRetry({ kind: 'archive', taskId: task.id });
     setTaskSaveError(null);
+    if (!showArchived) {
+      if (selectedTaskId && subtreeIds.has(selectedTaskId)) {
+        setSelectedTaskId(null);
+        setTaskEditor(null);
+      }
+      if (focusedTaskId && subtreeIds.has(focusedTaskId)) {
+        setFocusedTaskId(null);
+      }
+    }
     try {
       const saved = await repositories.tasks.archive(task.id);
-      setTasks((current) => current.map((item) => item.id === task.id ? saved : item));
+      const savedById = new Map(saved.map((item) => [item.id, item]));
+      setTasks((current) => current.map((item) => savedById.get(item.id) ?? item));
       setTaskRetry(null);
     } catch (error) {
       setTaskSaveError(errorMessage(error));

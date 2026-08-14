@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseClient } from './client';
 import type { Database } from './database.types';
 import { assertNoAbsoluteLocalPaths } from './pathGuard';
+import { getTaskSubtreeIds } from './taskSubtree';
 import { assertNoParentCycle, assertValidTaskStatus } from './taskValidation';
 
 type Tables = Database['public']['Tables'];
@@ -88,8 +89,23 @@ export class TaskRepository {
     return dataOrThrow(await this.client.from('tasks').delete().eq('id', id).select('id').single());
   }
 
-  async archive(id: string) {
-    return this.update(id, { archived_at: new Date().toISOString() });
+  /**
+   * Archives id plus every transitive descendant in one bulk write so a
+   * still-active child can never be orphaned as a top-level row once the
+   * normal view filters archived tasks out.
+   */
+  async archive(id: string): Promise<Tables['tasks']['Row'][]> {
+    const projectId = await this.findProjectId(id);
+    const projectTasks = await this.list(projectId, { includeArchived: true });
+    const subtreeIds = Array.from(getTaskSubtreeIds(projectTasks, id));
+    const archivedAt = new Date().toISOString();
+    return dataOrThrow(
+      await this.client
+        .from('tasks')
+        .update({ archived_at: archivedAt })
+        .in('id', subtreeIds)
+        .select(),
+    );
   }
 
   private async findProjectId(id: string): Promise<string> {
