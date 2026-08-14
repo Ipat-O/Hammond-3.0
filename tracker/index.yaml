@@ -64,10 +64,15 @@ tasks:
     shipped_blocked_by: resolved; HAM3-004 merged and provides project and task screens, so the capability is now observable in a packaged build
   - id: HAM3-003
     title: Local directory contexts and bindings
-    state: in_design
+    state: ready_for_development
     depends_on: [HAM3-001]
-    worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
+    worker: Anthropic / Claude Code / Claude Sonnet 5
     auditor: Kilo Code / DeepSeek V4 Pro
+    dispatched_worker_identity: Anthropic / Claude Code / Claude Sonnet 5
+    dispatched_auditor_identity: Kilo / Kilo Code / DeepSeek V4 Pro
+    branch: anthropic/HAM3-003-local-directory-contexts
+    issue_url: not_available; no HAM3-003 GitHub issue exists
+    work_order: tracker/work-orders/HAM3-003-worker.md (device-local transfer packet)
   - id: HAM3-004
     title: Core project and task tracker
     state: shipped
@@ -141,7 +146,7 @@ tasks:
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-013
     title: Task hierarchy outliner
-    state: testing
+    state: merged
     corrections_completed: 4
     depends_on: [HAM3-004]
     worker: OpenAI / Luna
@@ -149,6 +154,7 @@ tasks:
     dispatched_worker_identity: OpenAI / Codex Desktop / GPT-5
     dispatched_auditor_identity: Kilo / Kilo Code / DeepSeek V4 Pro
     branch: openai/HAM3-013-hierarchy-outliner
+    merge_commit: d9826e7934758f6b270a19a5eebefed0afd48229
     base_sha: a4f322bfe0cf4e95cc029089b9bc1cd81199ff81
     original_head_sha: 8903ff0f4870155bbe0dc45c290d16c276f9c728
     head_sha: 28e07e3828da171806258d90f3ca2ea3e481ef65
@@ -187,7 +193,7 @@ tasks:
     correction_3_report: https://github.com/Ipat-O/Hammond-3.0/pull/5#issuecomment-5286259133
     correction_3_scope: removed the fixed nesting-depth guard and all cap-only exports/call sites while preserving cycle checks; generalized recursive outliner styling; added explicit archived-row state and function-specific row controls; added four-level, cycle, archive, and control tests
     correction_3_intake_verification: exact pushed head and ancestry verified; eight intended src files changed with no tracker or migration changes; fresh npm ci exact-head intake passes 5 files and 29 tests, typecheck, lint, and format check; worker typecheck failure did not reproduce and remains dependency-environment evidence for audit classification
-    current_audit_status: APPROVE by DeepSeek round 5 at 28e07e3828da171806258d90f3ca2ea3e481ef65; owner subtree-archive check still required
+    current_audit_status: APPROVE by DeepSeek round 5 at 28e07e3828da171806258d90f3ca2ea3e481ef65; owner subtree-archive check passed; merged
     audit_round_4_verification: all ten judgments pass; no fixed depth cap; deep create/re-parent and cycle boundaries verified; create/edit/retry modes correct; four-level UI, archived state, and function-specific controls correct; both mutation proofs reproduced; 5 files and 29 tests, typecheck, lint, and format check pass; focused verification accepted
     audit_round_4_typecheck: exit 0 using machine-global @types/node; discrepancy classified dependency-environment because correction 3 does not touch vite.config.ts, tsconfig.json, or package.json
     owner_visual_check: completed through the d2dbd880 UI inspection; owner raised the archive semantic defect rather than a remaining visual defect, Correction 4 changes no styling, and DeepSeek reports no further visual check required
@@ -204,7 +210,8 @@ tasks:
     audit_round_5_verification: subtree helper, single bulk update, Supabase/RLS consistency, optimistic reconciliation, retry subtree, ghost cleanup, leaf isolation, and Correction 3 regressions all pass; root-only mutation fails 9 of 11 cascade tests as expected; 7 files and 45 tests, typecheck, lint, and format check pass
     audit_round_5_supabase: npm run supabase:test passes 8 of 8 pgTAP tests against local Dockerized Supabase; owner isolation confirmed; source policy and composite parent owner/project foreign key inspected
     audit_round_5_typecheck: exit 0; worker-only TS2591 classified dependency-environment because no product configuration or dependency file changed
-    owner_archive_recheck: pending at 28e07e3828da171806258d90f3ca2ea3e481ef65; archive a parent and confirm the entire subtree disappears, Show archived reveals the structurally intact archived subtree, leaf archive remains isolated, and a cold restart preserves the result
+    owner_archive_recheck: passed at 28e07e3828da171806258d90f3ca2ea3e481ef65; owner confirmed corrected archive behavior in the app and authorized merge
+    outstanding: none
     round_4_approval_status: historical exact-SHA approval at d2dbd880cf99ee4b0ea4c25d795d29cee34a1936; not merge-valid for the owner-revised D-016 archive invariant
     design_decision: D-015 and D-016; D-016 requires task archive to cover the complete descendant subtree
     round_3_approval_status: historical exact-SHA approval at b3cd2653ccc937e58a639d6028dda1837187c019; not merge-valid for the owner-revised D-015 requirements

@@ -455,3 +455,12 @@
 - Verification is clean: 7 files and 45 tests, typecheck, lint, and format check pass. DeepSeek also ran the previously unavailable `npm run supabase:test`; all 8 pgTAP tests pass against local Dockerized Supabase, confirming owner-isolated RLS. Rust and packaging remain correctly skipped because no `src-tauri/**` boundary changed.
 - Typecheck again exits 0; the worker-only TS2591 remains dependency-environment evidence, not a product defect. No migration was needed and no secrets were exposed.
 - HAM3-013 moved from `in_review` to `testing`. No separate visual gate remains because Correction 4 changes no styling after the owner's d2 UI inspection. The remaining owner gate is to archive a real parent subtree, verify `Show archived`, verify leaf isolation, and cold-restart for persistence. No merge was authorized or performed.
+
+## 2026-08-14 — HAM3-013 owner-accepted and merged; HAM3-003 promoted
+
+- The owner confirmed the corrected task archive behavior works in the exact approved app at `28e07e3828da171806258d90f3ca2ea3e481ef65` and explicitly authorized merge and movement to the next task.
+- Before merge, PR #5 was re-verified open, conflict-free, targeting `dev`, and still at DeepSeek's round-5 approved head. It was marked ready and merged without changing the implementation head.
+- PR #5 merged into `dev` as merge commit `d9826e7934758f6b270a19a5eebefed0afd48229`. HAM3-013 moved from `testing` to `merged`; it is not yet `shipped`, because the accepted check ran in the exact-head development app rather than a packaged release.
+- Under D-011 sequential delivery, HAM3-003 is the next foundation task. Its HAM3-001 dependency is shipped, so it moved from `in_design` to `ready_for_development`. The device-local worker packet is rebound after this tracker commit so its start SHA equals the resulting exact `dev` head at handoff.
+- D-014 routing is bound for HAM3-003: Anthropic / Claude Code / Claude Sonnet 5 implements; Kilo / Kilo Code / DeepSeek V4 Pro audits. The branch is `anthropic/HAM3-003-local-directory-contexts`; no GitHub issue exists.
+- The HAM3-003 packet keeps local directory paths behind the device-local settings/native boundary. Supabase project IDs may key local bindings, but absolute paths must never enter Supabase payloads; no schema, migration, RLS, auth, or hosted-data change is in scope.

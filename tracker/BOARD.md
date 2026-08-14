@@ -6,7 +6,6 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## in_design
 
-- [HAM3-003](./tasks/HAM3-003.md) — Local directory contexts and bindings
 - [HAM3-005](./tasks/HAM3-005.md) — Versioned instruction template domain
 - [HAM3-006](./tasks/HAM3-006.md) — Harness adapters and managed-file injection
 - [HAM3-007](./tasks/HAM3-007.md) — Instruction Studio UI
@@ -18,7 +17,8 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## ready_for_development
 
-None.
+- [HAM3-003](./tasks/HAM3-003.md) — Local directory contexts and bindings
+  Sonnet 5 worker packet prepared · DeepSeek V4 Pro auditor · exact base in the device-local transfer packet
 
 ## in_development
 
@@ -30,12 +30,12 @@ None.
 
 ## testing
 
-- [HAM3-013](./tasks/HAM3-013.md) — Task hierarchy outliner
-  Draft PR [#5](https://github.com/Ipat-O/Hammond-3.0/pull/5) · approved head `28e07e3828da171806258d90f3ca2ea3e481ef65` · DeepSeek audit round 5 · owner subtree-archive check pending
+None.
 
 ## merged
 
-None.
+- [HAM3-013](./tasks/HAM3-013.md) — Task hierarchy outliner
+  Merge commit `d9826e7934758f6b270a19a5eebefed0afd48229` · owner archive check passed
 
 ## shipped
 
