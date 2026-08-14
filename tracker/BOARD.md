@@ -17,8 +17,7 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## ready_for_development
 
-- [HAM3-003](./tasks/HAM3-003.md) — Local directory contexts and bindings
-  Sonnet 5 worker packet prepared · DeepSeek V4 Pro auditor · exact base in the device-local transfer packet
+None.
 
 ## in_development
 
@@ -26,7 +25,8 @@ None.
 
 ## in_review
 
-None.
+- [HAM3-003](./tasks/HAM3-003.md) — Local directory contexts and bindings
+  Draft PR [#6](https://github.com/Ipat-O/Hammond-3.0/pull/6) · head `b1362ee44108b68f8160b58eb59f76f3bca8cf4c` · DeepSeek audit pending
 
 ## testing
 
