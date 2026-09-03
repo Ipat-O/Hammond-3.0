@@ -16,11 +16,12 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## ready_for_development
 
-- [HAM3-005](./tasks/HAM3-005.md) — Versioned instruction template domain
+None.
 
 ## in_development
 
-None.
+- [HAM3-005](./tasks/HAM3-005.md) — Versioned instruction template domain
+  Draft PR [#7](https://github.com/Ipat-O/Hammond-3.0/pull/7) · current head `cf39ebc5743bb2eb056a9f0546335f97ebcafb1b` · Correction 1 required before audit
 
 ## in_review
 
