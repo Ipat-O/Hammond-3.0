@@ -88,8 +88,9 @@ tasks:
     supabase_boundary: no src/data, migration, generated database type, RLS, auth, or repository change; absolute paths remain device-local; supabase:test skipped as out of boundary
     audit_risk: resolved as non-blocking documentation inaccuracy; path_exists returns false before malformed-target validation only when the root is missing, touches no target, and the sole production reachability caller passes an empty target
     audit_verification: 257 packages and 0 vulnerabilities; 10 files and 70 frontend tests; 24 Windows-applicable Rust tests; typecheck, lint, format, cargo fmt, and clippy pass; Windows MSI and NSIS build; real junction escape rejected; four audit probes/mutations restored
-    current_audit_status: APPROVE by DeepSeek at exact head b1362ee44108b68f8160b58eb59f76f3bca8cf4c; owner native UI smoke test required before merge
-    owner_smoke_test: pending; Windows picker select/cancel, reveal, normal folder/repository/worktree linking, two contexts on one project, switching, unlink-without-delete, missing-directory recovery/replacement, and cold restart
+    current_audit_status: APPROVE by DeepSeek at exact head b1362ee44108b68f8160b58eb59f76f3bca8cf4c; owner native UI smoke test passed; explicit merge authorization pending
+    owner_smoke_test: passed; picker select/cancel, reveal, ordinary folder/repository/two-worktree linking, switching, unlink-without-delete, missing-directory recovery/replacement, and cold-restart persistence all confirmed
+    outstanding: explicit owner authorization to merge draft PR #6
   - id: HAM3-004
     title: Core project and task tracker
     state: shipped

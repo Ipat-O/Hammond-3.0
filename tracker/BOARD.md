@@ -30,7 +30,7 @@ None.
 ## testing
 
 - [HAM3-003](./tasks/HAM3-003.md) — Local directory contexts and bindings
-  Draft PR [#6](https://github.com/Ipat-O/Hammond-3.0/pull/6) · approved head `b1362ee44108b68f8160b58eb59f76f3bca8cf4c` · owner Windows smoke test pending
+  Draft PR [#6](https://github.com/Ipat-O/Hammond-3.0/pull/6) · approved head `b1362ee44108b68f8160b58eb59f76f3bca8cf4c` · owner Windows smoke test passed · merge authorization pending
 
 ## merged
 

@@ -485,3 +485,16 @@
 - The `path_exists` validation order is accepted as a non-blocking documentation inaccuracy, not a confinement escape: a missing root returns `false` before target validation, touches no target, and the only production caller passes an empty relative target. No correction is required for merge readiness.
 - Independent verification passes 10 files and 70 frontend tests, 24 Windows-applicable Rust tests, typecheck, lint, frontend and Rust formatting, clippy with warnings denied, and a Windows Tauri build producing MSI and NSIS bundles. `npm ci` reports 257 packages and zero vulnerabilities. No secret is exposed.
 - HAM3-003 moved from `in_review` to `testing`. The remaining gate is the owner's Windows-native smoke test of picker select/cancel, reveal, normal folder/repository/worktree contexts, two contexts on one project, switching, unlink-without-delete, missing-directory recovery/replacement, and cold restart. No merge is authorized yet.
+
+## 2026-09-03 — Orchestration resumed; HAM3-003 owner smoke test started
+
+- The owner reconfirmed OpenAI / Codex Desktop as the active Hammond orchestrator and directed it to resume the HAM3-003 Windows-native smoke test.
+- Live intake reconfirmed `dev` and `origin/dev` at `ae923e022acea02295381ca8a4bbc4d090d81b38`; draft PR #6 remains open, mergeable, and bound to the independently approved head `b1362ee44108b68f8160b58eb59f76f3bca8cf4c`.
+- The required owner gate remains picker select/cancel, reveal, ordinary folder/repository/worktree contexts, two contexts on one project, switching, unlink-without-delete, missing-directory recovery/replacement, and cold-restart resume. No merge is authorized until this check passes.
+
+## 2026-09-03 — HAM3-003 owner smoke test passed; merge authorization pending
+
+- The exact approved app at `b1362ee44108b68f8160b58eb59f76f3bca8cf4c` resumed the existing owner session after the paused Supabase project was restored.
+- The owner confirmed the full Windows-native gate: picker select and cancel return normally; ordinary folder, repository, and two distinct Git worktree contexts link to one project; context switching and reveal work; closing a context removes only the binding and leaves the directory intact; a moved directory is reported missing after cold restart; locating its replacement clears recovery state; and the repaired binding survives another cold restart.
+- An automation observation that briefly showed `Choosing…` after picker cancellation did not reproduce under the owner's direct check and is superseded by the completed human gate rather than recorded as a product defect.
+- HAM3-003 remains in `testing` solely pending explicit owner authorization to merge draft PR #6. The approved implementation head has not changed.
