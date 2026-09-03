@@ -553,3 +553,12 @@
 - Four mutation proofs were reproduced and restored: owner-read RLS loosening breaks isolation; fake rollback removal breaks atomicity/retry; composition reordering breaks ten tests; and restore-history reuse breaks append-only behavior. The final tree is clean and the PR head is unchanged.
 - The three documented limitations are non-blocking: unused non-activating service helpers remain non-atomic but are not used by the UI; base-version restore is safely rejected by RLS; and the canonical generated RPC return type is narrower than possible runtime nullability while adapter domain fields remain nullable.
 - HAM3-005 moved from `in_review` to `testing`. The remaining gate is an owner-run authenticated persistence flow against a backend containing the new migration: save two versions, restore the first into a new active version, verify provider independence and preview-only work-order behavior, then cold-restart and confirm persistence. No merge is authorized.
+
+## 2026-09-03 — HAM3-005 audited migration deployed to hosted Hammond
+
+- With explicit owner authorization, the orchestrator targeted the CLI-linked, active healthy Supabase project `Hammond` (`polphkuvlleadblxmjyz`, EU North) from a disposable worktree at exact approved implementation SHA `749007b2fa901939238cda3db2dc7d3980492f4b`.
+- A pre-deploy `supabase db push --dry-run --skip-vault` listed exactly one pending migration: `20260903124734_versioned_instruction_layers.sql`. No seed, role, vault, or unrelated migration change was included.
+- The migration applied successfully with `supabase db push --skip-vault`. Post-deploy dry-run reports the remote database up to date, and remote migration history now lists all three repository migrations including `20260903124734`.
+- A read-only hosted verification query confirms 12 system base templates with null owners, one non-definer `instructions_save_and_activate` RPC, and RLS enabled on `instruction_templates`, `instruction_template_versions`, and `project_instruction_selections`.
+- The hosted security advisor reports one project-level warning: Supabase Auth leaked-password protection is disabled. This is not introduced by the migration and does not block the HAM3-005 persistence smoke test, but it remains recorded for separate security-hardening consideration.
+- HAM3-005 remains `testing`. The backend precondition is satisfied; only the owner authenticated save/restore/provider/restart smoke flow remains before merge authorization.
