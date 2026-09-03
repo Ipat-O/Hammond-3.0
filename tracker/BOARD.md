@@ -6,7 +6,6 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## in_design
 
-- [HAM3-005](./tasks/HAM3-005.md) — Versioned instruction template domain
 - [HAM3-006](./tasks/HAM3-006.md) — Harness adapters and managed-file injection
 - [HAM3-007](./tasks/HAM3-007.md) — Instruction Studio UI
 - [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
@@ -17,7 +16,7 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## ready_for_development
 
-None.
+- [HAM3-005](./tasks/HAM3-005.md) — Versioned instruction template domain
 
 ## in_development
 
@@ -29,11 +28,12 @@ None.
 
 ## testing
 
-- [HAM3-003](./tasks/HAM3-003.md) — Local directory contexts and bindings
-  Draft PR [#6](https://github.com/Ipat-O/Hammond-3.0/pull/6) · approved head `b1362ee44108b68f8160b58eb59f76f3bca8cf4c` · owner Windows smoke test passed · merge authorization pending
+None.
 
 ## merged
 
+- [HAM3-003](./tasks/HAM3-003.md) — Local directory contexts and bindings
+  Merge commit `671278697d46a52061fff85283d16f5251f87da5` · owner Windows smoke test passed
 - [HAM3-013](./tasks/HAM3-013.md) — Task hierarchy outliner
   Merge commit `d9826e7934758f6b270a19a5eebefed0afd48229` · owner archive check passed
 

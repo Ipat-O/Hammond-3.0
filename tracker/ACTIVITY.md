@@ -498,3 +498,11 @@
 - The owner confirmed the full Windows-native gate: picker select and cancel return normally; ordinary folder, repository, and two distinct Git worktree contexts link to one project; context switching and reveal work; closing a context removes only the binding and leaves the directory intact; a moved directory is reported missing after cold restart; locating its replacement clears recovery state; and the repaired binding survives another cold restart.
 - An automation observation that briefly showed `Choosing…` after picker cancellation did not reproduce under the owner's direct check and is superseded by the completed human gate rather than recorded as a product defect.
 - HAM3-003 remains in `testing` solely pending explicit owner authorization to merge draft PR #6. The approved implementation head has not changed.
+
+## 2026-09-03 — HAM3-003 merged; HAM3-005 promoted
+
+- The owner explicitly authorized merge after completing the full Windows-native smoke test.
+- Immediately before merge, PR #6 was re-verified open, mergeable, targeting `dev`, and still at DeepSeek's approved implementation head `b1362ee44108b68f8160b58eb59f76f3bca8cf4c`.
+- PR #6 was marked ready and merged into `dev` as merge commit `671278697d46a52061fff85283d16f5251f87da5`, without changing the approved implementation head.
+- HAM3-003 moved from `testing` to `merged`. It is not yet `shipped`, because the owner gate ran against the exact-head development app rather than a packaged release built from merged `dev`.
+- Under D-011 sequential delivery, HAM3-005 moved from `in_design` to `ready_for_development`. No worker has been dispatched yet.
