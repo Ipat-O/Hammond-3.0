@@ -92,6 +92,7 @@ export type Database = {
           created_at: string;
           id: string;
           owner_id: string | null;
+          restored_from_version_id: string | null;
           template_id: string;
           version: number;
         };
@@ -100,18 +101,27 @@ export type Database = {
           created_at?: string;
           id?: string;
           owner_id?: string | null;
+          restored_from_version_id?: string | null;
           template_id: string;
-          version: number;
+          version?: number;
         };
         Update: {
           content?: string;
           created_at?: string;
           id?: string;
           owner_id?: string | null;
+          restored_from_version_id?: string | null;
           template_id?: string;
           version?: number;
         };
         Relationships: [
+          {
+            foreignKeyName: 'instruction_template_versions_restored_from_version_id_fkey';
+            columns: ['restored_from_version_id'];
+            isOneToOne: false;
+            referencedRelation: 'instruction_template_versions';
+            referencedColumns: ['id'];
+          },
           {
             foreignKeyName: 'instruction_template_versions_template_id_fkey';
             columns: ['template_id'];
@@ -126,9 +136,11 @@ export type Database = {
           created_at: string;
           id: string;
           is_base: boolean;
+          layer: Database['public']['Enums']['instruction_layer'];
           name: string;
           owner_id: string | null;
-          provider: Database['public']['Enums']['provider_family'];
+          project_id: string | null;
+          provider: Database['public']['Enums']['provider_family'] | null;
           role: Database['public']['Enums']['instruction_role'];
           updated_at: string;
         };
@@ -136,9 +148,11 @@ export type Database = {
           created_at?: string;
           id?: string;
           is_base?: boolean;
+          layer: Database['public']['Enums']['instruction_layer'];
           name: string;
           owner_id?: string | null;
-          provider: Database['public']['Enums']['provider_family'];
+          project_id?: string | null;
+          provider?: Database['public']['Enums']['provider_family'] | null;
           role: Database['public']['Enums']['instruction_role'];
           updated_at?: string;
         };
@@ -146,43 +160,69 @@ export type Database = {
           created_at?: string;
           id?: string;
           is_base?: boolean;
+          layer?: Database['public']['Enums']['instruction_layer'];
           name?: string;
           owner_id?: string | null;
-          provider?: Database['public']['Enums']['provider_family'];
+          project_id?: string | null;
+          provider?: Database['public']['Enums']['provider_family'] | null;
           role?: Database['public']['Enums']['instruction_role'];
           updated_at?: string;
         };
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: 'instruction_templates_project_owner_fkey';
+            columns: ['project_id', 'owner_id'];
+            isOneToOne: false;
+            referencedRelation: 'projects';
+            referencedColumns: ['id', 'owner_id'];
+          },
+        ];
       };
       project_instruction_selections: {
         Row: {
           created_at: string;
           id: string;
+          override_version_id: string | null;
           owner_id: string;
           project_id: string;
+          provider: Database['public']['Enums']['provider_family'];
+          provider_version_id: string;
           role: Database['public']['Enums']['instruction_role'];
-          template_version_id: string;
+          shared_role_version_id: string;
           updated_at: string;
         };
         Insert: {
           created_at?: string;
           id?: string;
+          override_version_id?: string | null;
           owner_id?: string;
           project_id: string;
+          provider: Database['public']['Enums']['provider_family'];
+          provider_version_id: string;
           role: Database['public']['Enums']['instruction_role'];
-          template_version_id: string;
+          shared_role_version_id: string;
           updated_at?: string;
         };
         Update: {
           created_at?: string;
           id?: string;
+          override_version_id?: string | null;
           owner_id?: string;
           project_id?: string;
+          provider?: Database['public']['Enums']['provider_family'];
+          provider_version_id?: string;
           role?: Database['public']['Enums']['instruction_role'];
-          template_version_id?: string;
+          shared_role_version_id?: string;
           updated_at?: string;
         };
         Relationships: [
+          {
+            foreignKeyName: 'project_instruction_selections_override_version_id_fkey';
+            columns: ['override_version_id'];
+            isOneToOne: false;
+            referencedRelation: 'instruction_template_versions';
+            referencedColumns: ['id'];
+          },
           {
             foreignKeyName: 'project_instruction_selections_project_id_owner_id_fkey';
             columns: ['project_id', 'owner_id'];
@@ -191,8 +231,15 @@ export type Database = {
             referencedColumns: ['id', 'owner_id'];
           },
           {
-            foreignKeyName: 'project_instruction_selections_template_version_id_fkey';
-            columns: ['template_version_id'];
+            foreignKeyName: 'project_instruction_selections_provider_version_id_fkey';
+            columns: ['provider_version_id'];
+            isOneToOne: false;
+            referencedRelation: 'instruction_template_versions';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'project_instruction_selections_shared_role_version_id_fkey';
+            columns: ['shared_role_version_id'];
             isOneToOne: false;
             referencedRelation: 'instruction_template_versions';
             referencedColumns: ['id'];
@@ -386,6 +433,7 @@ export type Database = {
       [_ in never]: never;
     };
     Enums: {
+      instruction_layer: 'shared_role' | 'provider' | 'project_override';
       instruction_role: 'orchestrator' | 'worker' | 'auditor';
       provider_family: 'codex' | 'claude_code' | 'kilo_code';
       task_relation_kind: 'depends_on' | 'blocks' | 'relates_to' | 'duplicates';
@@ -519,6 +567,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      instruction_layer: ['shared_role', 'provider', 'project_override'],
       instruction_role: ['orchestrator', 'worker', 'auditor'],
       provider_family: ['codex', 'claude_code', 'kilo_code'],
       task_relation_kind: ['depends_on', 'blocks', 'relates_to', 'duplicates'],

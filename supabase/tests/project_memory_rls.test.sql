@@ -10,7 +10,7 @@ select is((select count(*)::integer from public.projects), 1, 'owner one can rea
 select set_config('request.jwt.claim.sub', '22222222-2222-4222-8222-222222222222', true);
 select is((select count(*)::integer from public.projects), 0, 'owner two cannot read owner one project');
 select throws_ok($$insert into public.projects (id, owner_id, name) values ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', '11111111-1111-4111-8111-111111111111', 'Spoofed')$$, '42501', null, 'owner two cannot insert for owner one');
-select is((select count(*)::integer from public.instruction_templates where is_base), 9, 'all role/provider base categories are readable');
+select is((select count(*)::integer from public.instruction_templates where is_base), 12, 'all base categories are readable (9 role/provider + 3 shared-role)');
 reset role;
 alter policy projects_owner_all on public.projects using (true);
 set local role authenticated;
