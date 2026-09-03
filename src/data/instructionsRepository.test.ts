@@ -132,3 +132,140 @@ describe('SupabaseInstructionRepository query shape and mapping', () => {
     expect(client.from).not.toHaveBeenCalled();
   });
 });
+
+/** Builds a fake Supabase client whose `.rpc()` resolves `result` and records the call. */
+function createRpcMock(result: unknown) {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- params exist only to type mock.calls
+  const rpc = vi.fn((fn: string, payload: Record<string, unknown>) => ({
+    single: () => Promise.resolve({ data: result, error: null }),
+  }));
+  const client = { rpc } as unknown as SupabaseClient<Database>;
+  return { client, rpc };
+}
+
+describe('SupabaseInstructionRepository.saveAndActivate RPC wire shape', () => {
+  const rpcResult = {
+    version_id: 'version-1',
+    version_template_id: 'template-1',
+    version_owner_id: 'owner-1',
+    version_number: 1,
+    version_content: 'content',
+    version_restored_from_version_id: null,
+    version_created_at: '2026-01-01T00:00:00.000Z',
+    selection_id: 'selection-1',
+    selection_owner_id: 'owner-1',
+    selection_project_id: 'project-1',
+    selection_role: 'worker',
+    selection_provider: 'claude_code',
+    selection_shared_role_version_id: 'shared-1',
+    selection_provider_version_id: 'version-1',
+    selection_override_version_id: null,
+  };
+
+  it('sends the four coordinates plus p_content, and no p_restored_from_version_id key, for a save', async () => {
+    const { client, rpc } = createRpcMock(rpcResult);
+    const repository = new SupabaseInstructionRepository(client);
+
+    await repository.saveAndActivate({
+      projectId: 'project-1',
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'provider',
+      content: 'new content',
+    });
+
+    expect(rpc).toHaveBeenCalledTimes(1);
+    const [fnName, payload] = rpc.mock.calls[0];
+    expect(fnName).toBe('instructions_save_and_activate');
+    expect(payload).toEqual({
+      p_project_id: 'project-1',
+      p_role: 'worker',
+      p_provider: 'claude_code',
+      p_layer: 'provider',
+      p_content: 'new content',
+    });
+    expect(payload).not.toHaveProperty('p_restored_from_version_id');
+  });
+
+  it('sends the four coordinates plus p_restored_from_version_id, and no p_content key, for a restore', async () => {
+    const { client, rpc } = createRpcMock(rpcResult);
+    const repository = new SupabaseInstructionRepository(client);
+
+    await repository.saveAndActivate({
+      projectId: 'project-1',
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'provider',
+      restoredFromVersionId: 'source-version-1',
+    });
+
+    expect(rpc).toHaveBeenCalledTimes(1);
+    const [, payload] = rpc.mock.calls[0];
+    expect(payload).toEqual({
+      p_project_id: 'project-1',
+      p_role: 'worker',
+      p_provider: 'claude_code',
+      p_layer: 'provider',
+      p_restored_from_version_id: 'source-version-1',
+    });
+    expect(payload).not.toHaveProperty('p_content');
+  });
+
+  it('rejects a call that supplies neither or both of content and restoredFromVersionId, before reaching Supabase', async () => {
+    const { client, rpc } = createRpcMock(rpcResult);
+    const repository = new SupabaseInstructionRepository(client);
+
+    await expect(
+      repository.saveAndActivate({
+        projectId: 'project-1',
+        role: 'worker',
+        provider: 'claude_code',
+        layer: 'provider',
+      }),
+    ).rejects.toThrow(/exactly one of content or restoredFromVersionId/);
+    await expect(
+      repository.saveAndActivate({
+        projectId: 'project-1',
+        role: 'worker',
+        provider: 'claude_code',
+        layer: 'provider',
+        content: 'a',
+        restoredFromVersionId: 'b',
+      }),
+    ).rejects.toThrow(/exactly one of content or restoredFromVersionId/);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it('maps the RPC row into version/selection domain shapes', async () => {
+    const { client } = createRpcMock(rpcResult);
+    const repository = new SupabaseInstructionRepository(client);
+
+    const { version, selection } = await repository.saveAndActivate({
+      projectId: 'project-1',
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'provider',
+      content: 'new content',
+    });
+
+    expect(version).toEqual({
+      id: 'version-1',
+      templateId: 'template-1',
+      ownerId: 'owner-1',
+      version: 1,
+      content: 'content',
+      restoredFromVersionId: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    });
+    expect(selection).toEqual({
+      id: 'selection-1',
+      ownerId: 'owner-1',
+      projectId: 'project-1',
+      role: 'worker',
+      provider: 'claude_code',
+      sharedRoleVersionId: 'shared-1',
+      providerVersionId: 'version-1',
+      overrideVersionId: null,
+    });
+  });
+});

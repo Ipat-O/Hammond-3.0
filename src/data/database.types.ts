@@ -432,29 +432,29 @@ export type Database = {
     Functions: {
       instructions_save_and_activate: {
         Args: {
-          p_project_id: string;
-          p_role: Database['public']['Enums']['instruction_role'];
-          p_provider: Database['public']['Enums']['provider_family'];
+          p_content?: string;
           p_layer: Database['public']['Enums']['instruction_layer'];
-          p_content?: string | null;
-          p_restored_from_version_id?: string | null;
+          p_project_id: string;
+          p_provider: Database['public']['Enums']['provider_family'];
+          p_restored_from_version_id?: string;
+          p_role: Database['public']['Enums']['instruction_role'];
         };
         Returns: {
-          version_id: string;
-          version_template_id: string;
-          version_owner_id: string | null;
-          version_number: number;
-          version_content: string;
-          version_restored_from_version_id: string | null;
-          version_created_at: string;
           selection_id: string;
+          selection_override_version_id: string | null;
           selection_owner_id: string;
           selection_project_id: string;
-          selection_role: Database['public']['Enums']['instruction_role'];
           selection_provider: Database['public']['Enums']['provider_family'];
-          selection_shared_role_version_id: string;
           selection_provider_version_id: string;
-          selection_override_version_id: string | null;
+          selection_role: Database['public']['Enums']['instruction_role'];
+          selection_shared_role_version_id: string;
+          version_content: string;
+          version_created_at: string;
+          version_id: string;
+          version_number: number;
+          version_owner_id: string | null;
+          version_restored_from_version_id: string | null;
+          version_template_id: string;
         }[];
       };
     };

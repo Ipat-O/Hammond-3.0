@@ -235,14 +235,23 @@ export class SupabaseInstructionRepository implements InstructionRepository {
     content?: string;
     restoredFromVersionId?: string;
   }): Promise<{ version: InstructionVersion; selection: InstructionSelection }> {
-    const payload = {
+    if ((params.content === undefined) === (params.restoredFromVersionId === undefined)) {
+      throw new Error('saveAndActivate requires exactly one of content or restoredFromVersionId');
+    }
+    // The RPC's optional parameters (both backed by a SQL `default null`)
+    // are typed as plain optional strings, not `string | null` — PostgREST
+    // omits a key entirely to fall back to its default, so the inactive key
+    // must be left out of the payload rather than sent as an explicit null.
+    const coordinates = {
       p_project_id: params.projectId,
       p_role: params.role,
       p_provider: params.provider,
       p_layer: params.layer,
-      p_content: params.content ?? null,
-      p_restored_from_version_id: params.restoredFromVersionId ?? null,
     };
+    const payload =
+      params.restoredFromVersionId !== undefined
+        ? { ...coordinates, p_restored_from_version_id: params.restoredFromVersionId }
+        : { ...coordinates, p_content: params.content as string };
     assertNoAbsoluteLocalPaths(payload);
     const row = dataOrThrow(
       await this.client.rpc('instructions_save_and_activate', payload).single(),
