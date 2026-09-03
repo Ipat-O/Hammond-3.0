@@ -226,4 +226,47 @@ export class SupabaseInstructionRepository implements InstructionRepository {
       ),
     );
   }
+
+  async saveAndActivate(params: {
+    projectId: string;
+    role: InstructionRole;
+    provider: ProviderFamily;
+    layer: InstructionLayer;
+    content?: string;
+    restoredFromVersionId?: string;
+  }): Promise<{ version: InstructionVersion; selection: InstructionSelection }> {
+    const payload = {
+      p_project_id: params.projectId,
+      p_role: params.role,
+      p_provider: params.provider,
+      p_layer: params.layer,
+      p_content: params.content ?? null,
+      p_restored_from_version_id: params.restoredFromVersionId ?? null,
+    };
+    assertNoAbsoluteLocalPaths(payload);
+    const row = dataOrThrow(
+      await this.client.rpc('instructions_save_and_activate', payload).single(),
+    );
+    return {
+      version: {
+        id: row.version_id,
+        templateId: row.version_template_id,
+        ownerId: row.version_owner_id,
+        version: row.version_number,
+        content: row.version_content,
+        restoredFromVersionId: row.version_restored_from_version_id,
+        createdAt: row.version_created_at,
+      },
+      selection: {
+        id: row.selection_id,
+        ownerId: row.selection_owner_id,
+        projectId: row.selection_project_id,
+        role: row.selection_role,
+        provider: row.selection_provider,
+        sharedRoleVersionId: row.selection_shared_role_version_id,
+        providerVersionId: row.selection_provider_version_id,
+        overrideVersionId: row.selection_override_version_id,
+      },
+    };
+  }
 }

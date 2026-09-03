@@ -54,6 +54,7 @@ export function InstructionsPanel({ service, projects }: InstructionsPanelProps)
 
   const [taskWorkOrder, setTaskWorkOrder] = useState('');
   const [preview, setPreview] = useState('');
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savingLayer, setSavingLayer] = useState<InstructionLayer | null>(null);
@@ -112,16 +113,29 @@ export function InstructionsPanel({ service, projects }: InstructionsPanelProps)
   useEffect(() => {
     if (!projectId) {
       setPreview('');
+      setPreviewError(null);
       return;
     }
     let cancelled = false;
     void service
       .composePreview({ projectId, role, provider, taskWorkOrder })
       .then((composed) => {
-        if (!cancelled) setPreview(composed);
+        if (!cancelled) {
+          setPreview(composed);
+          setPreviewError(null);
+        }
       })
-      .catch(() => {
-        if (!cancelled) setPreview('');
+      .catch((composeError) => {
+        // Keep the last known-good preview on screen rather than replacing
+        // it with an empty string, which would be indistinguishable from
+        // genuinely empty composed content; surface the failure instead.
+        if (!cancelled) {
+          setPreviewError(
+            composeError instanceof Error
+              ? composeError.message
+              : 'Failed to load the composed preview',
+          );
+        }
       });
     return () => {
       cancelled = true;
@@ -327,6 +341,14 @@ export function InstructionsPanel({ service, projects }: InstructionsPanelProps)
               />
             </label>
             <h3>Composed preview</h3>
+            {previewError && (
+              <div className="save-error" role="alert">
+                <span>Preview failed to refresh: {previewError}</span>
+                <button className="button button-small" type="button" onClick={refresh}>
+                  Retry
+                </button>
+              </div>
+            )}
             <pre className="instruction-preview-output" aria-label="Composed preview">
               {preview || '(nothing composed yet)'}
             </pre>

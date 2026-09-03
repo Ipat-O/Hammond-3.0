@@ -10,6 +10,22 @@
 create type public.instruction_layer as enum ('shared_role', 'provider', 'project_override');
 
 -- ---------------------------------------------------------------------------
+-- Correction 1: instruction_templates.owner_id and
+-- instruction_template_versions.owner_id were nullable with no default (the
+-- HAM3-002 base kept them nullable so system rows can carry owner_id is
+-- null). The insert policies require auth.uid() = owner_id, but every real
+-- client insert omits owner_id entirely, so an authenticated owner's first
+-- save always failed RLS with owner_id resolving to null. auth.uid() itself
+-- evaluates to null outside a request context, so this migration's own
+-- base-row seed inserts below are unaffected and still get owner_id = null.
+-- ---------------------------------------------------------------------------
+
+alter table public.instruction_templates
+  alter column owner_id set default auth.uid();
+alter table public.instruction_template_versions
+  alter column owner_id set default auth.uid();
+
+-- ---------------------------------------------------------------------------
 -- instruction_templates: add layer/project scoping
 -- ---------------------------------------------------------------------------
 
@@ -324,6 +340,187 @@ revoke all on function public.project_instruction_selections_validate() from pub
 create trigger project_instruction_selections_validate
   before insert or update on public.project_instruction_selections
   for each row execute function public.project_instruction_selections_validate();
+
+-- ---------------------------------------------------------------------------
+-- Correction 1: atomic save/restore-and-activate.
+--
+-- The client previously composed a save (or restore) and an activation as
+-- two independent requests. If the version insert committed and the
+-- selection upsert then failed, the version was permanently appended but
+-- never selected, and a retry appended another one. This function performs
+-- find-or-create-template, append-version, and upsert-selection as one
+-- statement from PostgREST's perspective, so any failure (including the
+-- project_instruction_selections_validate trigger rejecting the result)
+-- rolls back the whole operation — no ghost version, no ghost template.
+--
+-- SECURITY INVOKER: runs as the calling role, so every insert/update inside
+-- still goes through the exact same RLS policies and triggers as a direct
+-- client write (instruction_template_versions_assign_version still
+-- allocates the version number and validates restore provenance;
+-- project_instruction_selections_validate still validates the selection).
+-- This function grants no privilege beyond what those policies already
+-- allow; it only makes the sequence atomic.
+-- ---------------------------------------------------------------------------
+
+create function public.instructions_save_and_activate(
+  p_project_id uuid,
+  p_role public.instruction_role,
+  p_provider public.provider_family,
+  p_layer public.instruction_layer,
+  p_content text default null,
+  p_restored_from_version_id uuid default null
+)
+returns table (
+  version_id uuid,
+  version_template_id uuid,
+  version_owner_id uuid,
+  version_number integer,
+  version_content text,
+  version_restored_from_version_id uuid,
+  version_created_at timestamptz,
+  selection_id uuid,
+  selection_owner_id uuid,
+  selection_project_id uuid,
+  selection_role public.instruction_role,
+  selection_provider public.provider_family,
+  selection_shared_role_version_id uuid,
+  selection_provider_version_id uuid,
+  selection_override_version_id uuid
+)
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  v_owner uuid := auth.uid();
+  v_template_id uuid;
+  v_template_provider public.provider_family;
+  v_template_project_id uuid;
+  v_content text;
+  v_new_version_id uuid;
+  v_shared_id uuid;
+  v_provider_id uuid;
+  v_override_id uuid;
+  v_source_layer public.instruction_layer;
+  v_source_role public.instruction_role;
+  v_source_provider public.provider_family;
+  v_source_project_id uuid;
+begin
+  if v_owner is null then
+    raise exception 'instructions_save_and_activate requires an authenticated caller' using errcode = '42501';
+  end if;
+  if (p_content is null) = (p_restored_from_version_id is null) then
+    raise exception 'exactly one of p_content or p_restored_from_version_id must be provided' using errcode = '22023';
+  end if;
+
+  -- Serializes concurrent first-saves for the same owner/slot so two
+  -- simultaneous requests cannot both miss the find-or-create lookup below
+  -- and race to insert duplicate templates.
+  perform pg_advisory_xact_lock(hashtextextended(
+    v_owner::text || ':' || p_role::text || ':' || coalesce(p_provider::text, '') || ':' ||
+    p_layer::text || ':' || coalesce(p_project_id::text, ''),
+    0
+  ));
+
+  if p_restored_from_version_id is not null then
+    select v.template_id, v.content, t.layer, t.role, t.provider, t.project_id
+      into v_template_id, v_content, v_source_layer, v_source_role, v_source_provider, v_source_project_id
+      from public.instruction_template_versions v
+      join public.instruction_templates t on t.id = v.template_id
+      where v.id = p_restored_from_version_id;
+
+    if not found or v_source_layer <> p_layer or v_source_role <> p_role
+       or (p_layer <> 'shared_role' and v_source_provider is distinct from p_provider)
+       or (p_layer = 'project_override' and v_source_project_id is distinct from p_project_id) then
+      raise exception 'restored_from_version_id does not match the requested layer/role/provider/project'
+        using errcode = '23514';
+    end if;
+  else
+    v_content := p_content;
+    v_template_provider := case when p_layer = 'shared_role' then null else p_provider end;
+    v_template_project_id := case when p_layer = 'project_override' then p_project_id else null end;
+
+    select id into v_template_id
+      from public.instruction_templates
+      where owner_id = v_owner and role = p_role and layer = p_layer
+        and provider is not distinct from v_template_provider
+        and project_id is not distinct from v_template_project_id
+        and not is_base;
+
+    if v_template_id is null then
+      insert into public.instruction_templates (owner_id, role, provider, layer, project_id, name)
+      values (
+        v_owner, p_role, v_template_provider, p_layer, v_template_project_id,
+        initcap(replace(p_role::text, '_', ' ')) || ' / ' ||
+        case p_layer
+          when 'shared_role' then 'Shared (custom)'
+          when 'provider' then initcap(replace(p_provider::text, '_', ' ')) || ' (custom)'
+          else initcap(replace(p_provider::text, '_', ' ')) || ' / Project override'
+        end
+      )
+      returning id into v_template_id;
+    end if;
+  end if;
+
+  insert into public.instruction_template_versions (template_id, owner_id, content, restored_from_version_id)
+  values (v_template_id, v_owner, v_content, p_restored_from_version_id)
+  returning id into v_new_version_id;
+
+  select s.shared_role_version_id, s.provider_version_id, s.override_version_id
+    into v_shared_id, v_provider_id, v_override_id
+    from public.project_instruction_selections s
+    where s.project_id = p_project_id and s.role = p_role and s.provider = p_provider;
+
+  if not found then
+    select v.id into v_shared_id
+      from public.instruction_template_versions v
+      join public.instruction_templates t on t.id = v.template_id
+      where t.is_base and t.role = p_role and t.layer = 'shared_role'
+      order by v.version asc limit 1;
+
+    select v.id into v_provider_id
+      from public.instruction_template_versions v
+      join public.instruction_templates t on t.id = v.template_id
+      where t.is_base and t.role = p_role and t.provider = p_provider and t.layer = 'provider'
+      order by v.version asc limit 1;
+
+    v_override_id := null;
+  end if;
+
+  if p_layer = 'shared_role' then
+    v_shared_id := v_new_version_id;
+  elsif p_layer = 'provider' then
+    v_provider_id := v_new_version_id;
+  else
+    v_override_id := v_new_version_id;
+  end if;
+
+  insert into public.project_instruction_selections
+    (owner_id, project_id, role, provider, shared_role_version_id, provider_version_id, override_version_id)
+  values (v_owner, p_project_id, p_role, p_provider, v_shared_id, v_provider_id, v_override_id)
+  on conflict (project_id, role, provider) do update
+    set shared_role_version_id = excluded.shared_role_version_id,
+        provider_version_id = excluded.provider_version_id,
+        override_version_id = excluded.override_version_id;
+
+  return query
+    select
+      ver.id, ver.template_id, ver.owner_id, ver.version, ver.content, ver.restored_from_version_id, ver.created_at,
+      sel.id, sel.owner_id, sel.project_id, sel.role, sel.provider,
+      sel.shared_role_version_id, sel.provider_version_id, sel.override_version_id
+    from public.instruction_template_versions ver
+    join public.project_instruction_selections sel
+      on sel.project_id = p_project_id and sel.role = p_role and sel.provider = p_provider
+    where ver.id = v_new_version_id;
+end;
+$$;
+
+revoke all on function public.instructions_save_and_activate(
+  uuid, public.instruction_role, public.provider_family, public.instruction_layer, text, uuid
+) from public, anon;
+grant execute on function public.instructions_save_and_activate(
+  uuid, public.instruction_role, public.provider_family, public.instruction_layer, text, uuid
+) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Grants: keep anon at zero privileges and remove authenticated UPDATE/DELETE

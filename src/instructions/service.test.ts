@@ -400,6 +400,98 @@ describe('InstructionsService', () => {
       });
     });
 
+    it('rolls back a newly inserted version when activation fails after the version was already prepared (Correction 1)', async () => {
+      const repo = createFakeInstructionRepository();
+      const service = new InstructionsService(repo);
+      const sharedId = findBaseVersionId(repo, 'worker', 'shared_role');
+      const providerId = findBaseVersionId(repo, 'worker', 'provider', 'claude_code');
+      await service.activateSelection({
+        projectId: project1,
+        role: 'worker',
+        provider: 'claude_code',
+        sharedRoleVersionId: sharedId,
+        providerVersionId: providerId,
+        overrideVersionId: null,
+      });
+      const versionCountBefore = repo.store.versions.size;
+
+      // insertVersion succeeds; the LATER activation step fails - the exact
+      // "insert commits, then activation fails" scenario Correction 1 flags.
+      repo.upsertSelection = async () => {
+        throw new Error('activation dropped mid-request');
+      };
+
+      await expect(
+        service.saveAndActivate({
+          projectId: project1,
+          role: 'worker',
+          provider: 'claude_code',
+          layer: 'provider',
+          content: 'this version must not survive',
+        }),
+      ).rejects.toMatchObject({ code: 'persistence_failed' });
+
+      expect(repo.store.versions.size).toBe(versionCountBefore);
+      expect(
+        Array.from(repo.store.versions.values()).some(
+          (v) => v.content === 'this version must not survive',
+        ),
+      ).toBe(false);
+
+      const selectionAfterFailure = await service.getSelection({
+        projectId: project1,
+        role: 'worker',
+        provider: 'claude_code',
+      });
+      expect(selectionAfterFailure).toMatchObject({
+        sharedRoleVersionId: sharedId,
+        providerVersionId: providerId,
+      });
+    });
+
+    it('retry after a rolled-back activation failure creates exactly one new version and activates it (Correction 1)', async () => {
+      const repo = createFakeInstructionRepository();
+      const service = new InstructionsService(repo);
+      const originalUpsertSelection = repo.upsertSelection.bind(repo);
+      let shouldFailActivation = true;
+      repo.upsertSelection = async (params) => {
+        if (shouldFailActivation) {
+          shouldFailActivation = false;
+          throw new Error('activation dropped mid-request');
+        }
+        return originalUpsertSelection(params);
+      };
+
+      await expect(
+        service.saveAndActivate({
+          projectId: project1,
+          role: 'worker',
+          provider: 'claude_code',
+          layer: 'provider',
+          content: 'first attempt',
+        }),
+      ).rejects.toMatchObject({ code: 'persistence_failed' });
+
+      const { version, selection } = await service.saveAndActivate({
+        projectId: project1,
+        role: 'worker',
+        provider: 'claude_code',
+        layer: 'provider',
+        content: 'retry succeeds',
+      });
+
+      expect(version.version).toBe(1); // not 2 - the failed attempt left nothing behind
+      expect(version.content).toBe('retry succeeds');
+      expect(selection.providerVersionId).toBe(version.id);
+      const ownerVersions = await service.listOwnerVersions({
+        role: 'worker',
+        provider: 'claude_code',
+        layer: 'provider',
+        projectId: null,
+      });
+      expect(ownerVersions).toHaveLength(1);
+    });
+
     it('retains the draft and supports retry after a failed save', async () => {
       const repo = createFakeInstructionRepository();
       let shouldFail = true;

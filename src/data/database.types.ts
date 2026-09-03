@@ -430,7 +430,33 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
-      [_ in never]: never;
+      instructions_save_and_activate: {
+        Args: {
+          p_project_id: string;
+          p_role: Database['public']['Enums']['instruction_role'];
+          p_provider: Database['public']['Enums']['provider_family'];
+          p_layer: Database['public']['Enums']['instruction_layer'];
+          p_content?: string | null;
+          p_restored_from_version_id?: string | null;
+        };
+        Returns: {
+          version_id: string;
+          version_template_id: string;
+          version_owner_id: string | null;
+          version_number: number;
+          version_content: string;
+          version_restored_from_version_id: string | null;
+          version_created_at: string;
+          selection_id: string;
+          selection_owner_id: string;
+          selection_project_id: string;
+          selection_role: Database['public']['Enums']['instruction_role'];
+          selection_provider: Database['public']['Enums']['provider_family'];
+          selection_shared_role_version_id: string;
+          selection_provider_version_id: string;
+          selection_override_version_id: string | null;
+        }[];
+      };
     };
     Enums: {
       instruction_layer: 'shared_role' | 'provider' | 'project_override';

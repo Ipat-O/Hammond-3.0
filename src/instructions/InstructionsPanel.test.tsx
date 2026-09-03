@@ -140,4 +140,46 @@ describe('InstructionsPanel', () => {
     );
     expect(repo.store.versions.size).toBe(versionCountWithWorkOrder);
   });
+
+  it('surfaces a failed preview refresh instead of hiding it, keeps the last known-good preview, and recovers on retry (Correction 1)', async () => {
+    const { service } = renderPanel();
+    const textarea = await screen.findByLabelText('Provider content');
+    const providerCard = textarea.closest('article') as HTMLElement;
+
+    fireEvent.change(textarea, { target: { value: 'provider content' } });
+    fireEvent.click(within(providerCard).getByRole('button', { name: 'Save new version' }));
+    await waitFor(() =>
+      expect(screen.getByLabelText('Composed preview')).toHaveTextContent('provider content'),
+    );
+
+    const originalComposePreview = service.composePreview.bind(service);
+    let shouldFail = true;
+    service.composePreview = (async (...args: Parameters<typeof originalComposePreview>) => {
+      if (shouldFail) {
+        shouldFail = false;
+        throw new Error('network dropped');
+      }
+      return originalComposePreview(...args);
+    }) as typeof service.composePreview;
+
+    fireEvent.change(screen.getByLabelText('Task work order'), {
+      target: { value: 'finish the login flow' },
+    });
+
+    await screen.findByText(/Preview failed to refresh: network dropped/);
+    // The old, still-valid preview stays on screen - it is not replaced with an empty string.
+    expect(screen.getByLabelText('Composed preview')).toHaveTextContent('provider content');
+    expect(screen.getByLabelText('Composed preview')).not.toHaveTextContent(
+      'finish the login flow',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Preview failed to refresh/)).not.toBeInTheDocument(),
+    );
+    expect(screen.getByLabelText('Composed preview')).toHaveTextContent(
+      'provider content finish the login flow',
+    );
+  });
 });

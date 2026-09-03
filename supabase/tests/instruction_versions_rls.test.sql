@@ -1,5 +1,5 @@
 begin;
-select plan(36);
+select plan(38);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures
@@ -29,6 +29,20 @@ insert into public.instruction_template_versions (id, template_id, owner_id, con
   ('b0000000-0000-4000-8000-000000000002', 'a0000000-0000-4000-8000-000000000002', '11111111-1111-4111-8111-111111111111', 'owner provider v1'),
   ('b0000000-0000-4000-8000-000000000003', 'a0000000-0000-4000-8000-000000000003', '11111111-1111-4111-8111-111111111111', 'owner override v1'),
   ('b0000000-0000-4000-8000-000000000004', 'a0000000-0000-4000-8000-000000000004', '11111111-1111-4111-8111-111111111111', 'owner override project 2 v1');
+
+-- ---------------------------------------------------------------------------
+-- Correction 1: server-derived owner identity. A real client insert never
+-- specifies owner_id (see src/data/instructionsRepository.ts) — it must be
+-- filled in by the database, not left null and rejected by RLS.
+-- ---------------------------------------------------------------------------
+
+insert into public.instruction_templates (id, role, provider, layer, project_id, name) values
+  ('a0000000-0000-4000-8000-000000000005', 'auditor', 'kilo_code', 'provider', null, 'Owner provider / auditor / kilo_code');
+select is((select owner_id from public.instruction_templates where id = 'a0000000-0000-4000-8000-000000000005'), '11111111-1111-4111-8111-111111111111'::uuid, 'a template insert that omits owner_id (as the real client does) still stores auth.uid()');
+
+insert into public.instruction_template_versions (id, template_id, content) values
+  ('b0000000-0000-4000-8000-000000000007', 'a0000000-0000-4000-8000-000000000005', 'owner content, no owner_id supplied');
+select is((select owner_id from public.instruction_template_versions where id = 'b0000000-0000-4000-8000-000000000007'), '11111111-1111-4111-8111-111111111111'::uuid, 'a version insert that omits owner_id (as the real client does) still stores auth.uid() and the insert succeeds');
 
 -- ---------------------------------------------------------------------------
 -- Append-only version allocation
@@ -201,7 +215,7 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '22222222-2222-4222-8222-222222222222', true);
 select is((select count(*)::integer from public.instruction_templates where owner_id = '11111111-1111-4111-8111-111111111111'), 0, 'restored policy isolates owner one''s private templates again');
 select set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', true);
-select is((select count(*)::integer from public.instruction_templates where owner_id = '11111111-1111-4111-8111-111111111111'), 4, 'owner one still sees their own four templates after the policy is restored');
+select is((select count(*)::integer from public.instruction_templates where owner_id = '11111111-1111-4111-8111-111111111111'), 5, 'owner one still sees their own five templates after the policy is restored');
 reset role;
 
 select * from finish();

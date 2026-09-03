@@ -64,4 +64,22 @@ export interface InstructionRepository {
     providerVersionId: string;
     overrideVersionId: string | null;
   }): Promise<InstructionSelection>;
+
+  /**
+   * Atomically finds/creates the owner's template for one layer, appends a
+   * version (fresh `content` or a server-validated restore sourced from
+   * `restoredFromVersionId` — exactly one of the two must be given), and
+   * activates it for the given project/role/provider selection, all in one
+   * database transaction. A failure at any step (including selection
+   * validation) leaves history and the active selection exactly as they
+   * were beforehand; nothing partial is ever persisted.
+   */
+  saveAndActivate(params: {
+    projectId: string;
+    role: InstructionRole;
+    provider: ProviderFamily;
+    layer: InstructionLayer;
+    content?: string;
+    restoredFromVersionId?: string;
+  }): Promise<{ version: InstructionVersion; selection: InstructionSelection }>;
 }

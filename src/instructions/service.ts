@@ -182,9 +182,12 @@ export class InstructionsService {
 
   /**
    * Restores one layer's historical version and activates it for the given
-   * selection, leaving the other two layers exactly as they were. The
-   * restore is persisted before the selection changes, so a failed restore
-   * never touches the active selection.
+   * selection, leaving the other two layers exactly as they were. Backed by
+   * the repository's atomic `saveAndActivate`: the append-version and
+   * activate-selection steps happen in a single database transaction, so a
+   * failure at either step (including selection validation) never leaves an
+   * unselected "ghost" version behind, and never touches the prior
+   * selection.
    */
   async restoreAndActivate(params: {
     projectId: string;
@@ -193,23 +196,25 @@ export class InstructionsService {
     layer: InstructionLayer;
     sourceVersionId: string;
   }): Promise<{ version: InstructionVersion; selection: InstructionSelection }> {
-    const { projectId, role, provider, layer } = params;
-    const current = await this.resolveActiveVersionIds({ projectId, role, provider });
-    const version = await this.restoreVersion(params.sourceVersionId);
-    const selection = await this.activateSelection({
-      projectId,
-      role,
-      provider,
-      ...applyLayer(current, layer, version.id),
-    });
-    return { version, selection };
+    try {
+      return await this.repo.saveAndActivate({
+        projectId: params.projectId,
+        role: params.role,
+        provider: params.provider,
+        layer: params.layer,
+        restoredFromVersionId: params.sourceVersionId,
+      });
+    } catch (error) {
+      throw toInstructionDomainError(error);
+    }
   }
 
   /**
    * Saves owner content as a new version for one layer and immediately
    * activates it for the given selection, leaving the other two layers
-   * exactly as they were. The save is persisted before the selection
-   * changes, so a failed save never touches the active selection.
+   * exactly as they were. Backed by the repository's atomic
+   * `saveAndActivate`: see `restoreAndActivate` above for the same
+   * atomicity guarantee.
    */
   async saveAndActivate(params: {
     projectId: string;
@@ -218,22 +223,17 @@ export class InstructionsService {
     layer: InstructionLayer;
     content: string;
   }): Promise<{ version: InstructionVersion; selection: InstructionSelection }> {
-    const { projectId, role, provider, layer, content } = params;
-    const current = await this.resolveActiveVersionIds({ projectId, role, provider });
-    const version = await this.saveOwnerVersion({
-      role,
-      provider: layer === 'shared_role' ? null : provider,
-      layer,
-      projectId: layer === 'project_override' ? projectId : null,
-      content,
-    });
-    const selection = await this.activateSelection({
-      projectId,
-      role,
-      provider,
-      ...applyLayer(current, layer, version.id),
-    });
-    return { version, selection };
+    try {
+      return await this.repo.saveAndActivate({
+        projectId: params.projectId,
+        role: params.role,
+        provider: params.provider,
+        layer: params.layer,
+        content: params.content,
+      });
+    } catch (error) {
+      throw toInstructionDomainError(error);
+    }
   }
 
   /** Activates an already-existing version for one layer without creating a new one. */

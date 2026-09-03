@@ -110,7 +110,7 @@ export function createFakeInstructionRepository(
     },
 
     async createOwnerTemplate({ role, provider, layer, projectId, name }) {
-      const existing = await repo.getOwnerTemplate({ role, provider, layer, projectId });
+      const existing = await this.getOwnerTemplate({ role, provider, layer, projectId });
       if (existing) throw postgresError('23505', 'duplicate key value violates unique constraint');
 
       const template: InstructionTemplate = {
@@ -221,6 +221,111 @@ export function createFakeInstructionRepository(
       };
       store.selections.set(key, selection);
       return selection;
+    },
+
+    async saveAndActivate(params) {
+      const { projectId, role, provider, layer, content, restoredFromVersionId } = params;
+      if ((content === undefined) === (restoredFromVersionId === undefined)) {
+        throw new Error('exactly one of content or restoredFromVersionId must be provided');
+      }
+
+      let createdTemplateId: string | null = null;
+      let insertedVersionId: string | null = null;
+
+      try {
+        let templateId: string;
+        let versionContent: string;
+
+        if (restoredFromVersionId !== undefined) {
+          const source = store.versions.get(restoredFromVersionId);
+          const sourceTemplate = source ? store.templates.get(source.templateId) : undefined;
+          const providerMismatch = layer !== 'shared_role' && sourceTemplate?.provider !== provider;
+          const projectMismatch =
+            layer === 'project_override' && sourceTemplate?.projectId !== projectId;
+          if (
+            !source ||
+            !sourceTemplate ||
+            sourceTemplate.layer !== layer ||
+            sourceTemplate.role !== role ||
+            providerMismatch ||
+            projectMismatch
+          ) {
+            throw postgresError(
+              '23514',
+              'restored_from_version_id does not match the requested layer/role/provider/project',
+            );
+          }
+          templateId = source.templateId;
+          versionContent = source.content;
+        } else {
+          const templateProvider = layer === 'shared_role' ? null : provider;
+          const templateProjectId = layer === 'project_override' ? projectId : null;
+          let template = Array.from(store.templates.values()).find(
+            (t) =>
+              !t.isBase &&
+              t.ownerId === ownerId &&
+              t.role === role &&
+              t.provider === templateProvider &&
+              t.layer === layer &&
+              t.projectId === templateProjectId,
+          );
+          if (!template) {
+            template = {
+              id: nextId('owner-tmpl'),
+              ownerId,
+              role,
+              provider: templateProvider,
+              layer,
+              projectId: templateProjectId,
+              name: `${role} / ${layer} (custom)`,
+              isBase: false,
+            };
+            store.templates.set(template.id, template);
+            createdTemplateId = template.id;
+          }
+          templateId = template.id;
+          versionContent = content as string;
+        }
+
+        const version = await this.insertVersion({
+          templateId,
+          content: versionContent,
+          restoredFromVersionId,
+        });
+        insertedVersionId = version.id;
+
+        const current = await this.getSelection({ projectId, role, provider });
+        let sharedRoleVersionId = current?.sharedRoleVersionId;
+        let providerVersionId = current?.providerVersionId;
+        let overrideVersionId = current?.overrideVersionId ?? null;
+        if (!current) {
+          sharedRoleVersionId = (
+            await this.getBaseVersion({ role, provider: null, layer: 'shared_role' })
+          ).id;
+          providerVersionId = (await this.getBaseVersion({ role, provider, layer: 'provider' })).id;
+          overrideVersionId = null;
+        }
+        if (layer === 'shared_role') sharedRoleVersionId = version.id;
+        else if (layer === 'provider') providerVersionId = version.id;
+        else overrideVersionId = version.id;
+
+        const selection = await this.upsertSelection({
+          projectId,
+          role,
+          provider,
+          sharedRoleVersionId: sharedRoleVersionId as string,
+          providerVersionId: providerVersionId as string,
+          overrideVersionId,
+        });
+        return { version, selection };
+      } catch (error) {
+        // Mirrors the real instructions_save_and_activate transaction: any
+        // failure after the version (and possibly template) was prepared
+        // rolls the whole attempt back, so a retry never finds a ghost row.
+        if (insertedVersionId) store.versions.delete(insertedVersionId);
+        if (createdTemplateId) store.templates.delete(createdTemplateId);
+        throw error;
+      }
     },
   };
 
