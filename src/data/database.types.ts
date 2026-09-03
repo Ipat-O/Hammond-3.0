@@ -441,7 +441,7 @@ export type Database = {
         };
         Returns: {
           selection_id: string;
-          selection_override_version_id: string | null;
+          selection_override_version_id: string;
           selection_owner_id: string;
           selection_project_id: string;
           selection_provider: Database['public']['Enums']['provider_family'];
@@ -452,8 +452,8 @@ export type Database = {
           version_created_at: string;
           version_id: string;
           version_number: number;
-          version_owner_id: string | null;
-          version_restored_from_version_id: string | null;
+          version_owner_id: string;
+          version_restored_from_version_id: string;
           version_template_id: string;
         }[];
       };
