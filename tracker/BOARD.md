@@ -20,12 +20,12 @@ None.
 
 ## in_development
 
-- [HAM3-005](./tasks/HAM3-005.md) — Versioned instruction template domain
-  Draft PR [#7](https://github.com/Ipat-O/Hammond-3.0/pull/7) · current head `27d1dfbbbcee87aafe17540afe86a97185f00b4b` · Correction 3 required before audit
+None.
 
 ## in_review
 
-None.
+- [HAM3-005](./tasks/HAM3-005.md) — Versioned instruction template domain
+  Draft PR [#7](https://github.com/Ipat-O/Hammond-3.0/pull/7) · audit bound to `749007b2fa901939238cda3db2dc7d3980492f4b`
 
 ## testing
 
