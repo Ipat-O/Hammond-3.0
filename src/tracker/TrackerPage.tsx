@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { assertNoParentCycle, getTaskSubtreeIds, TASK_STATUSES, type Database } from '../data';
+import { DirectoryContextPanel } from '../settings/DirectoryContextPanel';
+import { useDirectoryContextState } from '../settings/useDirectoryContextState';
 import type { TrackerServices } from './contracts';
 import type { TaskStatus } from '../data';
 
@@ -404,6 +406,8 @@ interface TrackerPageProps {
 
 export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: TrackerPageProps) {
   const repositories = services.repositories;
+  const directory = useDirectoryContextState(services.directoryContext);
+  const resumeAppliedRef = useRef(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -473,6 +477,21 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
       mounted = false;
     };
   }, [repositories.projects]);
+
+  // Cold-restart resume: once both the project list and local directory-context state have
+  // loaded, prefer whichever project the last-open directory context belongs to over the
+  // ordinary "first project" default. Applied at most once per mount.
+  useEffect(() => {
+    if (resumeAppliedRef.current) return;
+    if (!directory.state || projects.length === 0) return;
+    resumeAppliedRef.current = true;
+    const lastContextId = directory.state.lastOpenContextId;
+    if (!lastContextId) return;
+    const lastContext = directory.manager.findContext(directory.state, lastContextId);
+    if (lastContext && projects.some((project) => project.id === lastContext.projectId)) {
+      setSelectedProjectId(lastContext.projectId);
+    }
+  }, [directory.state, directory.manager, projects]);
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -883,6 +902,14 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
                 </div>
                 {projectSaveError && <div className="save-error" role="alert"><span>{projectSaveError}</span>{!projectEditor && <button className="button button-small" type="button" onClick={() => selectedProject.archived_at ? void restoreProject() : void archiveProject()}>Retry save</button>}</div>}
               </section>
+              {directory.state && (
+                <DirectoryContextPanel
+                  manager={directory.manager}
+                  state={directory.state}
+                  onStateChange={directory.setState}
+                  projectId={selectedProject.id}
+                />
+              )}
               <section className="outliner-section" aria-labelledby="outliner-heading">
                 <div className="section-heading">
                   <div>
