@@ -24,12 +24,12 @@ None.
 
 ## in_review
 
-- [HAM3-005](./tasks/HAM3-005.md) — Versioned instruction template domain
-  Draft PR [#7](https://github.com/Ipat-O/Hammond-3.0/pull/7) · audit bound to `749007b2fa901939238cda3db2dc7d3980492f4b`
+None.
 
 ## testing
 
-None.
+- [HAM3-005](./tasks/HAM3-005.md) — Versioned instruction template domain
+  DeepSeek approved `749007b2fa901939238cda3db2dc7d3980492f4b` · owner persistence smoke test pending
 
 ## merged
 
