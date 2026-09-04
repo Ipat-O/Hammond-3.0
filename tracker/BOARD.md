@@ -16,7 +16,7 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## ready_for_development
 
-None.
+- [HAM3-006](./tasks/HAM3-006.md) — Harness adapters, agent assignment, and managed-file injection
 
 ## in_development
 
@@ -28,11 +28,12 @@ None.
 
 ## testing
 
-- [HAM3-005](./tasks/HAM3-005.md) — Versioned instruction template domain
-  DeepSeek approved `749007b2fa901939238cda3db2dc7d3980492f4b` · owner persistence smoke passed · merge authorization pending
+None.
 
 ## merged
 
+- [HAM3-005](./tasks/HAM3-005.md) — Versioned instruction template domain
+  Merge commit `f47ead0c00532b582e94d50258d7d4990aff6ff1` · owner persistence smoke passed
 - [HAM3-003](./tasks/HAM3-003.md) — Local directory contexts and bindings
   Merge commit `671278697d46a52061fff85283d16f5251f87da5` · owner Windows smoke test passed
 - [HAM3-013](./tasks/HAM3-013.md) — Task hierarchy outliner

@@ -571,3 +571,12 @@
 - HAM3-007 now defaults to **Effective instructions** for the selected role and assigned agent. It uses one primary editor; places shared/provider/project layers under Customize/Advanced; shows inherited defaults explicitly; labels ordinary persistence **Save changes**; moves immutable history into a drawer/modal with one explained **Restore this version** action; and renames the preview-only work-order field to **Test a task-specific instruction**.
 - The owner feedback is assigned forward rather than added as HAM3-005 Correction 4. HAM3-005's audited domain and human acceptance criteria passed, HAM3-007 already owns the production Instruction Studio, and changing the approved head would invalidate the audit without improving the dependency foundation.
 - HAM3-005 remains `testing` solely pending explicit owner authorization to merge PR #7. No implementation head, hosted schema, or PR state changed while recording the feedback.
+
+## 2026-09-04 — HAM3-005 merged; HAM3-006 promoted
+
+- The owner explicitly authorized merge after the authenticated HAM3-005 persistence smoke passed and after D-017 assigned the resulting UX feedback forward to HAM3-006 and HAM3-007.
+- Immediately before merge, PR #7 was re-verified open, draft, mergeable, targeting `dev`, and still at DeepSeek's approved and owner-tested implementation head `749007b2fa901939238cda3db2dc7d3980492f4b`.
+- PR #7 was marked ready and merged into `dev` as merge commit `f47ead0c00532b582e94d50258d7d4990aff6ff1`, without changing the approved implementation head.
+- HAM3-005 moved from `testing` to `merged`. It is not yet `shipped`, because the accepted check ran in the exact-head development app rather than a packaged release built from merged `dev`.
+- Under D-011 sequential delivery, HAM3-006 is the next foundation task. Its HAM3-003 and HAM3-005 dependencies are merged, so it moved from `in_design` to `ready_for_development`.
+- The HAM3-006 packet must implement D-017's explicit per-project, per-role execution-provider assignment before resolving and writing the selected managed harness document. The device-local packet is bound after this tracker commit so its start SHA equals the resulting exact `dev` head.

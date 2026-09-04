@@ -117,7 +117,7 @@ tasks:
     owner_feedback: parent and child hierarchy is functional but the presentation is thin; the owner asked for a foldable tree. Recorded as a follow-up rather than folded into this approved head, since any new commit would invalidate the audit verdict
   - id: HAM3-005
     title: Versioned instruction template domain
-    state: testing
+    state: merged
     depends_on: [HAM3-002]
     worker: Anthropic / Claude Code / Claude Sonnet 5
     auditor: Kilo Code / DeepSeek V4 Pro
@@ -131,14 +131,14 @@ tasks:
     hosted_migration: 20260903124734 applied and post-deploy verified on project polphkuvlleadblxmjyz
     human_check: passed at exact approved head; save, immutable history, restore, provider independence, preview-only task text, and cold-restart persistence confirmed
     owner_feedback: D-017 moves execution-provider assignment into HAM3-006 and the simplified effective-instructions UX into HAM3-007; the approved HAM3-005 domain head remains unchanged
-    outstanding: owner-authorized merge
+    merge_commit: f47ead0c00532b582e94d50258d7d4990aff6ff1
     work_order: tracker/work-orders/HAM3-005-WO.md (device-local transfer packet)
     correction_packets: tracker/work-orders/HAM3-005-CORRECTION-1.md through HAM3-005-CORRECTION-3.md (device-local transfer packets)
   - id: HAM3-006
     title: Harness adapters and managed-file injection
-    state: in_design
+    state: ready_for_development
     depends_on: [HAM3-003, HAM3-005]
-    worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
+    worker: Anthropic / Claude Code / Claude Sonnet 5
     auditor: Kilo Code / DeepSeek V4 Pro
     design_note: D-017 adds explicit per-project, per-role execution-provider assignment, separate from provider-specific instruction content
   - id: HAM3-007
