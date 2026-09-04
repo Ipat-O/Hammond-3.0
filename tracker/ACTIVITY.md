@@ -602,3 +602,12 @@
 - Correction 2 is narrowly required because the three claimed Windows junction tests use `symlink_dir`/`symlink_file`, not directory junctions. On this Windows host all three setup calls are denied, each test prints `skipping` and returns, and Rust counts them as passing without executing a confinement assertion.
 - An audit-only, non-skipping `mklink /J` test proved the runtime guard correctly rejects create, classify, and remove through a real directory junction and preserves the outside file. The probe was removed exactly; production behavior does not need redesign.
 - Correction 2 must make that actual directory-junction proof permanent and non-skipping, with accurate names/reporting. HAM3-006 remains `in_development`; no audit, hosted migration, ready transition, or merge is authorized.
+
+## 2026-09-04 — Owner accepts HAM3-006 junction-test evidence debt; independent audit routed
+
+- The owner explicitly directed the orchestrator to ignore the proposed Correction 2 as a gate, retain the issue in project notes, and issue the independent audit work order if all other intake results were acceptable.
+- The accepted limitation is test evidence, not a known runtime defect: three committed Windows cases use privilege-dependent symbolic links and return early when setup is denied, so Rust counts unexecuted cases as passing. The orchestrator's non-skipping real `mklink /J` probe independently established that current create, classify, and remove operations reject an escaped directory junction and preserve the outside file.
+- Correction 1's functional changes remain accepted at exact head `06980a319731a6f665623cf80cdb60c40ed311e7`. Official Supabase reset/types/86 pgTAP/advisors, 18 files / 186 frontend tests, typecheck/lint/format/build, Windows fmt/72 Rust tests/clippy, and Windows MSI/NSIS packaging all passed.
+- Correction 2 is waived and will not be sent to the worker. Its device-local packet remains historical evidence of the identified test gap, not an active work order.
+- HAM3-006 moved from `in_development` to `in_review`. Independent audit is assigned to Kilo / Kilo Code / DeepSeek V4 Pro and bound only to `06980a3`. The auditor is instructed to document the owner-accepted limitation and not reject solely for missing permanent real-junction coverage, while still rejecting any actual confinement defect.
+- PR #8 remains draft and unmerged. No hosted migration, testing transition, or merge is authorized.

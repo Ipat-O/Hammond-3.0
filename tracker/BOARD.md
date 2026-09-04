@@ -19,12 +19,12 @@ None.
 
 ## in_development
 
-- [HAM3-006](./tasks/HAM3-006.md) — Harness adapters, agent assignment, and managed-file injection
-  Correction 2 required at PR head `06980a319731a6f665623cf80cdb60c40ed311e7`
+None.
 
 ## in_review
 
-None.
+- [HAM3-006](./tasks/HAM3-006.md) — Harness adapters, agent assignment, and managed-file injection
+  Independent audit bound to `06980a319731a6f665623cf80cdb60c40ed311e7` · permanent junction-test gap accepted by owner
 
 ## testing
 

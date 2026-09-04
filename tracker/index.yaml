@@ -136,7 +136,7 @@ tasks:
     correction_packets: tracker/work-orders/HAM3-005-CORRECTION-1.md through HAM3-005-CORRECTION-3.md (device-local transfer packets)
   - id: HAM3-006
     title: Harness adapters and managed-file injection
-    state: in_development
+    state: in_review
     corrections_completed: 1
     depends_on: [HAM3-003, HAM3-005]
     worker: Anthropic / Claude Code / Claude Sonnet 5
@@ -152,8 +152,12 @@ tasks:
     correction_1_report: https://github.com/Ipat-O/Hammond-3.0/pull/8#issuecomment-5544373536
     correction_1_scope: exact project-role-provider identity enforcement with ManagedForeign behavior; Windows compile guard; unused git-exclude surface removed
     correction_1_intake_verification: official reset/types/86 pgTAP/advisors pass; 18 files / 186 frontend tests plus typecheck/lint/format/build pass; Windows cargo fmt, 72 tests, and clippy pass; Windows Tauri build produces MSI and NSIS; real disposable NTFS junction probe passes create/classify/remove confinement
-    correction_2_required: replace privilege-dependent Windows symlink tests that silently skip with real non-skipping NTFS directory-junction tests and report the actual executed evidence accurately
-    outstanding: Correction 2 on the existing draft PR; no audit or merge authorized
+    correction_2_status: waived by explicit owner direction; no Correction 2 implementation requested
+    accepted_evidence_debt: committed Windows tests use privilege-dependent symbolic links and silently return when setup is denied, so they are not permanent junction proof; retained in notes while the independently executed real mklink /J probe establishes current runtime confinement for create, classify, and remove
+    audit_packet: tracker/work-orders/HAM3-006-AUDIT.md (device-local transfer packet)
+    dispatched_auditor_identity: Kilo / Kilo Code / DeepSeek V4 Pro
+    current_audit_status: pending independent audit at exact head 06980a319731a6f665623cf80cdb60c40ed311e7
+    outstanding: independent audit; no hosted migration, testing transition, or merge authorized
     design_note: D-017 adds explicit per-project, per-role execution-provider assignment, separate from provider-specific instruction content
   - id: HAM3-007
     title: Instruction Studio UI
