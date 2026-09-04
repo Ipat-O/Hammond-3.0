@@ -25,6 +25,7 @@ export function deriveAction(classification: HarnessClassification): PendingActi
       return 'update';
     case 'ManagedMalformed':
       return 'repair';
+    case 'ManagedForeign':
     case 'Unmanaged':
       return 'requires_decision';
   }

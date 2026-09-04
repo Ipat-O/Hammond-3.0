@@ -5,7 +5,7 @@ import type {
   HarnessRemoveOutcome,
   ManagedHeaderFields,
 } from '../api/contracts';
-import type { ProviderFamily } from '../instructions/types';
+import type { InstructionRole, ProviderFamily } from '../instructions/types';
 import type { HarnessAdapter } from './contracts';
 import { MANAGED_HEADER_FORMAT_VERSION } from './types';
 
@@ -15,9 +15,16 @@ const TARGET_PATHS: Record<ProviderFamily, string> = {
   kilo_code: '.kilocode/rules/hammond.md',
 };
 
+/**
+ * What is actually on disk for one provider's target, independent of any caller's expected
+ * identity: `header` is non-null exactly when the content carries a structurally valid Hammond
+ * header (mirrors the real native layer's own `Classification::ManagedValid` vs `ManagedForeign`
+ * split — both are "a valid header is present", differing only in whether it matches what the
+ * *caller* expects).
+ */
 export interface FakeHarnessTarget {
   content: string | null;
-  classification: HarnessClassification;
+  header: ManagedHeaderFields | null;
 }
 
 export interface FakeHarnessFilesystem {
@@ -39,14 +46,27 @@ export function seedUnmanaged(
   provider: ProviderFamily,
   content: string,
 ) {
-  fs.targets.set(key(root, provider), { content, classification: { kind: 'Unmanaged' } });
+  fs.targets.set(key(root, provider), { content, header: null });
+}
+
+/** Seeds an existing Hammond-managed document for an arbitrary (possibly foreign) identity. */
+export function seedManaged(
+  fs: FakeHarnessFilesystem,
+  root: string,
+  provider: ProviderFamily,
+  header: ManagedHeaderFields,
+  content: string,
+) {
+  fs.targets.set(key(root, provider), { content, header });
 }
 
 /**
- * In-memory `HarnessAdapter` fake mirroring the load-bearing native invariants: Inject refuses
- * (`RequiresConfirmation`) an Unmanaged target unless `forceReplace` is set, a `ManagedMalformed`
- * target is always safely repaired, and Remove only ever deletes a target whose *current*
- * on-disk content is `ManagedValid`.
+ * In-memory `HarnessAdapter` fake mirroring the load-bearing native invariants: `classify`/
+ * `remove` compare the current on-disk header (if any) against the caller's own expected
+ * `(projectId, role)` — a structurally valid header that does not match comes back
+ * `ManagedForeign`, never `ManagedValid`. Inject refuses (`RequiresConfirmation`) an Unmanaged
+ * target *or* a `ManagedForeign` one unless `forceReplace` is set, and Remove only ever deletes a
+ * target whose *current* content is `ManagedValid` for exactly the caller's own identity.
  */
 export function createFakeHarnessAdapter(
   fs: FakeHarnessFilesystem,
@@ -55,9 +75,15 @@ export function createFakeHarnessAdapter(
 ): HarnessAdapter {
   const relativePath = TARGET_PATHS[provider];
 
-  function classifyNow(): HarnessClassification {
+  function classifyNow(projectId: string, role: InstructionRole): HarnessClassification {
     const existing = fs.targets.get(key(root, provider));
-    return existing ? existing.classification : { kind: 'Missing' };
+    if (!existing) return { kind: 'Missing' };
+    if (!existing.header) return { kind: 'Unmanaged' };
+    const header = existing.header;
+    if (header.projectId === projectId && header.role === role && header.provider === provider) {
+      return { kind: 'ManagedValid', header };
+    }
+    return { kind: 'ManagedForeign', header };
   }
 
   return {
@@ -65,13 +91,15 @@ export function createFakeHarnessAdapter(
       return relativePath;
     },
 
-    async classify(): Promise<HarnessClassifyResult> {
-      return { relativePath, classification: classifyNow() };
+    async classify(_root, projectId, role): Promise<HarnessClassifyResult> {
+      return { relativePath, classification: classifyNow(projectId, role) };
     },
 
     async inject(_root, fields, composedContent, forceReplace): Promise<HarnessInjectOutcome> {
-      const classification = classifyNow();
-      if (classification.kind === 'Unmanaged' && !forceReplace) {
+      const classification = classifyNow(fields.projectId, fields.role);
+      const needsConfirmation =
+        classification.kind === 'Unmanaged' || classification.kind === 'ManagedForeign';
+      if (needsConfirmation && !forceReplace) {
         return { kind: 'RequiresConfirmation', relativePath };
       }
       const header: ManagedHeaderFields = {
@@ -79,15 +107,12 @@ export function createFakeHarnessAdapter(
         provider,
         formatVersion: MANAGED_HEADER_FORMAT_VERSION,
       };
-      fs.targets.set(key(root, provider), {
-        content: composedContent,
-        classification: { kind: 'ManagedValid', header },
-      });
+      fs.targets.set(key(root, provider), { content: composedContent, header });
       return { kind: 'Written', relativePath };
     },
 
-    async remove(): Promise<HarnessRemoveOutcome> {
-      const classification = classifyNow();
+    async remove(_root, projectId, role): Promise<HarnessRemoveOutcome> {
+      const classification = classifyNow(projectId, role);
       if (classification.kind === 'Missing') return { kind: 'NotFound', relativePath };
       if (classification.kind !== 'ManagedValid') return { kind: 'Refused', relativePath };
       fs.targets.delete(key(root, provider));

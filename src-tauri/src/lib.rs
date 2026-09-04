@@ -26,8 +26,6 @@ pub fn run() {
             harness_commands::harness_classify,
             harness_commands::harness_inject,
             harness_commands::harness_remove,
-            harness_commands::harness_set_git_exclude,
-            harness_commands::harness_git_exclude_contains,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hammond");

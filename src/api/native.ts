@@ -8,6 +8,7 @@ import {
   type HarnessInjectOutcome,
   type HarnessProvider,
   type HarnessRemoveOutcome,
+  type HarnessRole,
   type LocalSettingsStore,
   type ManagedHeaderFields,
 } from './contracts';
@@ -77,8 +78,8 @@ export const nativeLocalSettings: LocalSettingsStore = {
 /** Tauri-backed implementation of the harness-adapter command surface. */
 export const nativeHarness: HarnessCommands = {
   targetPath: (provider: HarnessProvider) => invokeFs<string>('harness_target_path', { provider }),
-  classify: (root, provider) =>
-    invokeFs<HarnessClassifyResult>('harness_classify', { root, provider }),
+  classify: (root, projectId, role: HarnessRole, provider) =>
+    invokeFs<HarnessClassifyResult>('harness_classify', { root, projectId, role, provider }),
   inject: (root, header: ManagedHeaderFields, composedContent, forceReplace) =>
     invokeFs<HarnessInjectOutcome>('harness_inject', {
       root,
@@ -86,9 +87,6 @@ export const nativeHarness: HarnessCommands = {
       composedContent,
       forceReplace,
     }),
-  remove: (root, provider) => invokeFs<HarnessRemoveOutcome>('harness_remove', { root, provider }),
-  setGitExclude: (root, relativePath, excluded) =>
-    invokeFs<void>('harness_set_git_exclude', { root, relativePath, excluded }),
-  gitExcludeContains: (root, relativePath) =>
-    invokeFs<boolean>('harness_git_exclude_contains', { root, relativePath }),
+  remove: (root, projectId, role: HarnessRole, provider) =>
+    invokeFs<HarnessRemoveOutcome>('harness_remove', { root, projectId, role, provider }),
 };

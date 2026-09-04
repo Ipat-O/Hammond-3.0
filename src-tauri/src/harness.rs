@@ -245,24 +245,52 @@ pub fn parse_managed_header(content: &str) -> HeaderLookup {
     })
 }
 
-/// The four classifications every generated document's target must fall into, per HAM3-006's
-/// managed-file ownership rules.
+/// The exact (project, role, provider) identity an operation expects the *current* occupant of
+/// its target to carry before treating it as this operation's own content. A valid Hammond
+/// header that does not match becomes [`Classification::ManagedForeign`] rather than
+/// [`Classification::ManagedValid`] — recording identity in the header is meaningless unless it
+/// is actually compared against what the caller expects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpectedIdentity {
+    pub project_id: String,
+    pub role: Role,
+    pub provider: Provider,
+}
+
+/// The five classifications every generated document's target must fall into, per HAM3-006's
+/// managed-file ownership rules. `ManagedForeign` is distinct from `ManagedValid`: both carry a
+/// structurally valid Hammond header, but a foreign one belongs to a different project and/or
+/// role than the operation's own expected identity, and must never be silently overwritten or
+/// removed the way a caller's own current document is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Classification {
     Missing,
     ManagedValid(ManagedHeaderFields),
+    ManagedForeign(ManagedHeaderFields),
     ManagedMalformed,
     Unmanaged,
 }
 
-/// Classifies a target from its current content, or `None` if the target does not exist.
-pub fn classify(content: Option<&str>) -> Classification {
+/// Classifies a target from its current content (or `None` if the target does not exist)
+/// against the identity this operation expects to find there. A valid header is `ManagedValid`
+/// only when its project, role, and provider all match `expected`; otherwise it is
+/// `ManagedForeign`.
+pub fn classify(content: Option<&str>, expected: &ExpectedIdentity) -> Classification {
     match content {
         None => Classification::Missing,
         Some(content) => match parse_managed_header(content) {
             HeaderLookup::NoMarker => Classification::Unmanaged,
             HeaderLookup::Malformed => Classification::ManagedMalformed,
-            HeaderLookup::Valid(fields) => Classification::ManagedValid(fields),
+            HeaderLookup::Valid(fields) => {
+                if fields.project_id == expected.project_id
+                    && fields.role == expected.role
+                    && fields.provider == expected.provider
+                {
+                    Classification::ManagedValid(fields)
+                } else {
+                    Classification::ManagedForeign(fields)
+                }
+            }
         },
     }
 }
@@ -281,6 +309,25 @@ mod tests {
             provider_version_id: "provider-v1".to_owned(),
             override_version_id: Some("override-v1".to_owned()),
             generated_at: "2026-09-04T16:00:00Z".to_owned(),
+        }
+    }
+
+    /// The identity `sample_fields()` itself carries — classifying a document rendered from
+    /// `sample_fields()` against this expectation is the "this is my own current document" case.
+    fn matching_identity() -> ExpectedIdentity {
+        let fields = sample_fields();
+        ExpectedIdentity {
+            project_id: fields.project_id,
+            role: fields.role,
+            provider: fields.provider,
+        }
+    }
+
+    fn other_identity() -> ExpectedIdentity {
+        ExpectedIdentity {
+            project_id: "other-project".to_owned(),
+            role: Role::Worker,
+            provider: Provider::ClaudeCode,
         }
     }
 
@@ -313,7 +360,7 @@ mod tests {
         let document = render_managed_document(&fields, "line one\nline two\n");
 
         assert!(document.starts_with(HEADER_OPEN));
-        match classify(Some(&document)) {
+        match classify(Some(&document), &matching_identity()) {
             Classification::ManagedValid(parsed) => assert_eq!(parsed, fields),
             other => panic!("expected ManagedValid, got {other:?}"),
         }
@@ -325,7 +372,7 @@ mod tests {
         fields.override_version_id = None;
         let document = render_managed_document(&fields, "content");
 
-        match classify(Some(&document)) {
+        match classify(Some(&document), &matching_identity()) {
             Classification::ManagedValid(parsed) => assert_eq!(parsed.override_version_id, None),
             other => panic!("expected ManagedValid, got {other:?}"),
         }
@@ -333,28 +380,38 @@ mod tests {
 
     #[test]
     fn classifies_a_missing_target_as_missing() {
-        assert_eq!(classify(None), Classification::Missing);
+        assert_eq!(
+            classify(None, &matching_identity()),
+            Classification::Missing
+        );
     }
 
     #[test]
     fn classifies_content_with_no_marker_as_unmanaged() {
         assert_eq!(
-            classify(Some("# My own instructions\n\nDo not touch.")),
+            classify(
+                Some("# My own instructions\n\nDo not touch."),
+                &matching_identity()
+            ),
             Classification::Unmanaged
         );
     }
 
     #[test]
     fn classifies_an_empty_file_as_unmanaged_not_missing() {
-        assert_eq!(classify(Some("")), Classification::Unmanaged);
+        assert_eq!(
+            classify(Some(""), &matching_identity()),
+            Classification::Unmanaged
+        );
     }
 
     #[test]
     fn classifies_a_marker_with_no_closing_delimiter_as_malformed() {
         assert_eq!(
-            classify(Some(
-                "<!-- hammond:managed\nformat_version: 1\nproject_id: abc"
-            )),
+            classify(
+                Some("<!-- hammond:managed\nformat_version: 1\nproject_id: abc"),
+                &matching_identity()
+            ),
             Classification::ManagedMalformed
         );
     }
@@ -362,7 +419,10 @@ mod tests {
     #[test]
     fn classifies_a_marker_missing_a_required_field_as_malformed() {
         let broken = "<!-- hammond:managed\nformat_version: 1\nproject_id: abc\n-->\n\ncontent";
-        assert_eq!(classify(Some(broken)), Classification::ManagedMalformed);
+        assert_eq!(
+            classify(Some(broken), &matching_identity()),
+            Classification::ManagedMalformed
+        );
     }
 
     #[test]
@@ -373,7 +433,10 @@ mod tests {
             "format_version: 999",
             1,
         );
-        assert_eq!(classify(Some(&document)), Classification::ManagedMalformed);
+        assert_eq!(
+            classify(Some(&document), &matching_identity()),
+            Classification::ManagedMalformed
+        );
     }
 
     #[test]
@@ -384,7 +447,10 @@ mod tests {
             "role: reviewer",
             1,
         );
-        assert_eq!(classify(Some(&document)), Classification::ManagedMalformed);
+        assert_eq!(
+            classify(Some(&document), &matching_identity()),
+            Classification::ManagedMalformed
+        );
 
         let fields = sample_fields();
         let document = render_managed_document(&fields, "content").replacen(
@@ -392,16 +458,77 @@ mod tests {
             "provider: cursor",
             1,
         );
-        assert_eq!(classify(Some(&document)), Classification::ManagedMalformed);
+        assert_eq!(
+            classify(Some(&document), &matching_identity()),
+            Classification::ManagedMalformed
+        );
     }
 
     #[test]
     fn tolerates_leading_whitespace_before_the_marker() {
         let fields = sample_fields();
         let document = format!("\n\n  {}", render_managed_document(&fields, "content"));
-        match classify(Some(&document)) {
+        match classify(Some(&document), &matching_identity()) {
             Classification::ManagedValid(_) => {}
             other => panic!("expected ManagedValid, got {other:?}"),
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // Correction 1: managed identity is enforced, not merely recorded.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn classifies_a_valid_header_for_a_different_project_as_foreign_not_valid() {
+        let fields = sample_fields();
+        let document = render_managed_document(&fields, "content");
+
+        match classify(Some(&document), &other_identity()) {
+            Classification::ManagedForeign(parsed) => assert_eq!(parsed, fields),
+            other => panic!("expected ManagedForeign, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classifies_a_valid_header_for_a_different_role_as_foreign_not_valid() {
+        let fields = sample_fields();
+        let document = render_managed_document(&fields, "content");
+        let mut expected = matching_identity();
+        expected.role = Role::Orchestrator;
+
+        match classify(Some(&document), &expected) {
+            Classification::ManagedForeign(parsed) => assert_eq!(parsed, fields),
+            other => panic!("expected ManagedForeign, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classifies_a_valid_header_for_a_different_provider_as_foreign_not_valid() {
+        let fields = sample_fields();
+        let document = render_managed_document(&fields, "content");
+        let mut expected = matching_identity();
+        expected.provider = Provider::Codex;
+
+        match classify(Some(&document), &expected) {
+            Classification::ManagedForeign(parsed) => assert_eq!(parsed, fields),
+            other => panic!("expected ManagedForeign, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_matching_identity_on_every_field_is_the_only_way_to_get_managed_valid() {
+        let fields = sample_fields();
+        let document = render_managed_document(&fields, "content");
+
+        // Sanity: the exact same identity the document was rendered for is Valid...
+        assert!(matches!(
+            classify(Some(&document), &matching_identity()),
+            Classification::ManagedValid(_)
+        ));
+        // ...but any single mismatched field alone demotes it to Foreign.
+        assert!(matches!(
+            classify(Some(&document), &other_identity()),
+            Classification::ManagedForeign(_)
+        ));
     }
 }

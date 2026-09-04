@@ -1,10 +1,16 @@
 //! Tauri commands for the harness-adapter surface: report a provider's documented target path,
-//! classify what is currently there, write (create or update) a Hammond-managed document with an
-//! atomic temp-sibling-plus-rename, remove a target only when it is verifiably Hammond-managed,
-//! and optionally toggle a managed target's entry in `.git/info/exclude`. Every path-touching
-//! command funnels through [`resolve_within_root`], exactly like `fs_commands`, so confinement
-//! cannot be bypassed by a command forgetting to check — including for a target that does not
-//! exist yet (an owner's first Inject).
+//! classify what is currently there against an *expected identity* (project, role, provider),
+//! write (create or update) a Hammond-managed document with an atomic temp-sibling-plus-rename,
+//! and remove a target only when it is verifiably Hammond-managed *and* matches that expected
+//! identity. Every path-touching command funnels through [`resolve_within_root`], exactly like
+//! `fs_commands`, so confinement cannot be bypassed by a command forgetting to check — including
+//! for a target that does not exist yet (an owner's first Inject).
+//!
+//! Correction 1: recording `project_id`/`role` in the managed header is not an ownership boundary
+//! unless something actually compares it. Every command that decides whether to overwrite or
+//! remove a target now takes (or derives from `header`) the exact project/role/provider identity
+//! it expects to find there, and a structurally valid Hammond document that does not match is
+//! `ManagedForeign`, never treated as this operation's own current content.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,7 +22,8 @@ use serde::Serialize;
 use crate::fs_commands::FsCommandError;
 use crate::fs_guard::resolve_within_root;
 use crate::harness::{
-    classify, render_managed_document, Classification, ManagedHeaderFields, Provider,
+    classify, render_managed_document, Classification, ExpectedIdentity, ManagedHeaderFields,
+    Provider, Role,
 };
 
 #[tauri::command]
@@ -28,7 +35,15 @@ pub fn harness_target_path(provider: Provider) -> String {
 #[serde(tag = "kind")]
 pub enum ClassificationDto {
     Missing,
-    ManagedValid { header: ManagedHeaderFields },
+    ManagedValid {
+        header: ManagedHeaderFields,
+    },
+    /// A structurally valid Hammond document, but its `project_id` and/or `role` (and/or
+    /// `provider`) do not match the identity this operation expects. Never interchangeable with
+    /// `ManagedValid`: it must not be silently overwritten or removed.
+    ManagedForeign {
+        header: ManagedHeaderFields,
+    },
     ManagedMalformed,
     Unmanaged,
 }
@@ -38,6 +53,7 @@ impl From<Classification> for ClassificationDto {
         match value {
             Classification::Missing => ClassificationDto::Missing,
             Classification::ManagedValid(header) => ClassificationDto::ManagedValid { header },
+            Classification::ManagedForeign(header) => ClassificationDto::ManagedForeign { header },
             Classification::ManagedMalformed => ClassificationDto::ManagedMalformed,
             Classification::Unmanaged => ClassificationDto::Unmanaged,
         }
@@ -82,24 +98,34 @@ fn read_target(
     Ok((resolved.path, ExistingTarget::File(content)))
 }
 
-fn classify_existing(existing: &ExistingTarget) -> Classification {
+fn classify_existing(existing: &ExistingTarget, expected: &ExpectedIdentity) -> Classification {
     match existing {
         ExistingTarget::Missing => Classification::Missing,
         ExistingTarget::Directory => Classification::Unmanaged,
-        ExistingTarget::File(content) => classify(Some(content)),
+        ExistingTarget::File(content) => classify(Some(content), expected),
     }
 }
 
+/// Classifies the target for `provider` against the exact `project_id`/`role` this caller
+/// expects to currently occupy it. A structurally valid Hammond document for a *different*
+/// project or role comes back as `ManagedForeign`, not `ManagedValid`.
 #[tauri::command]
 pub fn harness_classify(
     root: String,
+    project_id: String,
+    role: Role,
     provider: Provider,
 ) -> Result<ClassifyResult, FsCommandError> {
     let relative_path = provider.target_relative_path().to_owned();
     let (_, existing) = read_target(&root, &relative_path)?;
+    let expected = ExpectedIdentity {
+        project_id,
+        role,
+        provider,
+    };
     Ok(ClassifyResult {
         relative_path,
-        classification: classify_existing(&existing).into(),
+        classification: classify_existing(&existing, &expected).into(),
     })
 }
 
@@ -108,8 +134,9 @@ pub fn harness_classify(
 pub enum InjectOutcome {
     /// The document was written (created or updated).
     Written { relative_path: String },
-    /// The target is Unmanaged and `force_replace` was not set; nothing was written. The owner
-    /// must choose Import, Replace, or Cancel before this can proceed.
+    /// The target is Unmanaged, or is a valid Hammond document belonging to a different project
+    /// or role (`ManagedForeign`), and `force_replace` was not set; nothing was written. The
+    /// owner must choose Import (Unmanaged only), Replace, or Cancel before this can proceed.
     RequiresConfirmation { relative_path: String },
 }
 
@@ -153,11 +180,14 @@ fn atomic_write(target: &Path, contents: &str) -> Result<(), FsCommandError> {
     Ok(())
 }
 
-/// Creates or updates the Hammond-managed document for `header.provider`. When the target
-/// already exists and is Unmanaged, nothing is written unless `force_replace` is `true` — the
-/// caller (owner, via Import/Replace/Cancel) must explicitly choose to proceed. A
-/// `ManagedMalformed` target is always safely overwritten: the marker already identifies it as
-/// Hammond's own (corrupted) content, never a third party's file.
+/// Creates or updates the Hammond-managed document for `header.provider`. `header`'s own
+/// `project_id`/`role`/`provider` *is* the expected identity: the existing target is classified
+/// against exactly what this write is for, so an ordinary same-project, same-role re-inject
+/// updates in place with no confirmation, while an Unmanaged target **or a valid Hammond
+/// document belonging to a different project or role** requires `force_replace` before anything
+/// is written. A `ManagedMalformed` target is always safely overwritten: the marker already
+/// identifies it as Hammond's own (corrupted) content, never a third party's or another
+/// project's/role's file.
 #[tauri::command]
 pub fn harness_inject(
     root: String,
@@ -168,8 +198,17 @@ pub fn harness_inject(
     let relative_path = header.provider.target_relative_path().to_owned();
     let (target_path, existing) = read_target(&root, &relative_path)?;
 
-    let classification = classify_existing(&existing);
-    if matches!(classification, Classification::Unmanaged) && !force_replace {
+    let expected = ExpectedIdentity {
+        project_id: header.project_id.clone(),
+        role: header.role,
+        provider: header.provider,
+    };
+    let classification = classify_existing(&existing, &expected);
+    let needs_confirmation = matches!(
+        classification,
+        Classification::Unmanaged | Classification::ManagedForeign(_)
+    );
+    if needs_confirmation && !force_replace {
         return Ok(InjectOutcome::RequiresConfirmation { relative_path });
     }
 
@@ -187,24 +226,40 @@ pub enum RemoveOutcome {
     NotFound {
         relative_path: String,
     },
-    /// The target exists but its managed header does not currently validate (malformed or
-    /// unmanaged), so nothing was removed. Matches "removal touches only a file whose managed
-    /// header validates" — re-checked here against the file's *current* content, never trusting
-    /// an earlier classification the caller may be holding.
+    /// The target exists but its *current* on-disk content does not validate as Hammond-managed
+    /// for the exact expected project/role/provider (malformed, unmanaged, or a valid document
+    /// belonging to a different project or role), so nothing was removed. Re-checked here
+    /// against the file's current content, never trusting an earlier classification the caller
+    /// may be holding.
     Refused {
         relative_path: String,
     },
 }
 
+/// Removes the target for `provider` only when its current on-disk content is a valid Hammond
+/// document for exactly `project_id`/`role`/`provider`. A valid Hammond document belonging to a
+/// different project or role is refused, exactly like an unmanaged or malformed one — this is
+/// what makes cross-project/cross-role removal impossible even when two roles or two projects
+/// happen to share a provider's single on-disk target.
 #[tauri::command]
-pub fn harness_remove(root: String, provider: Provider) -> Result<RemoveOutcome, FsCommandError> {
+pub fn harness_remove(
+    root: String,
+    project_id: String,
+    role: Role,
+    provider: Provider,
+) -> Result<RemoveOutcome, FsCommandError> {
     let relative_path = provider.target_relative_path().to_owned();
     let (target_path, existing) = read_target(&root, &relative_path)?;
     if matches!(existing, ExistingTarget::Missing) {
         return Ok(RemoveOutcome::NotFound { relative_path });
     }
+    let expected = ExpectedIdentity {
+        project_id,
+        role,
+        provider,
+    };
     if !matches!(
-        classify_existing(&existing),
+        classify_existing(&existing, &expected),
         Classification::ManagedValid(_)
     ) {
         return Ok(RemoveOutcome::Refused { relative_path });
@@ -215,65 +270,13 @@ pub fn harness_remove(root: String, provider: Provider) -> Result<RemoveOutcome,
     Ok(RemoveOutcome::Removed { relative_path })
 }
 
-const GIT_EXCLUDE_RELATIVE_PATH: &str = ".git/info/exclude";
-
-fn read_exclude_lines(path: &Path) -> Result<Vec<String>, FsCommandError> {
-    match fs::read_to_string(path) {
-        Ok(contents) => Ok(contents.lines().map(str::to_owned).collect()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(error) => Err(FsCommandError::Io(format!(
-            "failed to read .git/info/exclude: {error}"
-        ))),
-    }
-}
-
-/// Adds or removes exactly `relative_path` as a line in `.git/info/exclude`, preserving every
-/// other line and their order. `.git/info/exclude` is per-repository-checkout and never shared
-/// through source control, unlike `.gitignore`, so this never touches a Git-tracked file.
-#[tauri::command]
-pub fn harness_set_git_exclude(
-    root: String,
-    relative_path: String,
-    excluded: bool,
-) -> Result<(), FsCommandError> {
-    let resolved = resolve_within_root(&root, GIT_EXCLUDE_RELATIVE_PATH)?;
-    let mut lines = read_exclude_lines(&resolved.path)?;
-    let already_present = lines.iter().any(|line| line == &relative_path);
-
-    if excluded && !already_present {
-        lines.push(relative_path);
-    } else if !excluded && already_present {
-        lines.retain(|line| line != &relative_path);
-    } else {
-        return Ok(());
-    }
-
-    if let Some(parent) = resolved.path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| FsCommandError::Io(format!("failed to prepare .git/info: {error}")))?;
-    }
-    let mut contents = lines.join("\n");
-    if !contents.is_empty() {
-        contents.push('\n');
-    }
-    atomic_write(&resolved.path, &contents)
-}
-
-#[tauri::command]
-pub fn harness_git_exclude_contains(
-    root: String,
-    relative_path: String,
-) -> Result<bool, FsCommandError> {
-    let resolved = resolve_within_root(&root, GIT_EXCLUDE_RELATIVE_PATH)?;
-    let lines = read_exclude_lines(&resolved.path)?;
-    Ok(lines.iter().any(|line| line == &relative_path))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harness::Role;
+    #[cfg(unix)]
     use std::os::unix::fs::symlink;
+    #[cfg(windows)]
+    use std::os::windows::fs::{symlink_dir, symlink_file};
 
     fn sample_header(provider: Provider) -> ManagedHeaderFields {
         ManagedHeaderFields {
@@ -285,6 +288,15 @@ mod tests {
             provider_version_id: "provider-v1".to_owned(),
             override_version_id: None,
             generated_at: "2026-09-04T16:00:00Z".to_owned(),
+        }
+    }
+
+    fn header_for(project_id: &str, role: Role, provider: Provider) -> ManagedHeaderFields {
+        ManagedHeaderFields {
+            project_id: project_id.to_owned(),
+            role,
+            provider,
+            ..sample_header(provider)
         }
     }
 
@@ -309,8 +321,13 @@ mod tests {
     #[test]
     fn classify_reports_missing_for_a_target_that_does_not_exist() {
         let root = tempfile::tempdir().unwrap();
-        let result =
-            harness_classify(root.path().to_str().unwrap().to_owned(), Provider::Codex).unwrap();
+        let result = harness_classify(
+            root.path().to_str().unwrap().to_owned(),
+            "project-1".to_owned(),
+            Role::Worker,
+            Provider::Codex,
+        )
+        .unwrap();
         assert_eq!(result.relative_path, "AGENTS.md");
         assert!(matches!(result.classification, ClassificationDto::Missing));
     }
@@ -321,6 +338,8 @@ mod tests {
         fs::write(root.path().join("CLAUDE.md"), "# my own notes\n").unwrap();
         let result = harness_classify(
             root.path().to_str().unwrap().to_owned(),
+            "project-1".to_owned(),
+            Role::Worker,
             Provider::ClaudeCode,
         )
         .unwrap();
@@ -331,7 +350,7 @@ mod tests {
     }
 
     #[test]
-    fn classify_reports_managed_valid_after_a_real_inject() {
+    fn classify_reports_managed_valid_after_a_real_inject_for_the_same_identity() {
         let root = tempfile::tempdir().unwrap();
         let header = sample_header(Provider::ClaudeCode);
         harness_inject(
@@ -344,6 +363,8 @@ mod tests {
 
         let result = harness_classify(
             root.path().to_str().unwrap().to_owned(),
+            header.project_id.clone(),
+            header.role,
             Provider::ClaudeCode,
         )
         .unwrap();
@@ -351,6 +372,180 @@ mod tests {
             ClassificationDto::ManagedValid { header: parsed } => assert_eq!(parsed, header),
             other => panic!("expected ManagedValid, got {other:?}"),
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // Correction 1: managed identity is enforced at the native boundary.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn classify_reports_managed_foreign_for_a_valid_document_belonging_to_a_different_project() {
+        let root = tempfile::tempdir().unwrap();
+        let root_str = root.path().to_str().unwrap().to_owned();
+        let header = header_for("project-2", Role::Worker, Provider::ClaudeCode);
+        harness_inject(
+            root_str.clone(),
+            header.clone(),
+            "content".to_owned(),
+            false,
+        )
+        .unwrap();
+
+        let result = harness_classify(
+            root_str,
+            "project-1".to_owned(),
+            Role::Worker,
+            Provider::ClaudeCode,
+        )
+        .unwrap();
+        match result.classification {
+            ClassificationDto::ManagedForeign { header: parsed } => assert_eq!(parsed, header),
+            other => panic!("expected ManagedForeign, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_reports_managed_foreign_for_a_valid_document_belonging_to_a_different_role() {
+        let root = tempfile::tempdir().unwrap();
+        let root_str = root.path().to_str().unwrap().to_owned();
+        let header = header_for("project-1", Role::Orchestrator, Provider::Codex);
+        harness_inject(
+            root_str.clone(),
+            header.clone(),
+            "content".to_owned(),
+            false,
+        )
+        .unwrap();
+
+        let result = harness_classify(
+            root_str,
+            "project-1".to_owned(),
+            Role::Worker,
+            Provider::Codex,
+        )
+        .unwrap();
+        assert!(matches!(
+            result.classification,
+            ClassificationDto::ManagedForeign { .. }
+        ));
+    }
+
+    #[test]
+    fn inject_refuses_to_silently_overwrite_a_valid_document_from_a_different_project() {
+        let root = tempfile::tempdir().unwrap();
+        let root_str = root.path().to_str().unwrap().to_owned();
+        let foreign = header_for("project-2", Role::Worker, Provider::ClaudeCode);
+        harness_inject(
+            root_str.clone(),
+            foreign,
+            "project two's content".to_owned(),
+            false,
+        )
+        .unwrap();
+
+        let mine = header_for("project-1", Role::Worker, Provider::ClaudeCode);
+        let outcome = harness_inject(root_str, mine, "my content".to_owned(), false).unwrap();
+
+        assert!(matches!(
+            outcome,
+            InjectOutcome::RequiresConfirmation { .. }
+        ));
+        let contents = fs::read_to_string(root.path().join("CLAUDE.md")).unwrap();
+        assert!(contents.ends_with("project two's content"));
+    }
+
+    #[test]
+    fn inject_replaces_a_foreign_project_document_when_force_replace_is_set() {
+        let root = tempfile::tempdir().unwrap();
+        let root_str = root.path().to_str().unwrap().to_owned();
+        let foreign = header_for("project-2", Role::Worker, Provider::ClaudeCode);
+        harness_inject(
+            root_str.clone(),
+            foreign,
+            "project two's content".to_owned(),
+            false,
+        )
+        .unwrap();
+
+        let mine = header_for("project-1", Role::Worker, Provider::ClaudeCode);
+        let outcome = harness_inject(root_str, mine, "my content".to_owned(), true).unwrap();
+
+        assert!(matches!(outcome, InjectOutcome::Written { .. }));
+        let contents = fs::read_to_string(root.path().join("CLAUDE.md")).unwrap();
+        assert!(contents.ends_with("my content"));
+    }
+
+    #[test]
+    fn remove_refuses_a_valid_document_belonging_to_a_different_project() {
+        let root = tempfile::tempdir().unwrap();
+        let root_str = root.path().to_str().unwrap().to_owned();
+        let foreign = header_for("project-2", Role::Worker, Provider::ClaudeCode);
+        harness_inject(
+            root_str.clone(),
+            foreign,
+            "project two's content".to_owned(),
+            false,
+        )
+        .unwrap();
+
+        let outcome = harness_remove(
+            root_str,
+            "project-1".to_owned(),
+            Role::Worker,
+            Provider::ClaudeCode,
+        )
+        .unwrap();
+
+        assert!(matches!(outcome, RemoveOutcome::Refused { .. }));
+        assert!(root.path().join("CLAUDE.md").exists());
+        let contents = fs::read_to_string(root.path().join("CLAUDE.md")).unwrap();
+        assert!(contents.ends_with("project two's content"));
+    }
+
+    #[test]
+    fn remove_refuses_a_valid_document_belonging_to_a_different_role_in_the_same_project() {
+        let root = tempfile::tempdir().unwrap();
+        let root_str = root.path().to_str().unwrap().to_owned();
+        let orchestrator_doc = header_for("project-1", Role::Orchestrator, Provider::Codex);
+        harness_inject(
+            root_str.clone(),
+            orchestrator_doc,
+            "orchestrator content".to_owned(),
+            false,
+        )
+        .unwrap();
+
+        // Worker also happens to be assigned to codex, but has never written AGENTS.md itself.
+        let outcome = harness_remove(
+            root_str,
+            "project-1".to_owned(),
+            Role::Worker,
+            Provider::Codex,
+        )
+        .unwrap();
+
+        assert!(matches!(outcome, RemoveOutcome::Refused { .. }));
+        assert!(root.path().join("AGENTS.md").exists());
+    }
+
+    #[test]
+    fn remove_still_deletes_a_document_matching_the_exact_expected_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let root_str = root.path().to_str().unwrap().to_owned();
+        let header = sample_header(Provider::Codex);
+        harness_inject(
+            root_str.clone(),
+            header.clone(),
+            "content".to_owned(),
+            false,
+        )
+        .unwrap();
+
+        let outcome =
+            harness_remove(root_str, header.project_id, header.role, Provider::Codex).unwrap();
+
+        assert!(matches!(outcome, RemoveOutcome::Removed { .. }));
+        assert!(!root.path().join("AGENTS.md").exists());
     }
 
     // ---------------------------------------------------------------------
@@ -372,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    fn inject_updates_an_existing_managed_document_in_place() {
+    fn inject_updates_an_existing_managed_document_in_place_for_the_same_identity() {
         let root = tempfile::tempdir().unwrap();
         let root_str = root.path().to_str().unwrap().to_owned();
         harness_inject(
@@ -504,6 +699,36 @@ mod tests {
         );
     }
 
+    #[test]
+    #[cfg(windows)]
+    fn a_failed_rename_cleans_up_exactly_the_temporary_sibling_it_created_windows() {
+        // Windows equivalent of the Unix rename-onto-a-directory failure above: renaming a file
+        // onto an existing directory also errors on Windows.
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("AGENTS.md")).unwrap();
+        fs::write(root.path().join("AGENTS.md/keep.txt"), b"keep me").unwrap();
+
+        let error = harness_inject(
+            root.path().to_str().unwrap().to_owned(),
+            sample_header(Provider::Codex),
+            "content".to_owned(),
+            true,
+        )
+        .unwrap_err();
+        assert!(matches!(error, FsCommandError::Io(_)));
+
+        assert!(root.path().join("AGENTS.md/keep.txt").exists());
+        let leftovers: Vec<_> = fs::read_dir(root.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().contains("hammond-tmp"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "expected no leftover temp files, found {leftovers:?}"
+        );
+    }
+
     // ---------------------------------------------------------------------
     // Remove
     // ---------------------------------------------------------------------
@@ -512,15 +737,17 @@ mod tests {
     fn remove_deletes_a_managed_valid_target() {
         let root = tempfile::tempdir().unwrap();
         let root_str = root.path().to_str().unwrap().to_owned();
+        let header = sample_header(Provider::Codex);
         harness_inject(
             root_str.clone(),
-            sample_header(Provider::Codex),
+            header.clone(),
             "content".to_owned(),
             false,
         )
         .unwrap();
 
-        let outcome = harness_remove(root_str, Provider::Codex).unwrap();
+        let outcome =
+            harness_remove(root_str, header.project_id, header.role, Provider::Codex).unwrap();
         assert!(matches!(outcome, RemoveOutcome::Removed { .. }));
         assert!(!root.path().join("AGENTS.md").exists());
     }
@@ -528,8 +755,13 @@ mod tests {
     #[test]
     fn remove_reports_not_found_for_a_missing_target_without_erroring() {
         let root = tempfile::tempdir().unwrap();
-        let outcome =
-            harness_remove(root.path().to_str().unwrap().to_owned(), Provider::Codex).unwrap();
+        let outcome = harness_remove(
+            root.path().to_str().unwrap().to_owned(),
+            "project-1".to_owned(),
+            Role::Worker,
+            Provider::Codex,
+        )
+        .unwrap();
         assert!(matches!(outcome, RemoveOutcome::NotFound { .. }));
     }
 
@@ -537,8 +769,13 @@ mod tests {
     fn remove_refuses_an_unmanaged_target_and_leaves_it_untouched() {
         let root = tempfile::tempdir().unwrap();
         fs::write(root.path().join("AGENTS.md"), "# not hammond's\n").unwrap();
-        let outcome =
-            harness_remove(root.path().to_str().unwrap().to_owned(), Provider::Codex).unwrap();
+        let outcome = harness_remove(
+            root.path().to_str().unwrap().to_owned(),
+            "project-1".to_owned(),
+            Role::Worker,
+            Provider::Codex,
+        )
+        .unwrap();
         assert!(matches!(outcome, RemoveOutcome::Refused { .. }));
         assert_eq!(
             fs::read_to_string(root.path().join("AGENTS.md")).unwrap(),
@@ -551,8 +788,13 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let broken = "<!-- hammond:managed\nformat_version: 999\n-->\n\nbroken";
         fs::write(root.path().join("AGENTS.md"), broken).unwrap();
-        let outcome =
-            harness_remove(root.path().to_str().unwrap().to_owned(), Provider::Codex).unwrap();
+        let outcome = harness_remove(
+            root.path().to_str().unwrap().to_owned(),
+            "project-1".to_owned(),
+            Role::Worker,
+            Provider::Codex,
+        )
+        .unwrap();
         assert!(matches!(outcome, RemoveOutcome::Refused { .. }));
         assert_eq!(
             fs::read_to_string(root.path().join("AGENTS.md")).unwrap(),
@@ -567,14 +809,19 @@ mod tests {
         // adapter must never remove it, unlike the generic fs_commands::remove_path surface.
         let root = tempfile::tempdir().unwrap();
         fs::create_dir(root.path().join("AGENTS.md")).unwrap();
-        let outcome =
-            harness_remove(root.path().to_str().unwrap().to_owned(), Provider::Codex).unwrap();
+        let outcome = harness_remove(
+            root.path().to_str().unwrap().to_owned(),
+            "project-1".to_owned(),
+            Role::Worker,
+            Provider::Codex,
+        )
+        .unwrap();
         assert!(matches!(outcome, RemoveOutcome::Refused { .. }));
         assert!(root.path().join("AGENTS.md").is_dir());
     }
 
     // ---------------------------------------------------------------------
-    // Confinement: traversal, absolute paths, symlink escapes
+    // Confinement: traversal, absolute paths, symlink/junction escapes
     // ---------------------------------------------------------------------
 
     #[test]
@@ -582,7 +829,13 @@ mod tests {
         // harness_classify always resolves the provider's OWN fixed relative path (never an
         // owner-supplied one), so there is nothing to traverse with here; this instead proves the
         // guard still runs by rejecting an invalid (non-existent) root outright.
-        let error = harness_classify("relative/root".to_owned(), Provider::Codex).unwrap_err();
+        let error = harness_classify(
+            "relative/root".to_owned(),
+            "project-1".to_owned(),
+            Role::Worker,
+            Provider::Codex,
+        )
+        .unwrap_err();
         assert!(matches!(error, FsCommandError::InvalidRoot(_)));
     }
 
@@ -618,8 +871,13 @@ mod tests {
         fs::write(outside.join("CLAUDE.md"), "secret").unwrap();
         symlink(outside.join("CLAUDE.md"), root.join("CLAUDE.md")).unwrap();
 
-        let error =
-            harness_classify(root.to_str().unwrap().to_owned(), Provider::ClaudeCode).unwrap_err();
+        let error = harness_classify(
+            root.to_str().unwrap().to_owned(),
+            "project-1".to_owned(),
+            Role::Worker,
+            Provider::ClaudeCode,
+        )
+        .unwrap_err();
         assert!(matches!(error, FsCommandError::Escape(_)));
     }
 
@@ -634,59 +892,100 @@ mod tests {
         fs::write(outside.join("AGENTS.md"), "secret").unwrap();
         symlink(outside.join("AGENTS.md"), root.join("AGENTS.md")).unwrap();
 
-        let error = harness_remove(root.to_str().unwrap().to_owned(), Provider::Codex).unwrap_err();
+        let error = harness_remove(
+            root.to_str().unwrap().to_owned(),
+            "project-1".to_owned(),
+            Role::Worker,
+            Provider::Codex,
+        )
+        .unwrap_err();
         assert!(matches!(error, FsCommandError::Escape(_)));
         assert!(outside.join("AGENTS.md").exists());
     }
 
-    // ---------------------------------------------------------------------
-    // .git/info/exclude
-    // ---------------------------------------------------------------------
+    // The Windows counterparts below use NTFS junctions (`std::os::windows::fs::symlink_dir`
+    // for the directory-junction escape case, `symlink_file` for the existing-file case), the
+    // reparse-point mechanism this guard's own doc comment calls out as the Windows equivalent
+    // of a Unix symlink escape. `symlink_dir`/`symlink_file` create true Windows symlinks, which
+    // (like junctions) are filesystem reparse points `dunce::canonicalize` resolves the same way;
+    // unlike a junction, a directory symlink can require elevated privilege or Developer Mode on
+    // some Windows configurations, so these tests skip (rather than fail) when creation itself is
+    // denied, since that is an environment permission gap, not evidence the confinement guard is
+    // broken.
 
     #[test]
-    fn git_exclude_add_then_remove_touches_only_the_exact_managed_path() {
-        let root = tempfile::tempdir().unwrap();
-        fs::create_dir_all(root.path().join(".git/info")).unwrap();
-        fs::write(
-            root.path().join(".git/info/exclude"),
-            "# git ls-files --others --exclude-from=.git/info/exclude\nunrelated-entry.txt\n",
+    #[cfg(windows)]
+    fn inject_rejects_a_target_reached_through_a_junction_that_escapes_root() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("root");
+        let outside = parent.path().join("outside");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        if symlink_dir(&outside, root.join(".kilocode")).is_err() {
+            eprintln!(
+                "skipping: creating a directory reparse point was denied in this environment"
+            );
+            return;
+        }
+
+        let error = harness_inject(
+            root.to_str().unwrap().to_owned(),
+            sample_header(Provider::KiloCode),
+            "content".to_owned(),
+            true,
         )
-        .unwrap();
-        let root_str = root.path().to_str().unwrap().to_owned();
-
-        harness_set_git_exclude(root_str.clone(), "CLAUDE.md".to_owned(), true).unwrap();
-        let contents = fs::read_to_string(root.path().join(".git/info/exclude")).unwrap();
-        assert!(contents.contains("unrelated-entry.txt"));
-        assert!(contents.contains("CLAUDE.md"));
-        assert!(harness_git_exclude_contains(root_str.clone(), "CLAUDE.md".to_owned()).unwrap());
-
-        harness_set_git_exclude(root_str.clone(), "CLAUDE.md".to_owned(), false).unwrap();
-        let contents = fs::read_to_string(root.path().join(".git/info/exclude")).unwrap();
-        assert!(contents.contains("unrelated-entry.txt"));
-        assert!(!contents.contains("CLAUDE.md"));
-        assert!(!harness_git_exclude_contains(root_str, "CLAUDE.md".to_owned()).unwrap());
+        .unwrap_err();
+        assert!(matches!(error, FsCommandError::Escape(_)));
+        assert!(!outside.join("rules/hammond.md").exists());
     }
 
     #[test]
-    fn git_exclude_creates_the_file_when_it_does_not_exist_yet() {
-        let root = tempfile::tempdir().unwrap();
-        fs::create_dir_all(root.path().join(".git")).unwrap();
-        let root_str = root.path().to_str().unwrap().to_owned();
+    #[cfg(windows)]
+    fn classify_rejects_an_existing_target_reached_through_a_junction_that_escapes_root() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("root");
+        let outside = parent.path().join("outside");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("CLAUDE.md"), "secret").unwrap();
+        if symlink_file(outside.join("CLAUDE.md"), root.join("CLAUDE.md")).is_err() {
+            eprintln!("skipping: creating a file reparse point was denied in this environment");
+            return;
+        }
 
-        harness_set_git_exclude(root_str.clone(), "AGENTS.md".to_owned(), true).unwrap();
-        assert!(harness_git_exclude_contains(root_str, "AGENTS.md".to_owned()).unwrap());
+        let error = harness_classify(
+            root.to_str().unwrap().to_owned(),
+            "project-1".to_owned(),
+            Role::Worker,
+            Provider::ClaudeCode,
+        )
+        .unwrap_err();
+        assert!(matches!(error, FsCommandError::Escape(_)));
     }
 
     #[test]
-    fn git_exclude_is_idempotent_and_does_not_duplicate_entries() {
-        let root = tempfile::tempdir().unwrap();
-        fs::create_dir_all(root.path().join(".git")).unwrap();
-        let root_str = root.path().to_str().unwrap().to_owned();
+    #[cfg(windows)]
+    fn remove_rejects_a_target_reached_through_a_junction_that_escapes_root() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("root");
+        let outside = parent.path().join("outside");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("AGENTS.md"), "secret").unwrap();
+        if symlink_file(outside.join("AGENTS.md"), root.join("AGENTS.md")).is_err() {
+            eprintln!("skipping: creating a file reparse point was denied in this environment");
+            return;
+        }
 
-        harness_set_git_exclude(root_str.clone(), "AGENTS.md".to_owned(), true).unwrap();
-        harness_set_git_exclude(root_str.clone(), "AGENTS.md".to_owned(), true).unwrap();
-        let contents = fs::read_to_string(root.path().join(".git/info/exclude")).unwrap();
-        assert_eq!(contents.matches("AGENTS.md").count(), 1);
+        let error = harness_remove(
+            root.to_str().unwrap().to_owned(),
+            "project-1".to_owned(),
+            Role::Worker,
+            Provider::Codex,
+        )
+        .unwrap_err();
+        assert!(matches!(error, FsCommandError::Escape(_)));
+        assert!(outside.join("AGENTS.md").exists());
     }
 }
 
@@ -699,7 +998,7 @@ mod wire_shape_tests {
         let header = ManagedHeaderFields {
             format_version: 1,
             project_id: "p1".to_owned(),
-            role: crate::harness::Role::Worker,
+            role: Role::Worker,
             provider: Provider::ClaudeCode,
             shared_role_version_id: "s1".to_owned(),
             provider_version_id: "pr1".to_owned(),
@@ -713,6 +1012,24 @@ mod wire_shape_tests {
         assert!(json.contains("\"projectId\":\"p1\""), "{json}");
         assert!(json.contains("\"sharedRoleVersionId\":\"s1\""), "{json}");
         assert!(json.contains("\"overrideVersionId\":null"), "{json}");
+    }
+
+    #[test]
+    fn classification_dto_json_shape_for_managed_foreign_uses_the_same_header_shape() {
+        let header = ManagedHeaderFields {
+            format_version: 1,
+            project_id: "other-project".to_owned(),
+            role: Role::Orchestrator,
+            provider: Provider::Codex,
+            shared_role_version_id: "s1".to_owned(),
+            provider_version_id: "pr1".to_owned(),
+            override_version_id: None,
+            generated_at: "2026-09-04T16:00:00Z".to_owned(),
+        };
+        let dto = ClassificationDto::ManagedForeign { header };
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(json.contains("\"kind\":\"ManagedForeign\""), "{json}");
+        assert!(json.contains("\"projectId\":\"other-project\""), "{json}");
     }
 
     #[test]

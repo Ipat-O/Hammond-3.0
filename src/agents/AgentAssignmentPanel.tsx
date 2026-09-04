@@ -38,6 +38,8 @@ function classificationLabel(classification: HarnessClassification): string {
       return 'Not created yet';
     case 'ManagedValid':
       return 'Hammond-managed';
+    case 'ManagedForeign':
+      return `Belongs to a different project or role (${roleLabel(classification.header.role)}, project ${classification.header.projectId})`;
     case 'ManagedMalformed':
       return 'Hammond-managed (malformed — will be repaired)';
     case 'Unmanaged':
@@ -337,6 +339,16 @@ export function AgentAssignmentPanel({
               </div>
             )}
 
+            {preview.classification.kind === 'ManagedForeign' && (
+              <p className="save-error" role="alert">
+                This target already holds a Hammond-managed document for{' '}
+                <strong>{roleLabel(preview.classification.header.role)}</strong> in project{' '}
+                <code>{preview.classification.header.projectId}</code>, not this role/project.
+                Import is not offered — that would fold someone else&apos;s instructions into this
+                project. Choose Replace to overwrite it, or Cancel to leave it untouched.
+              </p>
+            )}
+
             <div className="form-actions">
               {preview.classification.kind === 'Unmanaged' ? (
                 <>
@@ -348,6 +360,20 @@ export function AgentAssignmentPanel({
                   >
                     Import existing content
                   </button>
+                  <button
+                    className="button button-danger"
+                    type="button"
+                    onClick={() => runInject(true)}
+                    disabled={actionBusy}
+                  >
+                    Replace
+                  </button>
+                  <button className="button button-quiet" type="button" onClick={cancelConflict}>
+                    Cancel
+                  </button>
+                </>
+              ) : preview.classification.kind === 'ManagedForeign' ? (
+                <>
                   <button
                     className="button button-danger"
                     type="button"

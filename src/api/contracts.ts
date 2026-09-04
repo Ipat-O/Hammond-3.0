@@ -57,9 +57,18 @@ export interface ManagedHeaderFields {
   generatedAt: string;
 }
 
+/**
+ * `ManagedForeign` is distinct from `ManagedValid`: both carry a structurally valid Hammond
+ * header, but a foreign one belongs to a different project and/or role than the caller's own
+ * expected identity (passed into `classify`/`remove`, or embedded in the `header` passed into
+ * `inject`) and must never be silently overwritten or removed the way the caller's own current
+ * document is (Correction 1 — recording identity in a header is not an ownership boundary
+ * unless something actually compares it).
+ */
 export type HarnessClassification =
   | { kind: 'Missing' }
   | { kind: 'ManagedValid'; header: ManagedHeaderFields }
+  | { kind: 'ManagedForeign'; header: ManagedHeaderFields }
   | { kind: 'ManagedMalformed' }
   | { kind: 'Unmanaged' };
 
@@ -79,16 +88,25 @@ export type HarnessRemoveOutcome =
 
 export interface HarnessCommands {
   targetPath(provider: HarnessProvider): Promise<string>;
-  classify(root: string, provider: HarnessProvider): Promise<HarnessClassifyResult>;
-  /** Creates or updates the managed document. Refuses (`RequiresConfirmation`) an Unmanaged target unless `forceReplace` is set. */
+  /** Classifies the target against the exact project/role this caller expects to currently occupy it; a valid document for a different project or role comes back `ManagedForeign`, not `ManagedValid`. */
+  classify(
+    root: string,
+    projectId: string,
+    role: HarnessRole,
+    provider: HarnessProvider,
+  ): Promise<HarnessClassifyResult>;
+  /** Creates or updates the managed document. `header`'s own project/role/provider is the expected identity: refuses (`RequiresConfirmation`) an Unmanaged target *or* a valid document belonging to a different project/role, unless `forceReplace` is set. */
   inject(
     root: string,
     header: ManagedHeaderFields,
     composedContent: string,
     forceReplace: boolean,
   ): Promise<HarnessInjectOutcome>;
-  /** Removes the target only when its current on-disk content is Hammond-managed and valid. */
-  remove(root: string, provider: HarnessProvider): Promise<HarnessRemoveOutcome>;
-  setGitExclude(root: string, relativePath: string, excluded: boolean): Promise<void>;
-  gitExcludeContains(root: string, relativePath: string): Promise<boolean>;
+  /** Removes the target only when its current on-disk content is Hammond-managed and valid for exactly this project/role/provider. */
+  remove(
+    root: string,
+    projectId: string,
+    role: HarnessRole,
+    provider: HarnessProvider,
+  ): Promise<HarnessRemoveOutcome>;
 }

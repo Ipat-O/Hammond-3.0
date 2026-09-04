@@ -6,15 +6,31 @@ import { HarnessInjectionService } from '../harness/service';
 import {
   createFakeHarnessAdapters,
   createFakeHarnessFilesystem,
+  seedManaged,
   seedUnmanaged,
   type FakeHarnessFilesystem,
 } from '../harness/testFakes';
+import { MANAGED_HEADER_FORMAT_VERSION } from '../harness/types';
 import { InstructionsService } from '../instructions/service';
 import { createFakeInstructionRepository } from '../instructions/testFakes';
 import { AgentAssignmentPanel } from './AgentAssignmentPanel';
 
 const project = { id: 'project-1', name: 'Hammond project' };
+const otherProjectId = 'project-2';
 const root = '/home/owner/project-1';
+
+function foreignHeader() {
+  return {
+    formatVersion: MANAGED_HEADER_FORMAT_VERSION,
+    projectId: otherProjectId,
+    role: 'worker' as const,
+    provider: 'claude_code' as const,
+    sharedRoleVersionId: 'shared-v1',
+    providerVersionId: 'provider-v1',
+    overrideVersionId: null,
+    generatedAt: '2026-09-04T16:00:00Z',
+  };
+}
 
 function renderPanel(options: { linked?: boolean; fakeFs?: FakeHarnessFilesystem } = {}) {
   const linked = options.linked ?? true;
@@ -103,9 +119,7 @@ describe('AgentAssignmentPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Update' }));
 
-    await waitFor(() =>
-      expect(fakeFs.targets.get(`${root}|claude_code`)?.classification.kind).toBe('ManagedValid'),
-    );
+    await waitFor(() => expect(fakeFs.targets.get(`${root}|claude_code`)?.header).not.toBeNull());
   });
 
   it('Remove deletes a managed document and the action reverts to Inject', async () => {
@@ -287,5 +301,72 @@ describe('AgentAssignmentPanel', () => {
       role: 'worker',
     });
     expect(assignment?.provider).toBe('claude_code');
+  });
+
+  // ---------------------------------------------------------------------
+  // Correction 1: a valid Hammond document belonging to a DIFFERENT project
+  // is a distinct, owner-visible conflict — never a normal update target,
+  // and Import is never offered for it.
+  // ---------------------------------------------------------------------
+
+  it('shows a distinct foreign-project conflict (not a normal update) and never offers Import for it', async () => {
+    const fakeFs = createFakeHarnessFilesystem();
+    const foreign = foreignHeader();
+    seedManaged(fakeFs, root, 'claude_code', foreign, "project two's content");
+    renderPanel({ fakeFs });
+
+    await waitFor(() =>
+      expect(screen.getByText(/Belongs to a different project or role/)).toBeInTheDocument(),
+    );
+    expect(screen.getAllByText(new RegExp(otherProjectId)).length).toBeGreaterThan(0);
+    expect(
+      screen.queryByRole('button', { name: 'Import existing content' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Replace' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    // Nothing was written just by showing the conflict.
+    expect(fakeFs.targets.get(`${root}|claude_code`)?.header).toEqual(foreign);
+  });
+
+  it("Cancel on a foreign-project conflict leaves the other project's document completely untouched", async () => {
+    const fakeFs = createFakeHarnessFilesystem();
+    const foreign = foreignHeader();
+    seedManaged(fakeFs, root, 'claude_code', foreign, "project two's content");
+    renderPanel({ fakeFs });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+
+    expect(fakeFs.targets.get(`${root}|claude_code`)?.header).toEqual(foreign);
+    expect(fakeFs.targets.get(`${root}|claude_code`)?.content).toBe("project two's content");
+  });
+
+  it("Replace on a foreign-project conflict overwrites it with this project's own document", async () => {
+    const fakeFs = createFakeHarnessFilesystem();
+    seedManaged(fakeFs, root, 'claude_code', foreignHeader(), "project two's content");
+    renderPanel({ fakeFs });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Replace' }));
+
+    await waitFor(() => expect(screen.getByText('Hammond-managed')).toBeInTheDocument());
+    expect(fakeFs.targets.get(`${root}|claude_code`)?.header).toMatchObject({
+      projectId: project.id,
+      role: 'worker',
+    });
+  });
+
+  it("a provider switch never removes a different project's document sharing that provider (owner-visible resolution path)", async () => {
+    const fakeFs = createFakeHarnessFilesystem();
+    const foreign = foreignHeader();
+    seedManaged(fakeFs, root, 'claude_code', foreign, "project two's content");
+    renderPanel({ fakeFs });
+
+    fireEvent.change(await screen.findByLabelText('Worker execution provider'), {
+      target: { value: 'kilo_code' },
+    });
+
+    await waitFor(() => expect(fakeFs.targets.has(`${root}|kilo_code`)).toBe(true));
+    // Project two's document at the shared claude_code target is exactly as it was.
+    expect(fakeFs.targets.get(`${root}|claude_code`)?.header).toEqual(foreign);
+    expect(fakeFs.targets.get(`${root}|claude_code`)?.content).toBe("project two's content");
   });
 });

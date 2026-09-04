@@ -7,12 +7,30 @@ import { HarnessInjectionService } from './service';
 import {
   createFakeHarnessAdapters,
   createFakeHarnessFilesystem,
+  seedManaged,
   seedUnmanaged,
   type FakeHarnessFilesystem,
 } from './testFakes';
+import { MANAGED_HEADER_FORMAT_VERSION } from './types';
 
 const project1 = 'project-1';
+const project2 = 'project-2';
 const root = '/home/owner/project-1';
+
+function foreignHeader(
+  overrides: { projectId?: string; role?: 'worker' | 'orchestrator' | 'auditor' } = {},
+) {
+  return {
+    formatVersion: MANAGED_HEADER_FORMAT_VERSION,
+    projectId: overrides.projectId ?? project2,
+    role: overrides.role ?? ('worker' as const),
+    provider: 'claude_code' as const,
+    sharedRoleVersionId: 'shared-v1',
+    providerVersionId: 'provider-v1',
+    overrideVersionId: null,
+    generatedAt: '2026-09-04T16:00:00Z',
+  };
+}
 
 function buildService(fakeFs: FakeHarnessFilesystem = createFakeHarnessFilesystem()) {
   const assignmentRepo = createFakeAssignmentRepository();
@@ -87,6 +105,38 @@ describe('HarnessInjectionService', () => {
       expect(preview.classification).toEqual({ kind: 'Unmanaged' });
       expect(preview.action).toBe('requires_decision');
     });
+
+    // ---------------------------------------------------------------------
+    // Correction 1: a valid Hammond header recorded for a DIFFERENT project
+    // (or role) is a distinct foreign conflict, never a normal current
+    // ManagedValid target — this is the owner-visible resolution path.
+    // ---------------------------------------------------------------------
+
+    it('shows a distinct managed_foreign classification (not managed_valid) for a document belonging to a different project', async () => {
+      const fakeFs = createFakeHarnessFilesystem();
+      const foreign = foreignHeader({ projectId: project2, role: 'worker' });
+      seedManaged(fakeFs, root, 'claude_code', foreign, "project two's content");
+      const { service } = buildService(fakeFs);
+
+      const preview = await service.preview({ root, projectId: project1, role: 'worker' });
+
+      expect(preview.classification).toEqual({ kind: 'ManagedForeign', header: foreign });
+      expect(preview.action).toBe('requires_decision');
+    });
+
+    it('shows managed_foreign for a document belonging to the same project but a different role', async () => {
+      const fakeFs = createFakeHarnessFilesystem();
+      // worker already defaults to claude_code (D-014); seed CLAUDE.md as if orchestrator had
+      // switched onto claude_code and injected there, without worker ever writing it.
+      const foreign = foreignHeader({ projectId: project1, role: 'orchestrator' });
+      seedManaged(fakeFs, root, 'claude_code', foreign, 'orchestrator content');
+      const { service } = buildService(fakeFs);
+
+      const preview = await service.preview({ root, projectId: project1, role: 'worker' });
+
+      expect(preview.classification.kind).toBe('ManagedForeign');
+      expect(preview.action).toBe('requires_decision');
+    });
   });
 
   describe('inject', () => {
@@ -96,7 +146,7 @@ describe('HarnessInjectionService', () => {
       const outcome = await service.inject({ root, projectId: project1, role: 'worker' });
 
       expect(outcome).toEqual({ kind: 'Written', relativePath: 'CLAUDE.md' });
-      expect(fakeFs.targets.get(`${root}|claude_code`)?.classification.kind).toBe('ManagedValid');
+      expect(fakeFs.targets.get(`${root}|claude_code`)?.header).not.toBeNull();
     });
 
     it('updates an existing managed document in place on a second inject', async () => {
@@ -132,6 +182,39 @@ describe('HarnessInjectionService', () => {
       });
 
       expect(outcome).toEqual({ kind: 'Written', relativePath: 'CLAUDE.md' });
+    });
+
+    it('refuses to silently overwrite a valid document belonging to a different project', async () => {
+      const fakeFs = createFakeHarnessFilesystem();
+      const foreign = foreignHeader({ projectId: project2, role: 'worker' });
+      seedManaged(fakeFs, root, 'claude_code', foreign, "project two's content");
+      const { service } = buildService(fakeFs);
+
+      const outcome = await service.inject({ root, projectId: project1, role: 'worker' });
+
+      expect(outcome).toEqual({ kind: 'RequiresConfirmation', relativePath: 'CLAUDE.md' });
+      expect(fakeFs.targets.get(`${root}|claude_code`)?.header).toEqual(foreign);
+      expect(fakeFs.targets.get(`${root}|claude_code`)?.content).toBe("project two's content");
+    });
+
+    it('replaces a foreign-project document when forceReplace is explicitly set', async () => {
+      const fakeFs = createFakeHarnessFilesystem();
+      const foreign = foreignHeader({ projectId: project2, role: 'worker' });
+      seedManaged(fakeFs, root, 'claude_code', foreign, "project two's content");
+      const { service } = buildService(fakeFs);
+
+      const outcome = await service.inject({
+        root,
+        projectId: project1,
+        role: 'worker',
+        forceReplace: true,
+      });
+
+      expect(outcome).toEqual({ kind: 'Written', relativePath: 'CLAUDE.md' });
+      expect(fakeFs.targets.get(`${root}|claude_code`)?.header).toMatchObject({
+        projectId: project1,
+        role: 'worker',
+      });
     });
 
     it('never reaches the local filesystem when the project has no assignment for the role', async () => {
@@ -219,6 +302,18 @@ describe('HarnessInjectionService', () => {
 
       expect(outcome).toEqual({ kind: 'Refused', relativePath: 'CLAUDE.md' });
     });
+
+    it('refuses to remove a valid document belonging to a different project, leaving it untouched', async () => {
+      const fakeFs = createFakeHarnessFilesystem();
+      const foreign = foreignHeader({ projectId: project2, role: 'worker' });
+      seedManaged(fakeFs, root, 'claude_code', foreign, "project two's content");
+      const { service } = buildService(fakeFs);
+
+      const outcome = await service.remove({ root, projectId: project1, role: 'worker' });
+
+      expect(outcome).toEqual({ kind: 'Refused', relativePath: 'CLAUDE.md' });
+      expect(fakeFs.targets.get(`${root}|claude_code`)?.header).toEqual(foreign);
+    });
   });
 
   describe('importThenReplace', () => {
@@ -231,7 +326,7 @@ describe('HarnessInjectionService', () => {
 
       expect(result.importedVersion.content).toBe('# hand-written notes\nkeep these ideas');
       expect(result.injected).toEqual({ kind: 'Written', relativePath: 'CLAUDE.md' });
-      expect(fakeFs.targets.get(`${root}|claude_code`)?.classification.kind).toBe('ManagedValid');
+      expect(fakeFs.targets.get(`${root}|claude_code`)?.header).not.toBeNull();
 
       // The imported content is now active as the project override layer.
       const layers = await instructions.getActiveLayerContents({
@@ -266,10 +361,28 @@ describe('HarnessInjectionService', () => {
         service.importThenReplace({ root, projectId: project1, role: 'worker' }),
       ).rejects.toThrow('network error');
       // The owner's original unmanaged file is exactly as it was.
-      expect(fakeFs.targets.get(`${root}|claude_code`)?.classification).toEqual({
-        kind: 'Unmanaged',
-      });
+      expect(fakeFs.targets.get(`${root}|claude_code`)?.header).toBeNull();
       expect(fakeFs.targets.get(`${root}|claude_code`)?.content).toBe('# hand-written notes');
+    });
+
+    it("refuses to import a valid document belonging to a different project as this project's own content", async () => {
+      const fakeFs = createFakeHarnessFilesystem();
+      const foreign = foreignHeader({ projectId: project2, role: 'worker' });
+      seedManaged(fakeFs, root, 'claude_code', foreign, "project two's private content");
+      const { service, instructions } = buildService(fakeFs);
+
+      await expect(
+        service.importThenReplace({ root, projectId: project1, role: 'worker' }),
+      ).rejects.toThrow(/not an unmanaged owner file/);
+
+      // Nothing was imported into project one's override layer, and the foreign file is untouched.
+      const layers = await instructions.getActiveLayerContents({
+        projectId: project1,
+        role: 'worker',
+        provider: 'claude_code',
+      });
+      expect(layers.projectOverride).toBe('');
+      expect(fakeFs.targets.get(`${root}|claude_code`)?.header).toEqual(foreign);
     });
   });
 
@@ -325,9 +438,31 @@ describe('HarnessInjectionService', () => {
         role: 'orchestrator',
       });
       expect(orchestratorPreview.classification.kind).toBe('ManagedValid');
-      expect(fakeFs.targets.get(`${root}|codex`)?.classification).toMatchObject({
-        kind: 'ManagedValid',
-        header: expect.objectContaining({ role: 'orchestrator' }),
+      expect(fakeFs.targets.get(`${root}|codex`)?.header).toMatchObject({ role: 'orchestrator' });
+    });
+
+    // Permanent regression test for the intake defect (Correction 1): a valid Hammond document
+    // for a DIFFERENT PROJECT sharing this role/provider must survive a provider switch on this
+    // project's own role, exactly as it must survive a same-project different-role switch above.
+    it('never removes a valid document belonging to a different project when switching this project away from that provider', async () => {
+      const fakeFs = createFakeHarnessFilesystem();
+      const foreign = foreignHeader({ projectId: project2, role: 'worker' });
+      seedManaged(fakeFs, root, 'claude_code', foreign, "project two's content");
+      const { service } = buildService(fakeFs);
+
+      const result = await service.switchProviderAndInject({
+        root,
+        projectId: project1,
+        role: 'worker',
+        newProvider: 'kilo_code',
+      });
+
+      expect(result.removedPrior).toBeNull();
+      expect(fakeFs.targets.get(`${root}|claude_code`)?.header).toEqual(foreign);
+      expect(fakeFs.targets.get(`${root}|claude_code`)?.content).toBe("project two's content");
+      expect(result.injected).toEqual({
+        kind: 'Written',
+        relativePath: '.kilocode/rules/hammond.md',
       });
     });
 

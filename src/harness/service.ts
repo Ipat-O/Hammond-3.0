@@ -72,7 +72,7 @@ export class HarnessInjectionService {
       provider: assignment.provider,
     });
     const adapter = this.adapterFor(assignment.provider);
-    const classified = await adapter.classify(params.root);
+    const classified = await adapter.classify(params.root, params.projectId, params.role);
     return {
       role: params.role,
       provider: assignment.provider,
@@ -124,21 +124,24 @@ export class HarnessInjectionService {
     );
   }
 
-  /** Removes the currently assigned provider's target for one role. */
+  /** Removes the currently assigned provider's target for one role — refused unless the target's current content matches exactly this project and role. */
   async remove(params: {
     projectId: string;
     role: InstructionRole;
     root: string;
   }): Promise<HarnessRemoveOutcome> {
     const assignment = await this.resolveAssignment(params.projectId, params.role);
-    return this.adapterFor(assignment.provider).remove(params.root);
+    return this.adapterFor(assignment.provider).remove(params.root, params.projectId, params.role);
   }
 
   /**
    * Import: preserves an Unmanaged target's existing content by saving it as the project's
-   * override-layer instructions before any managed rewrite, then replaces the target. If the
-   * import save fails, nothing is written locally — the owner's file is untouched and the
-   * failure is reported rather than a fabricated success.
+   * override-layer instructions before any managed rewrite, then replaces the target. Refuses
+   * (and writes nothing, imports nothing) unless the target is genuinely Unmanaged — a valid
+   * Hammond document belonging to a different project or role is never "imported" as this
+   * project's own content, since that would silently fold someone else's instructions into this
+   * project's override layer. If the import save fails, nothing is written locally either — the
+   * owner's file is untouched and the failure is reported rather than a fabricated success.
    */
   async importThenReplace(params: {
     root: string;
@@ -146,8 +149,14 @@ export class HarnessInjectionService {
     role: InstructionRole;
   }): Promise<{ importedVersion: InstructionVersion; injected: HarnessInjectOutcome }> {
     const assignment = await this.resolveAssignment(params.projectId, params.role);
-    const relativePath = await this.adapterFor(assignment.provider).targetPath();
-    const rawContent = await this.filesystem.readTextFile(params.root, relativePath);
+    const adapter = this.adapterFor(assignment.provider);
+    const classified = await adapter.classify(params.root, params.projectId, params.role);
+    if (classified.classification.kind !== 'Unmanaged') {
+      throw new Error(
+        `Cannot import: ${classified.relativePath} is not an unmanaged owner file (currently: ${classified.classification.kind}).`,
+      );
+    }
+    const rawContent = await this.filesystem.readTextFile(params.root, classified.relativePath);
     const { version: importedVersion } = await this.instructions.saveAndActivate({
       projectId: params.projectId,
       role: params.role,
@@ -161,9 +170,10 @@ export class HarnessInjectionService {
 
   /**
    * Changes which execution provider a role points at, then injects into the new target.
-   * Removes the prior provider's target only when it is still verifiably Hammond-managed *and*
-   * was written for this exact role — so a different role legitimately sharing that provider's
-   * target is never touched, and one linked directory never accumulates Hammond duplicates.
+   * Removes the prior provider's target only when its *current* content is `ManagedValid` for
+   * exactly this project and role (never merely a structurally valid Hammond header) — so a
+   * different role or a different project legitimately occupying that provider's shared target
+   * is never touched, and one linked directory never accumulates Hammond duplicates.
    */
   async switchProviderAndInject(params: {
     root: string;
@@ -190,12 +200,13 @@ export class HarnessInjectionService {
     let removedPrior: HarnessRemoveOutcome | null = null;
     if (previous && previous.provider !== params.newProvider) {
       const priorAdapter = this.adapterFor(previous.provider);
-      const priorClassification = await priorAdapter.classify(params.root);
-      if (
-        priorClassification.classification.kind === 'ManagedValid' &&
-        priorClassification.classification.header.role === params.role
-      ) {
-        removedPrior = await priorAdapter.remove(params.root);
+      const priorClassification = await priorAdapter.classify(
+        params.root,
+        params.projectId,
+        params.role,
+      );
+      if (priorClassification.classification.kind === 'ManagedValid') {
+        removedPrior = await priorAdapter.remove(params.root, params.projectId, params.role);
       }
     }
 
