@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { assertNoParentCycle, getTaskSubtreeIds, TASK_STATUSES, type Database } from '../data';
+import { InstructionsPanel } from '../instructions/InstructionsPanel';
 import { DirectoryContextPanel } from '../settings/DirectoryContextPanel';
 import { useDirectoryContextState } from '../settings/useDirectoryContextState';
 import type { TrackerServices } from './contracts';
 import type { TaskStatus } from '../data';
+
+type PrimaryView = 'workspace' | 'instructions';
 
 type Project = Database['public']['Tables']['projects']['Row'];
 type ProjectInsert = Database['public']['Tables']['projects']['Insert'];
@@ -408,6 +411,7 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
   const repositories = services.repositories;
   const directory = useDirectoryContextState(services.directoryContext);
   const resumeAppliedRef = useRef(false);
+  const [primaryView, setPrimaryView] = useState<PrimaryView>('workspace');
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -813,7 +817,20 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
           <span className="brand-name">Hammond</span>
         </div>
         <nav className="primary-nav" aria-label="Primary">
-          <span className="nav-item nav-item-active"><span className="nav-icon" aria-hidden="true">◈</span>Workspace</span>
+          <button
+            type="button"
+            className={`nav-item ${primaryView === 'workspace' ? 'nav-item-active' : ''}`}
+            onClick={() => setPrimaryView('workspace')}
+          >
+            <span className="nav-icon" aria-hidden="true">◈</span>Workspace
+          </button>
+          <button
+            type="button"
+            className={`nav-item ${primaryView === 'instructions' ? 'nav-item-active' : ''}`}
+            onClick={() => setPrimaryView('instructions')}
+          >
+            <span className="nav-icon" aria-hidden="true">▤</span>Instructions
+          </button>
           <span className="nav-item nav-item-muted"><span className="nav-icon" aria-hidden="true">⚙</span>Settings</span>
         </nav>
         <div className="project-list-heading">
@@ -853,6 +870,8 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
       </aside>
 
       <section className="content-area" id="workspace">
+      {primaryView === 'workspace' && (
+        <>
         <header className="topbar">
           <div>
             <p className="eyebrow">Project and task tracker</p>
@@ -980,6 +999,20 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
             </div>
           </div>
         )}
+        </>
+      )}
+
+      {primaryView === 'instructions' && (
+        <>
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">Versioned instructions</p>
+            <h1>Instruction composer</h1>
+          </div>
+        </header>
+        <InstructionsPanel service={services.instructions} projects={visibleProjects} />
+        </>
+      )}
       </section>
     </main>
   );

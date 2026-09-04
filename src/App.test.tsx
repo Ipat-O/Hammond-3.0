@@ -4,6 +4,8 @@ import type { Session } from '@supabase/supabase-js';
 
 import App from './App';
 import type { Database } from './data';
+import { InstructionsService } from './instructions/service';
+import { createFakeInstructionRepository } from './instructions/testFakes';
 import { LOCAL_SETTINGS_KEY, type LocalSettingsStateV1 } from './settings/state';
 import {
   createFakeDirectoryContextServices,
@@ -75,6 +77,7 @@ function makeServices(projects: Project[] = [], tasks: Task[] = []): TrackerServ
     repositories,
     auth: {} as TrackerServices['auth'],
     directoryContext: createFakeDirectoryContextServices(),
+    instructions: new InstructionsService(createFakeInstructionRepository()),
   };
 }
 

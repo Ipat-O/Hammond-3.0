@@ -11,3 +11,4 @@ export {
 } from './taskValidation';
 export { ProjectMemoryRepository, ProjectRepository, TaskRepository } from './repositories';
 export { getTaskSubtreeIds } from './taskSubtree';
+export { SupabaseInstructionRepository } from './instructionsRepository';

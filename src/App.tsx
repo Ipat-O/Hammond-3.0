@@ -2,7 +2,14 @@ import { useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 
 import { nativeFilesystem, nativeLocalSettings } from './api/native';
-import { ownerAuth, ProjectMemoryRepository, ProjectRepository, TaskRepository } from './data';
+import {
+  ownerAuth,
+  ProjectMemoryRepository,
+  ProjectRepository,
+  SupabaseInstructionRepository,
+  TaskRepository,
+} from './data';
+import { InstructionsService } from './instructions/service';
 import { TrackerPage } from './tracker/TrackerPage';
 import type { TrackerServices } from './tracker/contracts';
 
@@ -18,6 +25,7 @@ function createDefaultServices(): TrackerServices {
       filesystem: nativeFilesystem,
       settings: nativeLocalSettings,
     },
+    instructions: new InstructionsService(new SupabaseInstructionRepository()),
   };
 }
 

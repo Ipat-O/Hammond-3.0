@@ -129,35 +129,6 @@ export class ProjectMemoryRepository {
   async addRelation(input: Tables['task_relations']['Insert']) {
     return dataOrThrow(await this.client.from('task_relations').insert(input).select().single());
   }
-  async listTemplates() {
-    return dataOrThrow(
-      await this.client
-        .from('instruction_templates')
-        .select('*, instruction_template_versions(*)')
-        .order('name'),
-    );
-  }
-  async createTemplate(input: Tables['instruction_templates']['Insert']) {
-    assertNoAbsoluteLocalPaths(input);
-    return dataOrThrow(
-      await this.client.from('instruction_templates').insert(input).select().single(),
-    );
-  }
-  async createTemplateVersion(input: Tables['instruction_template_versions']['Insert']) {
-    assertNoAbsoluteLocalPaths(input);
-    return dataOrThrow(
-      await this.client.from('instruction_template_versions').insert(input).select().single(),
-    );
-  }
-  async selectProjectInstruction(input: Tables['project_instruction_selections']['Insert']) {
-    return dataOrThrow(
-      await this.client
-        .from('project_instruction_selections')
-        .upsert(input, { onConflict: 'project_id,role' })
-        .select()
-        .single(),
-    );
-  }
   async addEvidence(input: Tables['task_evidence']['Insert']) {
     assertNoAbsoluteLocalPaths(input);
     return dataOrThrow(await this.client.from('task_evidence').insert(input).select().single());
