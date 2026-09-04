@@ -109,3 +109,21 @@ When archived tasks are shown, archived rows must be unmistakable through an exp
 Archiving a task archives the selected task and every transitive descendant. An active child must never reappear as a top-level orphan merely because its parent is hidden by the archived filter. Archiving a leaf affects only that leaf.
 
 The subtree is resolved from the task hierarchy including already archived rows, and all affected rows are persisted through one filtered bulk update with a common archive timestamp. This avoids partial per-child completion and keeps the optimistic UI aligned with the repository result. The existing owner/project RLS boundary remains authoritative. No archive restore behavior, project-archive cascade, delete cascade, or schema migration is introduced by this decision.
+
+## D-017 — Execution assignment is separate from instruction customization
+
+Recorded after the HAM3-005 owner smoke test. The versioned domain and persistence flow passed, but its minimal exercise UI exposed internal composition concepts as the primary workflow and used “Provider” for two different questions.
+
+Each project has an explicit **Agent assignment** setting that maps orchestrator, worker, and auditor roles to the execution provider used for that role. The UI calls this **Execution provider** where a field label is needed. This is separate from choosing which provider-specific instruction variant to customize. It is a manual project setting, not automatic model scoring, provider launching, or session routing.
+
+HAM3-006 owns the persisted role-to-execution-provider assignment and consumes it when choosing the managed harness adapter. HAM3-007 owns its presentation and the simplified Instruction Studio.
+
+The default Instruction Studio path is:
+
+`Project → Agent assignment → Effective instructions`
+
+For the selected role it presents one primary view: “Worker instructions for Codex,” the project, active version, effective composed instructions, and clear Customize and History actions. Shared-role, provider-specific, and project-override layers remain part of the domain but live under an Advanced/Customize disclosure. Inherited layers never appear as unexplained blank text areas; they say which default is in use and offer a customization action.
+
+Ordinary persistence uses **Save changes** while continuing to create immutable versions automatically. History appears in a drawer or modal, labels the active version and restore provenance, and uses **Restore this version** with a one-time explanation that restoration creates a new version and keeps all history. The ordinary UI does not expose ambiguous “Select” versus “Restore” actions.
+
+The preview-only work-order field is labeled **Test a task-specific instruction**, with explicit text that it is preview-only and will not be saved. These rules replace HAM3-007's earlier equal role/provider-tab emphasis; the layered administration view remains available only as an advanced workflow.

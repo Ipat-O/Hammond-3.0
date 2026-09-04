@@ -117,30 +117,37 @@ tasks:
     owner_feedback: parent and child hierarchy is functional but the presentation is thin; the owner asked for a foldable tree. Recorded as a follow-up rather than folded into this approved head, since any new commit would invalidate the audit verdict
   - id: HAM3-005
     title: Versioned instruction template domain
-    state: in_development
+    state: testing
     depends_on: [HAM3-002]
     worker: Anthropic / Claude Code / Claude Sonnet 5
     auditor: Kilo Code / DeepSeek V4 Pro
     branch: claude/ham3-005-instruction-versions-o65qeo
     base_sha: eec9d3be91634ec268c15fa73b4ea45c02800a0a
-    current_head_sha: cf39ebc5743bb2eb056a9f0546335f97ebcafb1b
+    current_head_sha: 749007b2fa901939238cda3db2dc7d3980492f4b
     pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/7
     worker_report: https://github.com/Ipat-O/Hammond-3.0/pull/7#issuecomment-5526642206
-    current_status: Correction 1 required before audit; owner defaults are absent from real inserts, save/restore activation is not transactional, preview errors are hidden, and official Supabase/type generation is pending
+    audit_verdict: APPROVE
+    audit_report: https://github.com/Ipat-O/Hammond-3.0/pull/7#issuecomment-5529763578
+    hosted_migration: 20260903124734 applied and post-deploy verified on project polphkuvlleadblxmjyz
+    human_check: passed at exact approved head; save, immutable history, restore, provider independence, preview-only task text, and cold-restart persistence confirmed
+    owner_feedback: D-017 moves execution-provider assignment into HAM3-006 and the simplified effective-instructions UX into HAM3-007; the approved HAM3-005 domain head remains unchanged
+    outstanding: owner-authorized merge
     work_order: tracker/work-orders/HAM3-005-WO.md (device-local transfer packet)
-    correction_packet: tracker/work-orders/HAM3-005-CORRECTION-1.md (device-local transfer packet)
+    correction_packets: tracker/work-orders/HAM3-005-CORRECTION-1.md through HAM3-005-CORRECTION-3.md (device-local transfer packets)
   - id: HAM3-006
     title: Harness adapters and managed-file injection
     state: in_design
     depends_on: [HAM3-003, HAM3-005]
     worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
+    design_note: D-017 adds explicit per-project, per-role execution-provider assignment, separate from provider-specific instruction content
   - id: HAM3-007
     title: Instruction Studio UI
     state: in_design
     depends_on: [HAM3-005, HAM3-006]
     worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
+    design_note: D-017 makes effective instructions the default experience and moves composition layers/version mechanics behind Customize and History
   - id: HAM3-008
     title: Project home, directory switching, and resume
     state: in_design

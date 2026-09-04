@@ -29,7 +29,7 @@ None.
 ## testing
 
 - [HAM3-005](./tasks/HAM3-005.md) — Versioned instruction template domain
-  DeepSeek approved `749007b2fa901939238cda3db2dc7d3980492f4b` · owner persistence smoke test pending
+  DeepSeek approved `749007b2fa901939238cda3db2dc7d3980492f4b` · owner persistence smoke passed · merge authorization pending
 
 ## merged
 
