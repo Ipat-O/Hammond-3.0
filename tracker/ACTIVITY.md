@@ -611,3 +611,13 @@
 - Correction 2 is waived and will not be sent to the worker. Its device-local packet remains historical evidence of the identified test gap, not an active work order.
 - HAM3-006 moved from `in_development` to `in_review`. Independent audit is assigned to Kilo / Kilo Code / DeepSeek V4 Pro and bound only to `06980a3`. The auditor is instructed to document the owner-accepted limitation and not reject solely for missing permanent real-junction coverage, while still rejecting any actual confinement defect.
 - PR #8 remains draft and unmerged. No hosted migration, testing transition, or merge is authorized.
+
+## 2026-09-04 — HAM3-006 independently approved at 06980a3; hosted migration and owner smoke pending
+
+- Kilo Code / DeepSeek V4 Pro returned `AUDIT-VERDICT: APPROVE 06980a319731a6f665623cf80cdb60c40ed311e7`. Report: https://github.com/Ipat-O/Hammond-3.0/pull/8#issuecomment-5545659879.
+- Live intake confirms the verdict is a top-level PR comment bound to the unchanged pushed head. PR #8 remains open and draft, targets `dev`, and the implementation branch/head match the audit packet exactly.
+- DeepSeek independently reproduced 18 files / 186 frontend tests, typecheck, lint, formatting, production build, a fresh four-migration Supabase reset, generated-type zero-diff, 86/86 pgTAP assertions, zero security-advisor findings, Windows fmt/72 Rust tests/clippy, and Windows MSI/NSIS packaging.
+- Five required mutations were reproduced and restored: project-identity comparison, owner-read RLS, root containment, unmanaged classification, and prior-provider cleanup. The final audit worktree is clean and PR head unchanged.
+- The auditor explicitly recorded the owner-accepted evidence debt: three permanent Windows symbolic-link tests skip on privilege denial, while an independent real `mklink /J` probe confirms runtime escape rejection and outside-file preservation. No actual confinement defect was found.
+- HAM3-006 moved from `in_review` to `testing`. The new assignment migration has not been applied to hosted Supabase; explicit owner authorization is required before deployment. After post-deploy verification, the owner must run the exact-head assignment/injection/provider-switch/foreign-conflict/removal/restart smoke flow.
+- No merge is authorized.

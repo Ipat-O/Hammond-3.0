@@ -23,12 +23,12 @@ None.
 
 ## in_review
 
-- [HAM3-006](./tasks/HAM3-006.md) — Harness adapters, agent assignment, and managed-file injection
-  Independent audit bound to `06980a319731a6f665623cf80cdb60c40ed311e7` · permanent junction-test gap accepted by owner
+None.
 
 ## testing
 
-None.
+- [HAM3-006](./tasks/HAM3-006.md) — Harness adapters, agent assignment, and managed-file injection
+  Approved at `06980a319731a6f665623cf80cdb60c40ed311e7` · hosted migration and owner smoke pending
 
 ## merged
 
