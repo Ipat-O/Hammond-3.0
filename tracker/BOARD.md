@@ -6,7 +6,6 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## in_design
 
-- [HAM3-006](./tasks/HAM3-006.md) — Harness adapters and managed-file injection
 - [HAM3-007](./tasks/HAM3-007.md) — Instruction Studio UI
 - [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
 - [HAM3-009](./tasks/HAM3-009.md) — Work-order generation and dispatch records
@@ -16,11 +15,12 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## ready_for_development
 
-- [HAM3-006](./tasks/HAM3-006.md) — Harness adapters, agent assignment, and managed-file injection
+None.
 
 ## in_development
 
-None.
+- [HAM3-006](./tasks/HAM3-006.md) — Harness adapters, agent assignment, and managed-file injection
+  Correction 1 required at PR head `38ed84989bf42c032ead8fe6b0c8fd5b7d44b547`
 
 ## in_review
 
