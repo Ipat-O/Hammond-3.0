@@ -1,0 +1,348 @@
+import { AssignmentsService } from '../assignments/service';
+import { createFakeAssignmentRepository, seedProjectDefaults } from '../assignments/testFakes';
+import { InstructionsService } from '../instructions/service';
+import { createFakeInstructionRepository } from '../instructions/testFakes';
+import type { HarnessAdapter } from './contracts';
+import { HarnessInjectionService } from './service';
+import {
+  createFakeHarnessAdapters,
+  createFakeHarnessFilesystem,
+  seedUnmanaged,
+  type FakeHarnessFilesystem,
+} from './testFakes';
+
+const project1 = 'project-1';
+const root = '/home/owner/project-1';
+
+function buildService(fakeFs: FakeHarnessFilesystem = createFakeHarnessFilesystem()) {
+  const assignmentRepo = createFakeAssignmentRepository();
+  seedProjectDefaults(assignmentRepo.store, project1, 'owner-1');
+  const assignments = new AssignmentsService(assignmentRepo);
+
+  const instructionRepo = createFakeInstructionRepository();
+  const instructions = new InstructionsService(instructionRepo);
+
+  const adapters = createFakeHarnessAdapters(fakeFs, root);
+
+  const filesystem = {
+    async readTextFile(fsRoot: string, relativePath: string) {
+      const provider = (Object.keys(adapters) as (keyof typeof adapters)[]).find(
+        (p) =>
+          ({
+            codex: 'AGENTS.md',
+            claude_code: 'CLAUDE.md',
+            kilo_code: '.kilocode/rules/hammond.md',
+          })[p] === relativePath,
+      );
+      if (!provider) throw new Error(`no fake target for ${relativePath}`);
+      const target = fakeFs.targets.get(`${fsRoot}|${provider}`);
+      if (!target || target.content === null) throw new Error('not found');
+      return target.content;
+    },
+  };
+
+  return {
+    assignments,
+    assignmentRepo,
+    instructions,
+    instructionRepo,
+    adapters,
+    fakeFs,
+    filesystem,
+    service: new HarnessInjectionService({ assignments, instructions, adapters, filesystem }),
+  };
+}
+
+describe('HarnessInjectionService', () => {
+  describe('preview', () => {
+    it('shows the assigned role/provider, target path, classification, and create action for a fresh project', async () => {
+      const { service } = buildService();
+
+      const preview = await service.preview({ root, projectId: project1, role: 'worker' });
+
+      expect(preview.role).toBe('worker');
+      expect(preview.provider).toBe('claude_code');
+      expect(preview.relativePath).toBe('CLAUDE.md');
+      expect(preview.classification).toEqual({ kind: 'Missing' });
+      expect(preview.action).toBe('create');
+    });
+
+    it('shows update as the action once a managed document already exists', async () => {
+      const { service } = buildService();
+      await service.inject({ root, projectId: project1, role: 'worker' });
+
+      const preview = await service.preview({ root, projectId: project1, role: 'worker' });
+
+      expect(preview.classification.kind).toBe('ManagedValid');
+      expect(preview.action).toBe('update');
+    });
+
+    it('shows requires_decision for a preexisting unmanaged file', async () => {
+      const fakeFs = createFakeHarnessFilesystem();
+      seedUnmanaged(fakeFs, root, 'claude_code', '# my own notes');
+      const { service } = buildService(fakeFs);
+
+      const preview = await service.preview({ root, projectId: project1, role: 'worker' });
+
+      expect(preview.classification).toEqual({ kind: 'Unmanaged' });
+      expect(preview.action).toBe('requires_decision');
+    });
+  });
+
+  describe('inject', () => {
+    it('creates the managed document on first inject', async () => {
+      const { service, fakeFs } = buildService();
+
+      const outcome = await service.inject({ root, projectId: project1, role: 'worker' });
+
+      expect(outcome).toEqual({ kind: 'Written', relativePath: 'CLAUDE.md' });
+      expect(fakeFs.targets.get(`${root}|claude_code`)?.classification.kind).toBe('ManagedValid');
+    });
+
+    it('updates an existing managed document in place on a second inject', async () => {
+      const { service } = buildService();
+      await service.inject({ root, projectId: project1, role: 'worker' });
+
+      const outcome = await service.inject({ root, projectId: project1, role: 'worker' });
+
+      expect(outcome).toEqual({ kind: 'Written', relativePath: 'CLAUDE.md' });
+    });
+
+    it('refuses to overwrite an unmanaged target without forceReplace', async () => {
+      const fakeFs = createFakeHarnessFilesystem();
+      seedUnmanaged(fakeFs, root, 'claude_code', '# my own notes');
+      const { service } = buildService(fakeFs);
+
+      const outcome = await service.inject({ root, projectId: project1, role: 'worker' });
+
+      expect(outcome).toEqual({ kind: 'RequiresConfirmation', relativePath: 'CLAUDE.md' });
+      expect(fakeFs.targets.get(`${root}|claude_code`)?.content).toBe('# my own notes');
+    });
+
+    it('replaces an unmanaged target when forceReplace is set (explicit Replace action)', async () => {
+      const fakeFs = createFakeHarnessFilesystem();
+      seedUnmanaged(fakeFs, root, 'claude_code', '# my own notes');
+      const { service } = buildService(fakeFs);
+
+      const outcome = await service.inject({
+        root,
+        projectId: project1,
+        role: 'worker',
+        forceReplace: true,
+      });
+
+      expect(outcome).toEqual({ kind: 'Written', relativePath: 'CLAUDE.md' });
+    });
+
+    it('never reaches the local filesystem when the project has no assignment for the role', async () => {
+      const { instructions, fakeFs } = buildService();
+      const emptyProjectService = new HarnessInjectionService({
+        assignments: new AssignmentsService(createFakeAssignmentRepository()),
+        instructions,
+        adapters: createFakeHarnessAdapters(fakeFs, root),
+        filesystem: {
+          async readTextFile() {
+            throw new Error('unused');
+          },
+        },
+      });
+
+      await expect(
+        emptyProjectService.inject({ root, projectId: 'unseeded-project', role: 'worker' }),
+      ).rejects.toMatchObject({ code: 'missing_assignment' });
+      expect(fakeFs.targets.has(`${root}|claude_code`)).toBe(false);
+    });
+
+    it('a saved assignment survives a local injection failure', async () => {
+      const { assignments, instructions, adapters } = buildService();
+      await assignments.updateAssignment({
+        projectId: project1,
+        role: 'worker',
+        provider: 'kilo_code',
+      });
+
+      const throwingAdapter: HarnessAdapter = {
+        async targetPath() {
+          return '.kilocode/rules/hammond.md';
+        },
+        async classify() {
+          return {
+            relativePath: '.kilocode/rules/hammond.md',
+            classification: { kind: 'Missing' },
+          };
+        },
+        async inject() {
+          throw new Error('disk full');
+        },
+        async remove() {
+          throw new Error('unused');
+        },
+      };
+      const service = new HarnessInjectionService({
+        assignments,
+        instructions,
+        adapters: { ...adapters, kilo_code: throwingAdapter },
+        filesystem: {
+          async readTextFile() {
+            throw new Error('unused');
+          },
+        },
+      });
+
+      await expect(service.inject({ root, projectId: project1, role: 'worker' })).rejects.toThrow(
+        'disk full',
+      );
+
+      // The provider switch to kilo_code, saved before the failed local write, is untouched.
+      const assignment = await assignments.getAssignment({ projectId: project1, role: 'worker' });
+      expect(assignment?.provider).toBe('kilo_code');
+    });
+  });
+
+  describe('remove', () => {
+    it('removes the currently assigned provider target', async () => {
+      const { service, fakeFs } = buildService();
+      await service.inject({ root, projectId: project1, role: 'worker' });
+
+      const outcome = await service.remove({ root, projectId: project1, role: 'worker' });
+
+      expect(outcome).toEqual({ kind: 'Removed', relativePath: 'CLAUDE.md' });
+      expect(fakeFs.targets.has(`${root}|claude_code`)).toBe(false);
+    });
+
+    it('refuses to remove an unmanaged target', async () => {
+      const fakeFs = createFakeHarnessFilesystem();
+      seedUnmanaged(fakeFs, root, 'claude_code', '# my own notes');
+      const { service } = buildService(fakeFs);
+
+      const outcome = await service.remove({ root, projectId: project1, role: 'worker' });
+
+      expect(outcome).toEqual({ kind: 'Refused', relativePath: 'CLAUDE.md' });
+    });
+  });
+
+  describe('importThenReplace', () => {
+    it('saves the existing unmanaged content as the project override layer, then replaces the target', async () => {
+      const fakeFs = createFakeHarnessFilesystem();
+      seedUnmanaged(fakeFs, root, 'claude_code', '# hand-written notes\nkeep these ideas');
+      const { service, instructions } = buildService(fakeFs);
+
+      const result = await service.importThenReplace({ root, projectId: project1, role: 'worker' });
+
+      expect(result.importedVersion.content).toBe('# hand-written notes\nkeep these ideas');
+      expect(result.injected).toEqual({ kind: 'Written', relativePath: 'CLAUDE.md' });
+      expect(fakeFs.targets.get(`${root}|claude_code`)?.classification.kind).toBe('ManagedValid');
+
+      // The imported content is now active as the project override layer.
+      const layers = await instructions.getActiveLayerContents({
+        projectId: project1,
+        role: 'worker',
+        provider: 'claude_code',
+      });
+      expect(layers.projectOverride).toBe('# hand-written notes\nkeep these ideas');
+    });
+
+    it('never writes locally when the import save itself fails', async () => {
+      const fakeFs = createFakeHarnessFilesystem();
+      seedUnmanaged(fakeFs, root, 'claude_code', '# hand-written notes');
+      const { assignments, adapters } = buildService(fakeFs);
+      const throwingInstructions = {
+        async saveAndActivate(): Promise<never> {
+          throw new Error('network error');
+        },
+      } as unknown as InstructionsService;
+      const service = new HarnessInjectionService({
+        assignments,
+        instructions: throwingInstructions,
+        adapters,
+        filesystem: {
+          async readTextFile(fsRoot: string) {
+            return fakeFs.targets.get(`${fsRoot}|claude_code`)!.content!;
+          },
+        },
+      });
+
+      await expect(
+        service.importThenReplace({ root, projectId: project1, role: 'worker' }),
+      ).rejects.toThrow('network error');
+      // The owner's original unmanaged file is exactly as it was.
+      expect(fakeFs.targets.get(`${root}|claude_code`)?.classification).toEqual({
+        kind: 'Unmanaged',
+      });
+      expect(fakeFs.targets.get(`${root}|claude_code`)?.content).toBe('# hand-written notes');
+    });
+  });
+
+  describe('switchProviderAndInject', () => {
+    it('removes the prior managed target and injects the new one, leaving no duplicate', async () => {
+      const { service, fakeFs } = buildService();
+      await service.inject({ root, projectId: project1, role: 'worker' }); // seeds CLAUDE.md for worker/claude_code
+
+      const result = await service.switchProviderAndInject({
+        root,
+        projectId: project1,
+        role: 'worker',
+        newProvider: 'kilo_code',
+      });
+
+      expect(result.assignment.provider).toBe('kilo_code');
+      expect(result.removedPrior).toEqual({ kind: 'Removed', relativePath: 'CLAUDE.md' });
+      expect(result.injected).toEqual({
+        kind: 'Written',
+        relativePath: '.kilocode/rules/hammond.md',
+      });
+      expect(fakeFs.targets.has(`${root}|claude_code`)).toBe(false);
+      expect(fakeFs.targets.has(`${root}|kilo_code`)).toBe(true);
+    });
+
+    it('never removes a prior target a different role currently occupies, even when both roles were assigned to that provider', async () => {
+      const { service, assignments, fakeFs } = buildService();
+      // Both worker and orchestrator point at codex, but only orchestrator has actually injected
+      // (so AGENTS.md's managed header currently says role=orchestrator, not worker).
+      await assignments.updateAssignment({
+        projectId: project1,
+        role: 'worker',
+        provider: 'codex',
+      });
+      await service.inject({ root, projectId: project1, role: 'orchestrator' });
+
+      const result = await service.switchProviderAndInject({
+        root,
+        projectId: project1,
+        role: 'worker',
+        newProvider: 'kilo_code',
+      });
+
+      expect(result.removedPrior).toBeNull();
+      expect(result.injected).toEqual({
+        kind: 'Written',
+        relativePath: '.kilocode/rules/hammond.md',
+      });
+      // AGENTS.md is untouched: still orchestrator's managed content, never worker's to remove.
+      const orchestratorPreview = await service.preview({
+        root,
+        projectId: project1,
+        role: 'orchestrator',
+      });
+      expect(orchestratorPreview.classification.kind).toBe('ManagedValid');
+      expect(fakeFs.targets.get(`${root}|codex`)?.classification).toMatchObject({
+        kind: 'ManagedValid',
+        header: expect.objectContaining({ role: 'orchestrator' }),
+      });
+    });
+
+    it('does not attempt removal when the role was never previously assigned to a different provider', async () => {
+      const { service, fakeFs } = buildService();
+
+      const result = await service.switchProviderAndInject({
+        root,
+        projectId: project1,
+        role: 'worker',
+        newProvider: 'claude_code', // same as the D-014 default it already has
+      });
+
+      expect(result.removedPrior).toBeNull();
+      expect(fakeFs.targets.has(`${root}|claude_code`)).toBe(true);
+    });
+  });
+});

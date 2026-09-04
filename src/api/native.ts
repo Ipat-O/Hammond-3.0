@@ -3,7 +3,13 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   FilesystemCommandError,
   type FilesystemCommands,
+  type HarnessClassifyResult,
+  type HarnessCommands,
+  type HarnessInjectOutcome,
+  type HarnessProvider,
+  type HarnessRemoveOutcome,
   type LocalSettingsStore,
+  type ManagedHeaderFields,
 } from './contracts';
 
 /** The stable, serializable information the desktop shell exposes to the UI. */
@@ -66,4 +72,23 @@ export const nativeLocalSettings: LocalSettingsStore = {
   read: <T>(key: string) => invoke<T | null>('local_settings_read', { key }),
   write: <T>(key: string, value: T) => invoke<void>('local_settings_write', { key, value }),
   remove: (key: string) => invoke<void>('local_settings_remove', { key }),
+};
+
+/** Tauri-backed implementation of the harness-adapter command surface. */
+export const nativeHarness: HarnessCommands = {
+  targetPath: (provider: HarnessProvider) => invokeFs<string>('harness_target_path', { provider }),
+  classify: (root, provider) =>
+    invokeFs<HarnessClassifyResult>('harness_classify', { root, provider }),
+  inject: (root, header: ManagedHeaderFields, composedContent, forceReplace) =>
+    invokeFs<HarnessInjectOutcome>('harness_inject', {
+      root,
+      header,
+      composedContent,
+      forceReplace,
+    }),
+  remove: (root, provider) => invokeFs<HarnessRemoveOutcome>('harness_remove', { root, provider }),
+  setGitExclude: (root, relativePath, excluded) =>
+    invokeFs<void>('harness_set_git_exclude', { root, relativePath, excluded }),
+  gitExcludeContains: (root, relativePath) =>
+    invokeFs<boolean>('harness_git_exclude_contains', { root, relativePath }),
 };
