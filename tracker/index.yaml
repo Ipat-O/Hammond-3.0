@@ -137,20 +137,23 @@ tasks:
   - id: HAM3-006
     title: Harness adapters and managed-file injection
     state: in_development
-    corrections_completed: 0
+    corrections_completed: 1
     depends_on: [HAM3-003, HAM3-005]
     worker: Anthropic / Claude Code / Claude Sonnet 5
     auditor: Kilo Code / DeepSeek V4 Pro
     dispatched_worker_identity: Anthropic / Claude Code / Claude Sonnet 5
     branch: claude/harness-adapters-agent-assignment-8fb3lz
     base_sha: 42772d5d3338176269d19cd884cec08ea7405f61
-    current_head_sha: 38ed84989bf42c032ead8fe6b0c8fd5b7d44b547
+    current_head_sha: 06980a319731a6f665623cf80cdb60c40ed311e7
     pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/8
     worker_report: https://github.com/Ipat-O/Hammond-3.0/pull/8#issuecomment-5543636311
-    correction_packet: tracker/work-orders/HAM3-006-CORRECTION-1.md (device-local transfer packet)
-    intake_verification: exact remote head and ancestry verified; official fresh Supabase reset and generated-type zero-diff pass; 86/86 pgTAP assertions and both advisor modes pass; isolated frontend rerun passes 18 files / 175 tests plus typecheck, lint, format, and build
-    correction_1_required: bind managed-file ownership to the expected project/role before replacement or removal; make the Rust suite compile on Windows and add the packet-required Windows junction coverage; remove or constrain the unused arbitrary .git/info/exclude command surface
-    outstanding: Correction 1 on the existing draft PR; no audit or merge authorized
+    correction_packets: tracker/work-orders/HAM3-006-CORRECTION-1.md and HAM3-006-CORRECTION-2.md (device-local transfer packets)
+    correction_1_head: 06980a319731a6f665623cf80cdb60c40ed311e7
+    correction_1_report: https://github.com/Ipat-O/Hammond-3.0/pull/8#issuecomment-5544373536
+    correction_1_scope: exact project-role-provider identity enforcement with ManagedForeign behavior; Windows compile guard; unused git-exclude surface removed
+    correction_1_intake_verification: official reset/types/86 pgTAP/advisors pass; 18 files / 186 frontend tests plus typecheck/lint/format/build pass; Windows cargo fmt, 72 tests, and clippy pass; Windows Tauri build produces MSI and NSIS; real disposable NTFS junction probe passes create/classify/remove confinement
+    correction_2_required: replace privilege-dependent Windows symlink tests that silently skip with real non-skipping NTFS directory-junction tests and report the actual executed evidence accurately
+    outstanding: Correction 2 on the existing draft PR; no audit or merge authorized
     design_note: D-017 adds explicit per-project, per-role execution-provider assignment, separate from provider-specific instruction content
   - id: HAM3-007
     title: Instruction Studio UI

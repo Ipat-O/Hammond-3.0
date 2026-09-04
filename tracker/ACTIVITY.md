@@ -592,3 +592,13 @@
 - The exact-head Windows Rust suite also fails to compile because `harness_commands.rs` imports `std::os::unix::fs::symlink` without a Unix cfg guard. With a disposable guard applied, all 59 Windows-applicable tests pass; the guard was restored. Packet-required Windows junction coverage is absent.
 - The unused optional `.git/info/exclude` command accepts arbitrary renderer-supplied rules, including broad patterns, instead of limiting changes to the three exact Hammond targets. Correction 1 must remove that unused surface or constrain and test it.
 - HAM3-006 moved from `ready_for_development` to `in_development`. The same worker continues from exact head `38ed849` on PR #8. No independent audit, hosted migration, ready-for-review transition, or merge is authorized.
+
+## 2026-09-04 — HAM3-006 Correction 1 accepted functionally at 06980a3; non-skipping junction proof requires Correction 2
+
+- Claude Code / Claude Sonnet 5 delivered Correction 1 at `06980a319731a6f665623cf80cdb60c40ed311e7`. Report: https://github.com/Ipat-O/Hammond-3.0/pull/8#issuecomment-5544373536. PR #8 remains open, draft, mergeable, targets `dev`, and `38ed849` is its direct ancestor.
+- The 13-file correction stays within the native harness, TypeScript harness boundary, minimal UI, and tests. It enforces exact project/role/provider identity with `ManagedForeign`, protects Import/remove/provider-switch cleanup, fixes the unconditional Unix import, and removes the unused Git-exclude surface.
+- Fresh official Docker-backed verification passes: all four migrations reset, generated types are zero-diff, all 86 pgTAP assertions pass, and both security-only and all-category advisors report no issues.
+- Fresh frontend verification passes 18 files / 186 tests, typecheck, lint, format, and production build. Windows native verification passes fmt, 72 tests, and clippy with warnings denied. Full Windows Tauri packaging succeeds with MSI and NSIS outputs.
+- Correction 2 is narrowly required because the three claimed Windows junction tests use `symlink_dir`/`symlink_file`, not directory junctions. On this Windows host all three setup calls are denied, each test prints `skipping` and returns, and Rust counts them as passing without executing a confinement assertion.
+- An audit-only, non-skipping `mklink /J` test proved the runtime guard correctly rejects create, classify, and remove through a real directory junction and preserves the outside file. The probe was removed exactly; production behavior does not need redesign.
+- Correction 2 must make that actual directory-junction proof permanent and non-skipping, with accurate names/reporting. HAM3-006 remains `in_development`; no audit, hosted migration, ready transition, or merge is authorized.

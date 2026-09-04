@@ -20,7 +20,7 @@ None.
 ## in_development
 
 - [HAM3-006](./tasks/HAM3-006.md) — Harness adapters, agent assignment, and managed-file injection
-  Correction 1 required at PR head `38ed84989bf42c032ead8fe6b0c8fd5b7d44b547`
+  Correction 2 required at PR head `06980a319731a6f665623cf80cdb60c40ed311e7`
 
 ## in_review
 
