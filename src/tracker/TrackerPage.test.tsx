@@ -18,6 +18,7 @@ import { createFakeWindowLifecycle } from './windowLifecycle';
 
 type Project = Database['public']['Tables']['projects']['Row'];
 type Task = Database['public']['Tables']['tasks']['Row'];
+type Comment = Database['public']['Tables']['comments']['Row'];
 
 const ownerId = 'owner-1';
 
@@ -1062,5 +1063,401 @@ describe('Rapid-switching and wrong-project safeguards (mutation-proof targets)'
     expect(
       screen.getByText('Select a task to inspect its context, hierarchy, and comments.'),
     ).toBeInTheDocument();
+  });
+});
+
+describe('Correction 1 — the complete directory transition is guarded before any state changes', () => {
+  it('Cancel on a dirty-Studio guard during a known-directory open leaves the active context, persisted settings, and selected project completely untouched (and shows only one dialog)', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const filesystem = createFakeFilesystem();
+    filesystem.existingRoots.add('/home/owner/b-repo');
+    (filesystem.selectDirectory as ReturnType<typeof vi.fn>).mockResolvedValue('/home/owner/b-repo');
+    const settings = createFakeLocalSettings();
+    const directoryContext: DirectoryContextServices = { filesystem, settings };
+    const seedManager = new DirectoryContextManager(directoryContext);
+    let seededState = await seedManager.loadState();
+    seededState = (await seedManager.linkDirectory(seededState, projectB.id, '/home/owner/b-repo')).state;
+    await seedManager.closeActive(seededState);
+    await seedManager.updateResumeSelection(seededState, {
+      selectedProjectId: projectA.id,
+      selectedTaskId: null,
+      resumeScreen: 'home',
+    });
+    const { services } = makeServices([projectA, projectB], { directoryContext });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'dirty draft untouched by a cancelled directory open' },
+    });
+
+    await clickOpenDirectory();
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    // Never a second, open-directory dialog stacked behind/alongside the unsaved-changes guard.
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.getByLabelText('Project override content')).toHaveValue(
+      'dirty draft untouched by a cancelled directory open',
+    );
+    expect(
+      screen.getByRole('heading', { name: 'Worker instructions for Claude Code' }),
+    ).toBeInTheDocument();
+    const stored = await settings.read<LocalSettingsStateV2>(LOCAL_SETTINGS_KEY);
+    expect(stored?.selectedProjectId).toBe(projectA.id);
+    expect(stored?.lastOpenContextId).toBeNull();
+  });
+
+  it('linking a new directory to the SAME project currently open in a dirty Studio does not bind the directory until the guard is accepted', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const filesystem = createFakeFilesystem();
+    (filesystem.selectDirectory as ReturnType<typeof vi.fn>).mockResolvedValue('/home/owner/new-repo');
+    const settings = createFakeLocalSettings();
+    const directoryContext: DirectoryContextServices = { filesystem, settings };
+    const { services } = makeServices([projectA], { directoryContext });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'dirty draft' },
+    });
+
+    await clickOpenDirectory();
+    const unknownDialog = await screen.findByRole('dialog', { name: 'Unlinked directory' });
+    fireEvent.click(within(unknownDialog).getByRole('button', { name: 'Link to existing project' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Unlinked directory' })).getByRole('button', {
+        name: 'Project A',
+      }),
+    );
+
+    const guardDialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    fireEvent.click(within(guardDialog).getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.getByLabelText('Project override content')).toHaveValue('dirty draft');
+    const stored = await settings.read<LocalSettingsStateV2>(LOCAL_SETTINGS_KEY);
+    expect(stored?.directoryContexts ?? []).toHaveLength(0);
+
+    // The dialog is left exactly where it was (still offering Link), never silently dismissed.
+    expect(screen.getByRole('dialog', { name: 'Unlinked directory' })).toBeInTheDocument();
+  });
+});
+
+describe('Correction 2 — serialized writes merge the current resume state, not a stale snapshot', () => {
+  it('a saved task-resume selection is not overwritten with null in persisted settings while its own lookup is still pending', async () => {
+    const settings = createFakeLocalSettings();
+    const directoryContext: DirectoryContextServices = { filesystem: createFakeFilesystem(), settings };
+    const seedManager = new DirectoryContextManager(directoryContext);
+    const seededState = await seedManager.loadState();
+    await seedManager.updateResumeSelection(seededState, {
+      selectedProjectId: project().id,
+      selectedTaskId: 'task-a',
+      resumeScreen: 'workspace',
+    });
+
+    let resolveTasks!: (tasks: Task[]) => void;
+    const listSpy = vi.fn(
+      () =>
+        new Promise<Task[]>((resolve) => {
+          resolveTasks = resolve;
+        }),
+    );
+    const { services } = makeServices([project()], { directoryContext });
+    services.repositories.tasks.list = listSpy as unknown as typeof services.repositories.tasks.list;
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Workspace' })).toHaveClass('nav-item-active'));
+
+    // The saved task's own lookup is still pending — give any premature persistence write below a
+    // chance to actually land before asserting it did not.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    let stored = await settings.read<LocalSettingsStateV2>(LOCAL_SETTINGS_KEY);
+    expect(stored?.selectedTaskId).toBe('task-a');
+
+    resolveTasks([task({ id: 'task-a', project_id: project().id, title: 'Task A' })]);
+    await waitFor(async () => {
+      stored = await settings.read<LocalSettingsStateV2>(LOCAL_SETTINGS_KEY);
+      expect(stored?.selectedTaskId).toBe('task-a');
+    });
+    expect(await screen.findByText('Task A', { selector: '.outliner-task-title' })).toBeInTheDocument();
+  });
+
+  it('a saved task-resume selection pointing at an archived task is not restored (archived tasks are hidden by default)', async () => {
+    const archivedTask = task({
+      id: 'archived-task',
+      project_id: project().id,
+      title: 'Archived Task',
+      archived_at: '2026-01-01T00:00:00.000Z',
+    });
+    const settings = createFakeLocalSettings();
+    const directoryContext: DirectoryContextServices = { filesystem: createFakeFilesystem(), settings };
+    const seedManager = new DirectoryContextManager(directoryContext);
+    const seededState = await seedManager.loadState();
+    await seedManager.updateResumeSelection(seededState, {
+      selectedProjectId: project().id,
+      selectedTaskId: 'archived-task',
+      resumeScreen: 'workspace',
+    });
+    const { services } = makeServices([project()], {
+      directoryContext,
+      tasksByProject: { [project().id]: [archivedTask] },
+    });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Workspace' })).toHaveClass('nav-item-active'));
+    // The archived task is hidden by the default filter — its lookup concludes with nothing
+    // visible to restore, rather than silently selecting a task the outliner does not even show.
+    await screen.findByText('No tasks in this view yet.');
+    expect(screen.queryByText('Selected task')).not.toBeInTheDocument();
+  });
+});
+
+describe('Correction 3 — stale project/task data is cleared immediately and in-flight drafts are protected across navigation', () => {
+  it("switching projects clears the previous project's task rows immediately, not only once the new list resolves or fails", async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const taskInA = task({ id: 'task-in-a', project_id: 'project-a', title: 'Alpha Task' });
+
+    let resolveB!: (tasks: Task[]) => void;
+    const listSpy = vi.fn((projectId: string) => {
+      if (projectId === 'project-b') {
+        return new Promise<Task[]>((resolve) => {
+          resolveB = resolve;
+        });
+      }
+      return Promise.resolve(projectId === 'project-a' ? [taskInA] : []);
+    });
+    const { services } = makeServices([projectA, projectB]);
+    services.repositories.tasks.list = listSpy as unknown as typeof services.repositories.tasks.list;
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    await screen.findByText('Alpha Task', { selector: '.outliner-task-title' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    // Immediately — before Project B's own list resolves — A's rows must already be gone.
+    expect(screen.queryByText('Alpha Task', { selector: '.outliner-task-title' })).not.toBeInTheDocument();
+
+    resolveB([]);
+    await waitFor(() =>
+      expect(screen.getAllByRole('heading', { name: 'Project B' }).length).toBeGreaterThan(0),
+    );
+  });
+
+  it('an in-flight comment save for a task the owner has navigated away from does not land under whichever task/thread is showing now', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const firstTask = task({ id: 'first-task', project_id: 'project-a', title: 'First task' });
+    const secondTask = task({ id: 'second-task', project_id: 'project-a', title: 'Second task' });
+    const { services } = makeServices([projectA], {
+      tasksByProject: { 'project-a': [firstTask, secondTask] },
+    });
+
+    let resolveComment!: (comment: Comment) => void;
+    (services.repositories.memory.addComment as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise<Comment>((resolve) => {
+          resolveComment = resolve;
+        }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^First task/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    // Waits for the first task's own (empty) comment list to finish loading, so the submit button
+    // reads "Add comment" rather than still being disabled on "Loading comments…".
+    await screen.findByRole('button', { name: 'Add comment' });
+    fireEvent.change(screen.getByLabelText('Add a comment'), {
+      target: { value: 'a note on the first task' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add comment' }));
+
+    // Navigate away to the second task before that save resolves.
+    fireEvent.click(screen.getByRole('button', { name: /^Second task/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByText('a note on the first task')).not.toBeInTheDocument();
+    expect(screen.getByText('No comments yet. Leave the first useful note.')).toBeInTheDocument();
+
+    resolveComment({
+      id: 'comment-1',
+      owner_id: ownerId,
+      project_id: 'project-a',
+      task_id: 'first-task',
+      body: 'a note on the first task',
+      created_at: '2026-08-13T08:00:00.000Z',
+      updated_at: '2026-08-13T08:00:00.000Z',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // The second task's own (still empty) thread must not show the first task's late completion.
+    expect(screen.queryByText('a note on the first task')).not.toBeInTheDocument();
+    expect(screen.getByText('No comments yet. Leave the first useful note.')).toBeInTheDocument();
+  });
+});
+
+describe('Correction 4 — Home instruction status refreshes without polling, and role-scoped setup opens the right role', () => {
+  it('Home refreshes from Missing to Configured after a Studio injection and back to Missing after Remove, showing truthful shared-defaults version context throughout', async () => {
+    const filesystem = createFakeFilesystem();
+    filesystem.existingRoots.add('/fake/root');
+    const settings = createFakeLocalSettings();
+    const directoryContext: DirectoryContextServices = { filesystem, settings };
+    const seedManager = new DirectoryContextManager(directoryContext);
+    const seededState = await seedManager.loadState();
+    await seedManager.linkDirectory(seededState, project().id, '/fake/root');
+
+    const { services } = makeServices([project()], { directoryContext });
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+
+    const workerRow = () => screen.getByText('Worker').closest('li') as HTMLElement;
+    await waitFor(() => expect(within(workerRow()).getByText('Not set up')).toBeInTheDocument());
+    expect(within(workerRow()).getByText('Using shared defaults')).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Inject' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Home' }));
+    await waitFor(() => expect(within(workerRow()).getByText('Configured')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('button', { name: 'Remove' });
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Inject' })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Home' }));
+    await waitFor(() => expect(within(workerRow()).getByText('Not set up')).toBeInTheDocument());
+  });
+
+  it('a failed instruction-status classification read shows as a distinct error (never silently absent), and Retry recovers just that role', async () => {
+    const filesystem = createFakeFilesystem();
+    filesystem.existingRoots.add('/fake/root');
+    const settings = createFakeLocalSettings();
+    const directoryContext: DirectoryContextServices = { filesystem, settings };
+    const seedManager = new DirectoryContextManager(directoryContext);
+    const seededState = await seedManager.loadState();
+    await seedManager.linkDirectory(seededState, project().id, '/fake/root');
+
+    const { services } = makeServices([project()], { directoryContext });
+    const originalPreview = services.harness.preview.bind(services.harness);
+    let failNext = true;
+    services.harness.preview = vi.fn((params: Parameters<typeof originalPreview>[0]) => {
+      if (params.role === 'worker' && failNext) {
+        failNext = false;
+        return Promise.reject(new Error('classification blew up'));
+      }
+      return originalPreview(params);
+    }) as typeof services.harness.preview;
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    const workerRow = () => screen.getByText('Worker').closest('li') as HTMLElement;
+    await waitFor(() => expect(within(workerRow()).getByText('classification blew up')).toBeInTheDocument());
+    expect(within(workerRow()).queryByText('Not set up')).not.toBeInTheDocument();
+
+    fireEvent.click(within(workerRow()).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(within(workerRow()).getByText('Not set up')).toBeInTheDocument());
+    expect(within(workerRow()).queryByText('classification blew up')).not.toBeInTheDocument();
+  });
+
+  it("Home's role-scoped Set up instructions action opens Instruction Studio on that role, not the default", async () => {
+    const filesystem = createFakeFilesystem();
+    filesystem.existingRoots.add('/fake/root');
+    const settings = createFakeLocalSettings();
+    const directoryContext: DirectoryContextServices = { filesystem, settings };
+    const seedManager = new DirectoryContextManager(directoryContext);
+    const seededState = await seedManager.loadState();
+    await seedManager.linkDirectory(seededState, project().id, '/fake/root');
+
+    const { services } = makeServices([project()], { directoryContext });
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+
+    const auditorRow = await waitFor(() => {
+      const row = screen.getByText('Auditor').closest('li') as HTMLElement;
+      expect(within(row).getByText('Not set up')).toBeInTheDocument();
+      return row;
+    });
+    fireEvent.click(within(auditorRow).getByRole('button', { name: 'Set up instructions' }));
+
+    expect(await screen.findByRole('heading', { name: /^Auditor instructions for/ })).toBeInTheDocument();
+
+    // A later PLAIN nav to Instructions (not a role-scoped setup action) is never pinned to the
+    // stale auditor role from the earlier visit.
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Instructions' }));
+    expect(await screen.findByRole('heading', { name: /^Worker instructions for/ })).toBeInTheDocument();
+  });
+});
+
+describe('Correction 5 — owner changes and known-path resolution use only currently accessible projects', () => {
+  it('a mounted account change (no full remount) resets project-dependent state, and a delayed request from the old owner never leaks into the new one', async () => {
+    const owner1 = 'owner-real-1';
+    const owner2 = 'owner-real-2';
+    const projectOwner1 = project({ id: 'p-owner1', owner_id: owner1, name: 'Owner1 Project' });
+    const projectOwner2 = project({ id: 'p-owner2', owner_id: owner2, name: 'Owner2 Project' });
+
+    let resolveOwner1Projects!: (projects: Project[]) => void;
+    const listSpy = vi.fn(
+      () =>
+        new Promise<Project[]>((resolve) => {
+          resolveOwner1Projects = resolve;
+        }),
+    );
+    const { services } = makeServices([projectOwner1]);
+    services.repositories.projects.list = listSpy as unknown as typeof services.repositories.projects.list;
+
+    const { rerender } = render(<TrackerPage services={services} ownerId={owner1} onSignOut={vi.fn()} />);
+    expect(screen.getByText('Gathering your projects…')).toBeInTheDocument();
+
+    // Owner1's own initial fetch is still pending when the mounted session switches to owner2.
+    listSpy.mockResolvedValueOnce([projectOwner2]);
+    rerender(<TrackerPage services={services} ownerId={owner2} onSignOut={vi.fn()} />);
+    await waitFor(() =>
+      expect(screen.getAllByRole('heading', { name: 'Owner2 Project' }).length).toBeGreaterThan(0),
+    );
+
+    // Owner1's stale, now-delayed fetch finally resolves — it must never resurrect their project
+    // under the now-current owner2 session.
+    resolveOwner1Projects([projectOwner1]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole('heading', { name: 'Owner1 Project' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { name: 'Owner2 Project' }).length).toBeGreaterThan(0);
+  });
+
+  it('a stale directory binding for a project no longer accessible falls through to the create/link recovery flow instead of switching to it', async () => {
+    const accessibleProject = project({ id: 'accessible', name: 'Accessible Project' });
+    const filesystem = createFakeFilesystem();
+    filesystem.existingRoots.add('/home/owner/ghost-repo');
+    (filesystem.selectDirectory as ReturnType<typeof vi.fn>).mockResolvedValue('/home/owner/ghost-repo');
+    const settings = createFakeLocalSettings();
+    const directoryContext: DirectoryContextServices = { filesystem, settings };
+    const seedManager = new DirectoryContextManager(directoryContext);
+    let seededState = await seedManager.loadState();
+    // Bound to a project id this owner's session does not currently return — e.g. deleted, or a
+    // stale/migrated binding that never belonged to this account in the first place.
+    seededState = (
+      await seedManager.linkDirectory(seededState, 'ghost-project-id', '/home/owner/ghost-repo')
+    ).state;
+    await seedManager.updateResumeSelection(seededState, {
+      selectedProjectId: accessibleProject.id,
+      selectedTaskId: null,
+      resumeScreen: 'home',
+    });
+
+    const { services } = makeServices([accessibleProject], { directoryContext });
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    expect((await screen.findAllByRole('heading', { name: 'Accessible Project' })).length).toBeGreaterThan(0);
+
+    await clickOpenDirectory();
+
+    const dialog = await screen.findByRole('dialog', { name: 'Unlinked directory' });
+    expect(within(dialog).getByRole('button', { name: 'Create project' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Link to existing project' })).toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { name: 'Accessible Project' }).length).toBeGreaterThan(0);
   });
 });

@@ -339,4 +339,111 @@ describe('DirectoryContextManager', () => {
       );
     });
   });
+
+  describe('canonical state and subscribe (Correction 1 — stale-snapshot merging)', () => {
+    it("a mutation computed from a stale snapshot still merges onto the manager's own latest state, not the snapshot", async () => {
+      const services = createFakeDirectoryContextServices();
+      const manager = new DirectoryContextManager(services);
+      const staleState = await manager.loadState();
+
+      // Two concurrent projects both activate a directory using the SAME stale snapshot each
+      // captured before either awaited anything — exactly the shape of `openDirectory`'s known-
+      // path branch racing the resume-persistence effect.
+      await manager.linkDirectory(staleState, 'project-a', '/home/owner/a');
+      // `staleState` here is deliberately the ORIGINAL empty snapshot, not `first.state` —
+      // simulating a caller that captured its base before the first call resolved.
+      const second = await manager.linkDirectory(staleState, 'project-b', '/home/owner/b');
+
+      // If the second call had actually used the stale snapshot as its base, project A's binding
+      // would have been silently dropped. Because the manager tracks its own canonical state, it
+      // must survive.
+      expect(second.state.directoryContexts).toHaveLength(2);
+      expect(manager.contextsForProject(second.state, 'project-a')).toHaveLength(1);
+      expect(manager.contextsForProject(second.state, 'project-b')).toHaveLength(1);
+    });
+
+    it('updateResumeSelection merges onto the latest state even when passed a stale snapshot from before a concurrent activation', async () => {
+      const services = createFakeDirectoryContextServices();
+      const manager = new DirectoryContextManager(services);
+      const staleState = await manager.loadState();
+
+      const { context } = await manager.linkDirectory(staleState, 'project-a', '/home/owner/a');
+      // Simulates the resume-persistence effect firing with a `directoryStateRef` snapshot taken
+      // before the activation above landed in React state.
+      const resumed = await manager.updateResumeSelection(staleState, {
+        selectedProjectId: 'project-a',
+        selectedTaskId: 'task-1',
+        resumeScreen: 'home',
+      });
+
+      expect(resumed.lastOpenContextId).toBe(context.id);
+      expect(resumed.directoryContexts).toHaveLength(1);
+      expect(resumed.selectedTaskId).toBe('task-1');
+    });
+
+    it('subscribe fires synchronously with the loaded state and with every subsequent commit', async () => {
+      const services = createFakeDirectoryContextServices();
+      const manager = new DirectoryContextManager(services);
+      const seen: unknown[] = [];
+      manager.subscribe((state) => seen.push(state));
+
+      const loaded = await manager.loadState();
+      expect(seen).toEqual([loaded]);
+
+      const { state: linked } = await manager.linkDirectory(loaded, projectId, '/home/owner/repo');
+      expect(seen).toEqual([loaded, linked]);
+
+      const closed = await manager.closeActive(linked);
+      expect(seen).toEqual([loaded, linked, closed]);
+    });
+
+    it('notifies a subscriber the instant a mutation is computed, before its write settles', async () => {
+      const services = createFakeDirectoryContextServices();
+      let resolveWrite!: () => void;
+      (services.settings.write as ReturnType<typeof vi.fn>).mockImplementationOnce(
+        () => new Promise<void>((resolve) => (resolveWrite = resolve)),
+      );
+      const manager = new DirectoryContextManager(services);
+      const state = createDefaultLocalSettingsState();
+
+      let notified: unknown = null;
+      manager.subscribe((next) => (notified = next));
+
+      const pending = manager.linkDirectory(state, projectId, '/home/owner/repo');
+      // The write above never resolves yet, but the subscriber must already have the committed
+      // state — React must never wait on disk I/O to reflect an activation in the UI.
+      expect(notified).not.toBeNull();
+      expect((notified as { directoryContexts: unknown[] }).directoryContexts).toHaveLength(1);
+
+      // Let the write chain's microtask actually invoke `settings.write` (and thus assign
+      // `resolveWrite`) before resolving it — the notification above already happened well
+      // before this point, which is exactly what's under test.
+      await Promise.resolve();
+      resolveWrite();
+      await pending;
+    });
+
+    it('unsubscribe stops further notifications', async () => {
+      const services = createFakeDirectoryContextServices();
+      const manager = new DirectoryContextManager(services);
+      const seen: unknown[] = [];
+      const unsubscribe = manager.subscribe((state) => seen.push(state));
+
+      const loaded = await manager.loadState();
+      unsubscribe();
+      await manager.linkDirectory(loaded, projectId, '/home/owner/repo');
+
+      expect(seen).toEqual([loaded]);
+    });
+
+    it('findContextsForPath resolves against the latest state even when passed a stale snapshot', async () => {
+      const services = createFakeDirectoryContextServices();
+      const manager = new DirectoryContextManager(services);
+      const staleState = await manager.loadState();
+
+      await manager.linkDirectory(staleState, projectId, '/home/owner/repo');
+
+      expect(manager.findContextsForPath(staleState, '/home/owner/repo')).toHaveLength(1);
+    });
+  });
 });

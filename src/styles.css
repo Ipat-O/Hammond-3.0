@@ -1819,6 +1819,12 @@ label {
   font-size: 11px;
 }
 
+.instruction-status-selection {
+  color: #8e9bb9;
+  font-size: 10px;
+  font-style: italic;
+}
+
 .instruction-status-badge {
   border-radius: 999px;
   padding: 3px 9px;

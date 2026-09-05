@@ -31,6 +31,8 @@ export interface InstructionStudioProps {
   project: InstructionStudioProject;
   /** The linked local directory's absolute root path, or `null` if this project has no linked directory. */
   directoryRoot: string | null;
+  /** The role to open on first mount (e.g. a host screen's role-scoped "Set up instructions" action). Read once, as the initial state — this is not a controlled prop kept in sync after mount. Defaults to `worker`. */
+  initialRole?: InstructionRole;
 }
 
 /** Exposed so a host screen (TrackerPage) can guard project switches against unsaved edits here. */
@@ -90,10 +92,17 @@ function errorMessage(error: unknown): string {
 
 export const InstructionStudio = forwardRef<InstructionStudioHandle, InstructionStudioProps>(
   function InstructionStudio(
-    { instructionsService, assignmentsService, harnessService, project, directoryRoot },
+    {
+      instructionsService,
+      assignmentsService,
+      harnessService,
+      project,
+      directoryRoot,
+      initialRole,
+    },
     ref,
   ) {
-    const [role, setRoleState] = useState<InstructionRole>('worker');
+    const [role, setRoleState] = useState<InstructionRole>(initialRole ?? 'worker');
     const [assignments, setAssignments] = useState<AgentAssignment[] | null>(null);
     const assignment = assignments?.find((a) => a.role === role) ?? null;
     const assignedProvider = assignment?.provider ?? null;
