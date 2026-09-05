@@ -1,19 +1,25 @@
 import { useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 
-import { nativeFilesystem, nativeLocalSettings } from './api/native';
+import { nativeFilesystem, nativeHarness, nativeLocalSettings } from './api/native';
 import {
   ownerAuth,
   ProjectMemoryRepository,
   ProjectRepository,
+  SupabaseAssignmentRepository,
   SupabaseInstructionRepository,
   TaskRepository,
 } from './data';
+import { AssignmentsService } from './assignments/service';
+import { createNativeHarnessAdapters } from './harness/adapter';
+import { HarnessInjectionService } from './harness/service';
 import { InstructionsService } from './instructions/service';
 import { TrackerPage } from './tracker/TrackerPage';
 import type { TrackerServices } from './tracker/contracts';
 
 function createDefaultServices(): TrackerServices {
+  const assignments = new AssignmentsService(new SupabaseAssignmentRepository());
+  const instructions = new InstructionsService(new SupabaseInstructionRepository());
   return {
     auth: ownerAuth,
     repositories: {
@@ -25,7 +31,14 @@ function createDefaultServices(): TrackerServices {
       filesystem: nativeFilesystem,
       settings: nativeLocalSettings,
     },
-    instructions: new InstructionsService(new SupabaseInstructionRepository()),
+    instructions,
+    assignments,
+    harness: new HarnessInjectionService({
+      assignments,
+      instructions,
+      adapters: createNativeHarnessAdapters(nativeHarness),
+      filesystem: nativeFilesystem,
+    }),
   };
 }
 

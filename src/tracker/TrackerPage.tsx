@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { assertNoParentCycle, getTaskSubtreeIds, TASK_STATUSES, type Database } from '../data';
+import { AgentAssignmentPanel } from '../agents/AgentAssignmentPanel';
 import { InstructionsPanel } from '../instructions/InstructionsPanel';
 import { DirectoryContextPanel } from '../settings/DirectoryContextPanel';
 import { useDirectoryContextState } from '../settings/useDirectoryContextState';
 import type { TrackerServices } from './contracts';
 import type { TaskStatus } from '../data';
 
-type PrimaryView = 'workspace' | 'instructions';
+type PrimaryView = 'workspace' | 'instructions' | 'agents';
 
 type Project = Database['public']['Tables']['projects']['Row'];
 type ProjectInsert = Database['public']['Tables']['projects']['Insert'];
@@ -831,6 +832,13 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
           >
             <span className="nav-icon" aria-hidden="true">▤</span>Instructions
           </button>
+          <button
+            type="button"
+            className={`nav-item ${primaryView === 'agents' ? 'nav-item-active' : ''}`}
+            onClick={() => setPrimaryView('agents')}
+          >
+            <span className="nav-icon" aria-hidden="true">◎</span>Agents
+          </button>
           <span className="nav-item nav-item-muted"><span className="nav-icon" aria-hidden="true">⚙</span>Settings</span>
         </nav>
         <div className="project-list-heading">
@@ -1011,6 +1019,35 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
           </div>
         </header>
         <InstructionsPanel service={services.instructions} projects={visibleProjects} />
+        </>
+      )}
+
+      {primaryView === 'agents' && (
+        <>
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">Execution providers</p>
+            <h1>Agent assignment</h1>
+          </div>
+        </header>
+        {selectedProject ? (
+          <AgentAssignmentPanel
+            assignmentsService={services.assignments}
+            harnessService={services.harness}
+            project={selectedProject}
+            directoryRoot={
+              directory.state
+                ? (directory.manager
+                    .contextsForProject(directory.state, selectedProject.id)
+                    .find((context) => context.id === directory.state?.lastOpenContextId) ??
+                    directory.manager.contextsForProject(directory.state, selectedProject.id)[0] ??
+                    null)?.path ?? null
+                : null
+            }
+          />
+        ) : (
+          <p className="sidebar-empty">Select a project to manage its agent assignments.</p>
+        )}
         </>
       )}
       </section>

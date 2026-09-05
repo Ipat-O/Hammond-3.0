@@ -5,6 +5,8 @@ import type {
   ProjectRepository,
   TaskRepository,
 } from '../data';
+import type { AssignmentsService } from '../assignments/service';
+import type { HarnessInjectionService } from '../harness/service';
 import type { InstructionsService } from '../instructions/service';
 import type { DirectoryContextServices } from '../settings/contracts';
 
@@ -29,4 +31,6 @@ export interface TrackerServices {
   repositories: TrackerRepositories;
   directoryContext: DirectoryContextServices;
   instructions: InstructionsService;
+  assignments: AssignmentsService;
+  harness: HarnessInjectionService;
 }

@@ -1,6 +1,8 @@
 mod commands;
 mod fs_commands;
 mod fs_guard;
+mod harness;
+mod harness_commands;
 mod local_settings;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -20,6 +22,10 @@ pub fn run() {
             local_settings::local_settings_read,
             local_settings::local_settings_write,
             local_settings::local_settings_remove,
+            harness_commands::harness_target_path,
+            harness_commands::harness_classify,
+            harness_commands::harness_inject,
+            harness_commands::harness_remove,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hammond");

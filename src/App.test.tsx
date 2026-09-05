@@ -4,6 +4,10 @@ import type { Session } from '@supabase/supabase-js';
 
 import App from './App';
 import type { Database } from './data';
+import { AssignmentsService } from './assignments/service';
+import { createFakeAssignmentRepository } from './assignments/testFakes';
+import { HarnessInjectionService } from './harness/service';
+import { createFakeHarnessAdapters, createFakeHarnessFilesystem } from './harness/testFakes';
 import { InstructionsService } from './instructions/service';
 import { createFakeInstructionRepository } from './instructions/testFakes';
 import { LOCAL_SETTINGS_KEY, type LocalSettingsStateV1 } from './settings/state';
@@ -73,11 +77,22 @@ function makeServices(projects: Project[] = [], tasks: Task[] = []): TrackerServ
     },
   };
 
+  const assignments = new AssignmentsService(createFakeAssignmentRepository());
+  const instructions = new InstructionsService(createFakeInstructionRepository());
+  const harnessFs = createFakeHarnessFilesystem();
+
   return {
     repositories,
     auth: {} as TrackerServices['auth'],
     directoryContext: createFakeDirectoryContextServices(),
-    instructions: new InstructionsService(createFakeInstructionRepository()),
+    instructions,
+    assignments,
+    harness: new HarnessInjectionService({
+      assignments,
+      instructions,
+      adapters: createFakeHarnessAdapters(harnessFs, '/fake/root'),
+      filesystem: { readTextFile: vi.fn().mockRejectedValue(new Error('unused in these tests')) },
+    }),
   };
 }
 

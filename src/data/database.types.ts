@@ -178,6 +178,44 @@ export type Database = {
           },
         ];
       };
+      project_agent_assignments: {
+        Row: {
+          created_at: string;
+          id: string;
+          owner_id: string;
+          project_id: string;
+          provider: Database['public']['Enums']['provider_family'];
+          role: Database['public']['Enums']['instruction_role'];
+          updated_at: string;
+        };
+        Insert: {
+          created_at?: string;
+          id?: string;
+          owner_id?: string;
+          project_id: string;
+          provider: Database['public']['Enums']['provider_family'];
+          role: Database['public']['Enums']['instruction_role'];
+          updated_at?: string;
+        };
+        Update: {
+          created_at?: string;
+          id?: string;
+          owner_id?: string;
+          project_id?: string;
+          provider?: Database['public']['Enums']['provider_family'];
+          role?: Database['public']['Enums']['instruction_role'];
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'project_agent_assignments_project_id_owner_id_fkey';
+            columns: ['project_id', 'owner_id'];
+            isOneToOne: false;
+            referencedRelation: 'projects';
+            referencedColumns: ['id', 'owner_id'];
+          },
+        ];
+      };
       project_instruction_selections: {
         Row: {
           created_at: string;
