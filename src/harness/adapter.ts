@@ -35,6 +35,18 @@ export class NativeHarnessAdapter implements HarnessAdapter {
   remove(root: string, projectId: string, role: InstructionRole) {
     return this.commands.remove(root, projectId, role, this.provider);
   }
+
+  renderDocumentPreview(
+    fields: Omit<ManagedHeaderFields, 'provider' | 'formatVersion'>,
+    composedContent: string,
+  ) {
+    const header: ManagedHeaderFields = {
+      ...fields,
+      provider: this.provider,
+      formatVersion: MANAGED_HEADER_FORMAT_VERSION,
+    };
+    return this.commands.renderDocumentPreview(header, composedContent);
+  }
 }
 
 /** One `NativeHarnessAdapter` per provider, sharing the same underlying native command surface. */

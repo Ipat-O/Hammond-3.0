@@ -31,6 +31,15 @@ pub fn harness_target_path(provider: Provider) -> String {
     provider.target_relative_path().to_owned()
 }
 
+/// Pure preview rendering: the exact managed-document text `harness_inject` would write for
+/// these fields and content, without touching the filesystem. Lets the Instruction Studio show
+/// an owner a full generated-document preview that is guaranteed byte-identical to what a real
+/// Inject/Update would write, rather than a second, drifting reimplementation of the format.
+#[tauri::command]
+pub fn harness_render_preview(header: ManagedHeaderFields, composed_content: String) -> String {
+    render_managed_document(&header, &composed_content)
+}
+
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind")]
 pub enum ClassificationDto {
@@ -298,6 +307,37 @@ mod tests {
             provider,
             ..sample_header(provider)
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // Preview rendering
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn harness_render_preview_is_byte_identical_to_what_inject_would_write() {
+        let header = sample_header(Provider::ClaudeCode);
+        let preview = harness_render_preview(header.clone(), "composed body".to_owned());
+
+        let root = tempfile::tempdir().unwrap();
+        harness_inject(
+            root.path().to_str().unwrap().to_owned(),
+            header,
+            "composed body".to_owned(),
+            false,
+        )
+        .unwrap();
+        let written = fs::read_to_string(root.path().join("CLAUDE.md")).unwrap();
+
+        assert_eq!(preview, written);
+    }
+
+    #[test]
+    fn harness_render_preview_touches_no_filesystem() {
+        // No tempdir/root is created at all here; a filesystem-touching implementation would
+        // have nothing to write to and would panic or error.
+        let preview = harness_render_preview(sample_header(Provider::Codex), "content".to_owned());
+        assert!(preview.starts_with("<!-- hammond:managed"));
+        assert!(preview.ends_with("content"));
     }
 
     // ---------------------------------------------------------------------

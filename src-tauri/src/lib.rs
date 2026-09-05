@@ -4,6 +4,8 @@ mod fs_guard;
 mod harness;
 mod harness_commands;
 mod local_settings;
+#[cfg(test)]
+mod window_close_permission_tests;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -26,6 +28,7 @@ pub fn run() {
             harness_commands::harness_classify,
             harness_commands::harness_inject,
             harness_commands::harness_remove,
+            harness_commands::harness_render_preview,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hammond");

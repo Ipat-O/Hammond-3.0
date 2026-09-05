@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { assertNoParentCycle, getTaskSubtreeIds, TASK_STATUSES, type Database } from '../data';
-import { AgentAssignmentPanel } from '../agents/AgentAssignmentPanel';
-import { InstructionsPanel } from '../instructions/InstructionsPanel';
+import { InstructionStudio } from '../instructions/InstructionStudio';
+import type { InstructionStudioHandle } from '../instructions/InstructionStudio';
+import { useFocusTrap } from '../instructions/useFocusTrap';
 import { DirectoryContextPanel } from '../settings/DirectoryContextPanel';
 import { useDirectoryContextState } from '../settings/useDirectoryContextState';
 import type { TrackerServices } from './contracts';
 import type { TaskStatus } from '../data';
+import { createTauriWindowLifecycle, type WindowLifecycle } from './windowLifecycle';
 
-type PrimaryView = 'workspace' | 'instructions' | 'agents';
+const defaultWindowLifecycle = createTauriWindowLifecycle();
+
+type PrimaryView = 'workspace' | 'instructions';
 
 type Project = Database['public']['Tables']['projects']['Row'];
 type ProjectInsert = Database['public']['Tables']['projects']['Insert'];
@@ -406,9 +410,17 @@ interface TrackerPageProps {
   ownerId: string;
   ownerEmail?: string;
   onSignOut: () => void;
+  /** Injectable for tests; defaults to the real Tauri window-close interception. */
+  windowLifecycle?: WindowLifecycle;
 }
 
-export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: TrackerPageProps) {
+export function TrackerPage({
+  services,
+  ownerId,
+  ownerEmail,
+  onSignOut,
+  windowLifecycle = defaultWindowLifecycle,
+}: TrackerPageProps) {
   const repositories = services.repositories;
   const directory = useDirectoryContextState(services.directoryContext);
   const resumeAppliedRef = useRef(false);
@@ -437,6 +449,77 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
   const [commentSaving, setCommentSaving] = useState(false);
   const [commentSaveError, setCommentSaveError] = useState<string | null>(null);
   const [retryCommentDraft, setRetryCommentDraft] = useState<string | null>(null);
+  const studioRef = useRef<InstructionStudioHandle>(null);
+  const [pendingNav, setPendingNav] = useState<(() => void) | null>(null);
+  const [navTransitionSaving, setNavTransitionSaving] = useState(false);
+  const [navTransitionError, setNavTransitionError] = useState<string | null>(null);
+  // Runs if the pending-nav dialog is explicitly cancelled rather than saved/discarded through —
+  // used to reject a caller awaiting "may I proceed?" (the window-close guard below).
+  const pendingNavCancelRef = useRef<(() => void) | null>(null);
+  // Bumped whenever the pending nav is dismissed (Cancel, Discard, or a new nav superseding it),
+  // so a Save still in flight at that moment can never execute a nav the owner already backed
+  // away from once it resolves.
+  const navTransitionTokenRef = useRef(0);
+  const navDialogRef = useRef<HTMLDivElement>(null);
+
+  function guardedNav(action: () => void, onCancel?: () => void) {
+    if (primaryView === 'instructions' && studioRef.current?.isDirty()) {
+      // Busy belongs to the dialog currently open, not to whatever a previous one left behind —
+      // a stale Saving state (a prior success or a cancelled-but-still-in-flight save) must never
+      // carry into this new dialog and disable its Save button forever.
+      setNavTransitionSaving(false);
+      setNavTransitionError(null);
+      navTransitionTokenRef.current += 1;
+      pendingNavCancelRef.current = onCancel ?? null;
+      setPendingNav(() => action);
+    } else {
+      action();
+    }
+  }
+
+  /** Dismisses the pending-nav dialog and invalidates any in-flight Save resolution for it. */
+  function dismissPendingNav() {
+    navTransitionTokenRef.current += 1;
+    setPendingNav(null);
+    pendingNavCancelRef.current = null;
+    // The dialog this busy flag belonged to is gone (Cancel, Discard, or a superseding Save
+    // success) — clear it here rather than leaving it to the in-flight Save's `.finally()`, which
+    // guards on a token this call just invalidated and would otherwise never run.
+    setNavTransitionSaving(false);
+  }
+
+  function cancelPendingNav() {
+    const onCancel = pendingNavCancelRef.current;
+    dismissPendingNav();
+    onCancel?.();
+  }
+
+  useFocusTrap(navDialogRef, pendingNav !== null, cancelPendingNav);
+
+  // Kept fresh every render so the window-close handler below (registered once per
+  // `windowLifecycle` identity, not on every render) always sees the current view.
+  const primaryViewRef = useRef(primaryView);
+  primaryViewRef.current = primaryView;
+
+  // App/window-close dirty protection: reuses the same guard and dialog as an in-app primary-nav
+  // switch. Not dirty (or not even in Instructions) closes immediately; dirty shows the dialog,
+  // and Save/Discard/Cancel there resolve whether the close may actually proceed.
+  useEffect(() => {
+    return windowLifecycle.onCloseRequested(
+      () =>
+        new Promise<boolean>((resolve) => {
+          if (primaryViewRef.current === 'instructions' && studioRef.current?.isDirty()) {
+            setNavTransitionSaving(false);
+            setNavTransitionError(null);
+            navTransitionTokenRef.current += 1;
+            pendingNavCancelRef.current = () => resolve(false);
+            setPendingNav(() => () => resolve(true));
+          } else {
+            resolve(true);
+          }
+        }),
+    );
+  }, [windowLifecycle]);
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
@@ -821,23 +904,16 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
           <button
             type="button"
             className={`nav-item ${primaryView === 'workspace' ? 'nav-item-active' : ''}`}
-            onClick={() => setPrimaryView('workspace')}
+            onClick={() => guardedNav(() => setPrimaryView('workspace'))}
           >
             <span className="nav-icon" aria-hidden="true">◈</span>Workspace
           </button>
           <button
             type="button"
             className={`nav-item ${primaryView === 'instructions' ? 'nav-item-active' : ''}`}
-            onClick={() => setPrimaryView('instructions')}
+            onClick={() => guardedNav(() => setPrimaryView('instructions'))}
           >
             <span className="nav-icon" aria-hidden="true">▤</span>Instructions
-          </button>
-          <button
-            type="button"
-            className={`nav-item ${primaryView === 'agents' ? 'nav-item-active' : ''}`}
-            onClick={() => setPrimaryView('agents')}
-          >
-            <span className="nav-icon" aria-hidden="true">◎</span>Agents
           </button>
           <span className="nav-item nav-item-muted"><span className="nav-icon" aria-hidden="true">⚙</span>Settings</span>
         </nav>
@@ -851,13 +927,15 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
               className={`project-nav-item ${project.id === selectedProjectId ? 'project-nav-item-active' : ''}`}
               key={project.id}
               type="button"
-              onClick={() => {
-                setSelectedProjectId(project.id);
-                setSelectedTaskId(null);
-                setFocusedTaskId(null);
-                setExpandedTaskIds(new Set());
-                setTaskEditor(null);
-              }}
+              onClick={() =>
+                guardedNav(() => {
+                  setSelectedProjectId(project.id);
+                  setSelectedTaskId(null);
+                  setFocusedTaskId(null);
+                  setExpandedTaskIds(new Set());
+                  setTaskEditor(null);
+                })
+              }
             >
               <span className="project-nav-dot" aria-hidden="true" />
               <span>{project.name}</span>
@@ -1014,24 +1092,14 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
         <>
         <header className="topbar">
           <div>
-            <p className="eyebrow">Versioned instructions</p>
-            <h1>Instruction composer</h1>
-          </div>
-        </header>
-        <InstructionsPanel service={services.instructions} projects={visibleProjects} />
-        </>
-      )}
-
-      {primaryView === 'agents' && (
-        <>
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">Execution providers</p>
-            <h1>Agent assignment</h1>
+            <p className="eyebrow">Instruction Studio</p>
+            <h1>Assign, customize, and inject effective instructions.</h1>
           </div>
         </header>
         {selectedProject ? (
-          <AgentAssignmentPanel
+          <InstructionStudio
+            ref={studioRef}
+            instructionsService={services.instructions}
             assignmentsService={services.assignments}
             harnessService={services.harness}
             project={selectedProject}
@@ -1046,11 +1114,79 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
             }
           />
         ) : (
-          <p className="sidebar-empty">Select a project to manage its agent assignments.</p>
+          <p className="sidebar-empty">Select a project to manage its instructions.</p>
         )}
         </>
       )}
       </section>
+
+      {pendingNav && (
+        <div className="modal-backdrop">
+          <div
+            className="modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Unsaved changes"
+            ref={navDialogRef}
+            tabIndex={-1}
+          >
+            <h2>Unsaved changes</h2>
+            <p className="muted-copy">
+              You have unsaved instruction edits. Save them, discard them, or stay here.
+            </p>
+            {navTransitionError && (
+              <div className="save-error" role="alert">
+                {navTransitionError}
+              </div>
+            )}
+            <div className="form-actions">
+              <button
+                className="button button-primary"
+                type="button"
+                disabled={navTransitionSaving}
+                onClick={() => {
+                  setNavTransitionSaving(true);
+                  setNavTransitionError(null);
+                  const token = navTransitionTokenRef.current;
+                  void (studioRef.current?.save() ?? Promise.resolve(true))
+                    .then((ok) => {
+                      // Cancelled or discarded past while this save was in flight: never let a
+                      // late success execute a nav the owner already backed away from.
+                      if (navTransitionTokenRef.current !== token) return;
+                      if (ok) {
+                        const run = pendingNav;
+                        dismissPendingNav();
+                        run?.();
+                      } else {
+                        setNavTransitionError('Save failed — see the error in Instruction Studio for details.');
+                      }
+                    })
+                    .finally(() => {
+                      if (navTransitionTokenRef.current === token) setNavTransitionSaving(false);
+                    });
+                }}
+              >
+                {navTransitionSaving ? 'Saving…' : 'Save changes'}
+              </button>
+              <button
+                className="button button-danger"
+                type="button"
+                onClick={() => {
+                  studioRef.current?.discard();
+                  const run = pendingNav;
+                  dismissPendingNav();
+                  run?.();
+                }}
+              >
+                Discard changes
+              </button>
+              <button className="button button-quiet" type="button" onClick={cancelPendingNav}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

@@ -33,4 +33,15 @@ export interface HarnessAdapter {
 
   /** Removes the target only when its current on-disk content is Hammond-managed and valid for exactly this project/role. */
   remove(root: string, projectId: string, role: InstructionRole): Promise<HarnessRemoveOutcome>;
+
+  /**
+   * The exact managed-document text `inject` would write for these fields and content, without
+   * touching the filesystem. `fields`' own project/role is embedded the same way `inject` embeds
+   * it; the result is guaranteed byte-identical to a real Inject/Update since both reuse the same
+   * canonical formatter.
+   */
+  renderDocumentPreview(
+    fields: Omit<ManagedHeaderFields, 'provider' | 'formatVersion'>,
+    composedContent: string,
+  ): Promise<string>;
 }

@@ -3,10 +3,12 @@ import { createFakeAssignmentRepository, seedProjectDefaults } from '../assignme
 import { InstructionsService } from '../instructions/service';
 import { createFakeInstructionRepository } from '../instructions/testFakes';
 import type { HarnessAdapter } from './contracts';
+import { ImportPostSaveFailure } from './errors';
 import { HarnessInjectionService } from './service';
 import {
   createFakeHarnessAdapters,
   createFakeHarnessFilesystem,
+  renderManagedDocumentText,
   seedManaged,
   seedUnmanaged,
   type FakeHarnessFilesystem,
@@ -137,6 +139,59 @@ describe('HarnessInjectionService', () => {
       expect(preview.classification.kind).toBe('ManagedForeign');
       expect(preview.action).toBe('requires_decision');
     });
+
+    it('exposes the complete generated document, byte-identical to the canonical managed-document format, distinct from the bare effective content', async () => {
+      const { service, instructions } = buildService();
+      await instructions.saveAndActivate({
+        projectId: project1,
+        role: 'worker',
+        provider: 'claude_code',
+        layer: 'project_override',
+        content: 'be precise',
+      });
+
+      const preview = await service.preview({ root, projectId: project1, role: 'worker' });
+
+      expect(preview.generatedDocument).not.toBe(preview.effectiveContent);
+      expect(preview.generatedDocument).toContain(preview.effectiveContent);
+      expect(preview.generatedDocument.startsWith('<!-- hammond:managed')).toBe(true);
+      expect(preview.generatedHeader.projectId).toBe(project1);
+      expect(preview.generatedHeader.role).toBe('worker');
+      expect(preview.generatedHeader.provider).toBe('claude_code');
+      expect(preview.generatedDocument).toBe(
+        renderManagedDocumentText(preview.generatedHeader, preview.effectiveContent),
+      );
+    });
+
+    it("uses the preview call's own generation time, independent of a later Inject's timestamp", async () => {
+      let tick = 0;
+      const now = () => `2026-09-0${(tick += 1)}T00:00:00.000Z`;
+      const assignmentRepo = createFakeAssignmentRepository();
+      seedProjectDefaults(assignmentRepo.store, project1, 'owner-1');
+      const assignments = new AssignmentsService(assignmentRepo);
+      const instructions = new InstructionsService(createFakeInstructionRepository());
+      const fakeFs = createFakeHarnessFilesystem();
+      const adapters = createFakeHarnessAdapters(fakeFs, root);
+      const service = new HarnessInjectionService({
+        assignments,
+        instructions,
+        adapters,
+        filesystem: {
+          async readTextFile() {
+            throw new Error('unused');
+          },
+        },
+        now,
+      });
+
+      const preview = await service.preview({ root, projectId: project1, role: 'worker' });
+      expect(preview.generatedHeader.generatedAt).toBe('2026-09-01T00:00:00.000Z');
+
+      await service.inject({ root, projectId: project1, role: 'worker' });
+      const writtenHeader = fakeFs.targets.get(`${root}|claude_code`)?.header;
+      expect(writtenHeader?.generatedAt).toBe('2026-09-02T00:00:00.000Z');
+      expect(writtenHeader?.generatedAt).not.toBe(preview.generatedHeader.generatedAt);
+    });
   });
 
   describe('inject', () => {
@@ -260,6 +315,9 @@ describe('HarnessInjectionService', () => {
         async remove() {
           throw new Error('unused');
         },
+        async renderDocumentPreview() {
+          throw new Error('unused');
+        },
       };
       const service = new HarnessInjectionService({
         assignments,
@@ -363,6 +421,43 @@ describe('HarnessInjectionService', () => {
       // The owner's original unmanaged file is exactly as it was.
       expect(fakeFs.targets.get(`${root}|claude_code`)?.header).toBeNull();
       expect(fakeFs.targets.get(`${root}|claude_code`)?.content).toBe('# hand-written notes');
+    });
+
+    it('wraps a post-save local write failure as ImportPostSaveFailure carrying the already-saved version, distinct from any pre-save failure', async () => {
+      const fakeFs = createFakeHarnessFilesystem();
+      seedUnmanaged(fakeFs, root, 'claude_code', '# hand-written notes');
+      const { assignments, instructions, adapters } = buildService(fakeFs);
+      const throwingAdapter: HarnessAdapter = {
+        ...adapters.claude_code,
+        async inject() {
+          throw new Error('disk full');
+        },
+      };
+      const service = new HarnessInjectionService({
+        assignments,
+        instructions,
+        adapters: { ...adapters, claude_code: throwingAdapter },
+        filesystem: {
+          async readTextFile(fsRoot: string) {
+            return fakeFs.targets.get(`${fsRoot}|claude_code`)!.content!;
+          },
+        },
+      });
+
+      const error = await service
+        .importThenReplace({ root, projectId: project1, role: 'worker' })
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(ImportPostSaveFailure);
+      expect((error as ImportPostSaveFailure).importedVersion.content).toBe('# hand-written notes');
+      expect((error as Error).message).toBe('disk full');
+      // The preservation save happened and is not rolled back by the local write failure.
+      const layers = await instructions.getActiveLayerContents({
+        projectId: project1,
+        role: 'worker',
+        provider: 'claude_code',
+      });
+      expect(layers.projectOverride).toBe('# hand-written notes');
     });
 
     it("refuses to import a valid document belonging to a different project as this project's own content", async () => {

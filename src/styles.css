@@ -1596,3 +1596,153 @@ label {
   margin: 0;
   color: #e9edf5;
 }
+
+.agent-assignment-row-selected {
+  border-color: rgba(137, 159, 255, 0.62);
+  box-shadow: 0 0 0 2px rgba(112, 137, 230, 0.1);
+}
+
+.agent-assignment-role-button {
+  min-width: 110px;
+  border-radius: 7px;
+  color: #dce4ff;
+  background: transparent;
+  padding: 4px 8px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.agent-assignment-role-button[aria-pressed='true'] {
+  color: #eef2ff;
+  background: rgba(95, 119, 210, 0.22);
+}
+
+.instruction-studio {
+  display: grid;
+  gap: 32px;
+  margin-top: 28px;
+}
+
+.instruction-effective-section {
+  display: grid;
+  gap: 14px;
+}
+
+.instruction-inherit-note {
+  margin: 0;
+  color: #8f9ac0;
+  font-size: 11px;
+}
+
+.instruction-saved-status {
+  margin: 0;
+  color: #9ce0c9;
+  font-size: 11px;
+}
+
+.markdown-view {
+  border: 1px solid rgba(145, 162, 214, 0.13);
+  border-radius: 10px;
+  background: #0b1020;
+  padding: 16px;
+  color: #e9edf5;
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.markdown-view-empty {
+  color: #707c9d;
+  font-style: italic;
+}
+
+.markdown-view :first-child {
+  margin-top: 0;
+}
+
+.markdown-view :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-view pre {
+  overflow-x: auto;
+  border-radius: 8px;
+  background: rgba(145, 162, 214, 0.08);
+  padding: 10px 12px;
+}
+
+.markdown-view code {
+  border-radius: 4px;
+  background: rgba(145, 162, 214, 0.13);
+  padding: 1px 5px;
+}
+
+.markdown-view a {
+  color: #9db4ff;
+  text-decoration: underline;
+}
+
+.instruction-customize-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+
+.instruction-advanced {
+  display: grid;
+  gap: 16px;
+  border: 1px solid rgba(145, 162, 214, 0.13);
+  border-radius: 14px;
+  background: rgba(16, 23, 46, 0.4);
+  padding: 16px 18px;
+}
+
+.instruction-advanced summary {
+  cursor: pointer;
+  color: #c3cbe2;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.task-preview-section,
+.generated-document-section {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid rgba(145, 162, 214, 0.13);
+  padding-top: 18px;
+}
+
+.task-preview-section h3,
+.generated-document-section h3,
+.generated-document-section h4 {
+  margin-bottom: 0;
+  font-size: 14px;
+}
+
+.history-drawer {
+  display: grid;
+  gap: 14px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.history-drawer-list {
+  gap: 8px;
+}
+
+.history-drawer-item {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.history-drawer-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.history-drawer-source {
+  margin-top: 8px;
+}

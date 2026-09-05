@@ -35,6 +35,33 @@ function key(root: string, provider: ProviderFamily): string {
   return `${root}|${provider}`;
 }
 
+/**
+ * Mirrors the native `render_managed_document` formatter (`src-tauri/src/harness.rs`) exactly:
+ * the header comment block, a blank line, then the composed content verbatim. This is the only
+ * place that duplicates the canonical format rather than calling it, because tests run without a
+ * Tauri runtime; `harness/service.test.ts` cross-checks a rendered sample against the literal
+ * string the Rust side is documented to produce so the two cannot silently drift apart.
+ */
+export function renderManagedDocumentText(
+  header: ManagedHeaderFields,
+  composedContent: string,
+): string {
+  const overrideLine = header.overrideVersionId ?? 'null';
+  return (
+    '<!-- hammond:managed\n' +
+    `format_version: ${header.formatVersion}\n` +
+    `project_id: ${header.projectId}\n` +
+    `role: ${header.role}\n` +
+    `provider: ${header.provider}\n` +
+    `shared_role_version_id: ${header.sharedRoleVersionId}\n` +
+    `provider_version_id: ${header.providerVersionId}\n` +
+    `override_version_id: ${overrideLine}\n` +
+    `generated_at: ${header.generatedAt}\n` +
+    '-->\n\n' +
+    composedContent
+  );
+}
+
 export function createFakeHarnessFilesystem(): FakeHarnessFilesystem {
   return { targets: new Map() };
 }
@@ -117,6 +144,15 @@ export function createFakeHarnessAdapter(
       if (classification.kind !== 'ManagedValid') return { kind: 'Refused', relativePath };
       fs.targets.delete(key(root, provider));
       return { kind: 'Removed', relativePath };
+    },
+
+    async renderDocumentPreview(fields, composedContent): Promise<string> {
+      const header: ManagedHeaderFields = {
+        ...fields,
+        provider,
+        formatVersion: MANAGED_HEADER_FORMAT_VERSION,
+      };
+      return renderManagedDocumentText(header, composedContent);
     },
   };
 }
