@@ -678,3 +678,11 @@
 - The sole remaining audit note is non-blocking Prettier wrapping in src-tauri/capabilities/default.json. Formatting is not recorded as universally clean. No cosmetic implementation edit was made after approval, preserving the exact approved head for owner testing.
 - HAM3-007 moved to `testing`. Device-local `tracker/work-orders/HAM3-007-OWNER-TEST.md` covers real Windows Studio, injection/conflict/retry, repeated dirty dialogs, actual window-X Save/Discard/Cancel and restart. No new hosted migration is introduced; no redundant full test rerun is needed before human testing given the exact-head Windows audit evidence.
 - Test app has not been launched during this intake. No implementation files, owner data, readiness or merge state changed. Owner smoke and explicit merge authorization remain pending; packaged-release shipped status is not established.
+
+## 2026-09-05 — HAM3-007 Windows owner smoke passed; ready for merge authorization
+
+- At the owner's request, launched the actual Windows Tauri app from clean detached approved head `0ff691372c2b697f564da91a9785c8402f750efd` after npm ci. Native dev build completed and the Hammond window opened. No temporary directories were created.
+- Owner reported “all pass” for the prepared smoke flow. Recorded the Windows Studio, local operations, repeated dirty dialogs, actual window-X and restart checks as owner-passed at the approved SHA, not as agent-observed UI evidence.
+- Stopped the exact test session; no matching Hammond/node/cargo test processes or port-1420 listener remained. Restored clean synchronized dev before recording this update.
+- Live PR #9 retains the approved head and targets dev. Marked ready for review; GitHub reports MERGEABLE/CLEAN and no status checks listed. Independent APPROVE and owner smoke are complete; the capability JSON formatting note remains explicitly non-blocking and unchanged.
+- HAM3-007 remains `testing` pending explicit owner merge authorization. No merge or next-task promotion occurred; packaged-release shipped status remains unestablished.
