@@ -56,7 +56,7 @@ type Services = ReturnType<typeof buildServices>;
 function renderStudio(options: { services?: Services; directoryRoot?: string | null } = {}) {
   const services = options.services ?? buildServices();
   const ref = createRef<InstructionStudioHandle>();
-  render(
+  const view = render(
     <InstructionStudio
       ref={ref}
       instructionsService={services.instructionsService}
@@ -66,7 +66,7 @@ function renderStudio(options: { services?: Services; directoryRoot?: string | n
       directoryRoot={options.directoryRoot === undefined ? root : options.directoryRoot}
     />,
   );
-  return { ...services, ref };
+  return { ...services, ref, rerender: view.rerender };
 }
 
 function foreignHeader() {
@@ -104,6 +104,223 @@ describe('InstructionStudio', () => {
       role: 'orchestrator',
     });
     expect(assignment?.provider).toBe('codex');
+  });
+
+  // -------------------------------------------------------------------
+  // 1b. Changing Worker's execution provider from Agent assignment must
+  //     refresh the WHOLE Studio, not just the child panel — heading,
+  //     effective content, generated document/target, and subsequent
+  //     saves all have to move onto the new provider together.
+  // -------------------------------------------------------------------
+
+  it('refreshes heading, effective content, generated document/target, and subsequent saves after a provider change with no linked directory', async () => {
+    const services = buildServices();
+    await services.instructionsService.saveAndActivate({
+      projectId: project.id,
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'project_override',
+      content: 'CLAUDE CODE OVERRIDE',
+    });
+    await services.instructionsService.saveAndActivate({
+      projectId: project.id,
+      role: 'worker',
+      provider: 'kilo_code',
+      layer: 'project_override',
+      content: 'KILO CODE OVERRIDE',
+    });
+
+    renderStudio({ services, directoryRoot: null });
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    await waitFor(() =>
+      expect(screen.getByLabelText('Effective instructions preview')).toHaveTextContent(
+        'CLAUDE CODE OVERRIDE',
+      ),
+    );
+
+    fireEvent.change(await screen.findByLabelText('Worker execution provider'), {
+      target: { value: 'kilo_code' },
+    });
+
+    // The heading, the "assigned provider" reflected there, and the composed effective content
+    // all move onto kilo_code together — never a stale claude_code editor next to an already-
+    // switched assignment control.
+    await screen.findByRole('heading', { name: 'Worker instructions for Kilo Code' });
+    await waitFor(() =>
+      expect(screen.getByLabelText('Effective instructions preview')).toHaveTextContent(
+        'KILO CODE OVERRIDE',
+      ),
+    );
+    expect(screen.getByLabelText('Effective instructions preview')).not.toHaveTextContent(
+      'CLAUDE CODE OVERRIDE',
+    );
+
+    // A subsequent Customize + Save targets the NEW provider's override layer, not the old one.
+    fireEvent.click(screen.getByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'kilo override v2' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(async () => {
+      const versions = await services.instructionsService.listOwnerVersions({
+        role: 'worker',
+        provider: 'kilo_code',
+        layer: 'project_override',
+        projectId: project.id,
+      });
+      expect(versions.map((v) => v.content)).toContain('kilo override v2');
+    });
+    const claudeVersions = await services.instructionsService.listOwnerVersions({
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'project_override',
+      projectId: project.id,
+    });
+    expect(claudeVersions.map((v) => v.content)).not.toContain('kilo override v2');
+  });
+
+  it('refreshes the assignment, effective content, and generated-document target after a linked-directory provider switch, and exposes pending local state when the local write itself fails', async () => {
+    const fakeFs = createFakeHarnessFilesystem();
+    const services = buildServices(fakeFs);
+    await services.harnessService.inject({ root, projectId: project.id, role: 'worker' }); // seeds CLAUDE.md
+    await services.instructionsService.saveAndActivate({
+      projectId: project.id,
+      role: 'worker',
+      provider: 'kilo_code',
+      layer: 'project_override',
+      content: 'KILO CODE OVERRIDE',
+    });
+    const originalInject = services.harnessService.inject.bind(services.harnessService);
+    let failNextInject = true;
+    services.harnessService.inject = (async (params) => {
+      if (params.role === 'worker' && failNextInject) {
+        failNextInject = false;
+        throw new Error('disk full during switch');
+      }
+      return originalInject(params);
+    }) as typeof services.harnessService.inject;
+
+    renderStudio({ services });
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+
+    fireEvent.change(await screen.findByLabelText('Worker execution provider'), {
+      target: { value: 'kilo_code' },
+    });
+
+    await screen.findByText('disk full during switch');
+    // The assignment durably switched even though the local write failed: the Studio must show
+    // it, not silently keep showing claude_code as if nothing had changed.
+    await waitFor(() =>
+      expect(
+        screen.getByRole('heading', { name: 'Worker instructions for Kilo Code' }),
+      ).toBeInTheDocument(),
+    );
+    const assignment = await services.assignmentsService.getAssignment({
+      projectId: project.id,
+      role: 'worker',
+    });
+    expect(assignment?.provider).toBe('kilo_code');
+    await waitFor(() =>
+      expect(screen.getByLabelText('Effective instructions preview')).toHaveTextContent(
+        'KILO CODE OVERRIDE',
+      ),
+    );
+    // The failed local write is visible as pending local state: the new target was never
+    // actually written, so Inject/Update still shows "not created yet", never a false success.
+    await waitFor(() => expect(screen.getByText('Not created yet')).toBeInTheDocument());
+  });
+
+  it('guards a dirty edit before changing execution provider: Cancel keeps the old provider and the draft, Discard proceeds and drops it, Save persists to the old provider first', async () => {
+    const services = buildServices();
+    renderStudio({ services, directoryRoot: null });
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'dirty draft' },
+    });
+
+    fireEvent.change(screen.getByLabelText('Worker execution provider'), {
+      target: { value: 'kilo_code' },
+    });
+    let dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    // Cancelling never carries the draft into a different provider's slot: the assignment stays
+    // on claude_code and the draft is exactly as the owner left it.
+    expect(
+      screen.getByRole('heading', { name: 'Worker instructions for Claude Code' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Worker execution provider')).toHaveValue('claude_code');
+    expect(screen.getByLabelText('Project override content')).toHaveValue('dirty draft');
+
+    fireEvent.change(screen.getByLabelText('Worker execution provider'), {
+      target: { value: 'kilo_code' },
+    });
+    dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('heading', { name: 'Worker instructions for Kilo Code' }),
+      ).toBeInTheDocument(),
+    );
+    const claudeVersions = await services.instructionsService.listOwnerVersions({
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'project_override',
+      projectId: project.id,
+    });
+    // Save targeted the OLD (about-to-be-replaced) provider's slot — the one the draft was
+    // actually open against — never the new one it was switching to.
+    expect(claudeVersions.map((v) => v.content)).toContain('dirty draft');
+  });
+
+  it('a late-resolving old-provider load can never overwrite the screen once the provider has already switched', async () => {
+    const services = buildServices();
+    await services.instructionsService.saveAndActivate({
+      projectId: project.id,
+      role: 'worker',
+      provider: 'kilo_code',
+      layer: 'project_override',
+      content: 'KILO CODE OVERRIDE',
+    });
+    const original = services.instructionsService.getActiveLayerContents.bind(
+      services.instructionsService,
+    );
+    let releaseClaude!: () => void;
+    const claudeGate = new Promise<void>((resolve) => {
+      releaseClaude = resolve;
+    });
+    let claudeGateArmed = false;
+    services.instructionsService.getActiveLayerContents = (async (params) => {
+      if (params.provider === 'claude_code') {
+        claudeGateArmed = true;
+        await claudeGate;
+      }
+      return original(params);
+    }) as typeof services.instructionsService.getActiveLayerContents;
+
+    renderStudio({ services, directoryRoot: null });
+    await waitFor(() => expect(claudeGateArmed).toBe(true));
+
+    fireEvent.change(await screen.findByLabelText('Worker execution provider'), {
+      target: { value: 'kilo_code' },
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText('Effective instructions preview')).toHaveTextContent(
+        'KILO CODE OVERRIDE',
+      ),
+    );
+
+    // The stale claude_code load (issued before the switch) resolves only now, well after
+    // kilo_code's own load completed.
+    releaseClaude();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(screen.getByLabelText('Effective instructions preview')).toHaveTextContent(
+      'KILO CODE OVERRIDE',
+    );
   });
 
   it('reads defaults, shows loading, and surfaces a load error with Retry', async () => {
@@ -486,6 +703,101 @@ describe('InstructionStudio', () => {
     expect(versionsAfterRetry).toHaveLength(1); // retry did not re-import / duplicate
   });
 
+  it('never forces an unconditional Replace on Retry after a PRE-save import failure — it safely re-attempts preservation instead', async () => {
+    const fakeFs = createFakeHarnessFilesystem();
+    seedUnmanaged(fakeFs, root, 'claude_code', '# hand-written notes');
+    const assignmentRepo = createFakeAssignmentRepository();
+    seedProjectDefaults(assignmentRepo.store, project.id, 'owner-1');
+    const assignmentsService = new AssignmentsService(assignmentRepo);
+    const instructionsService = new InstructionsService(createFakeInstructionRepository());
+    const adapters = createFakeHarnessAdapters(fakeFs, root);
+    let failNextRead = true;
+    const harnessService = new HarnessInjectionService({
+      assignments: assignmentsService,
+      instructions: instructionsService,
+      adapters,
+      filesystem: {
+        async readTextFile(fsRoot: string, relativePath: string) {
+          if (failNextRead) {
+            failNextRead = false;
+            throw new Error('read failed before anything was saved');
+          }
+          const provider = relativePath === 'CLAUDE.md' ? 'claude_code' : relativePath;
+          const target = fakeFs.targets.get(`${fsRoot}|${provider}`);
+          if (!target || target.content === null) throw new Error('not found');
+          return target.content;
+        },
+      },
+      now: () => FIXED_NOW,
+    });
+
+    renderStudio({ services: { assignmentsService, instructionsService, harnessService, fakeFs } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Import existing content' }));
+
+    await screen.findByText('read failed before anything was saved');
+    // Nothing was preserved yet, and the owner's original file is exactly as it was.
+    const versionsAfterFailure = await instructionsService.listOwnerVersions({
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'project_override',
+      projectId: project.id,
+    });
+    expect(versionsAfterFailure).toHaveLength(0);
+    expect(fakeFs.targets.get(`${root}|claude_code`)?.header).toBeNull();
+    expect(fakeFs.targets.get(`${root}|claude_code`)?.content).toBe('# hand-written notes');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.getByText('Hammond-managed')).toBeInTheDocument());
+
+    // The safe retry re-ran the whole import — preservation happened exactly once, and the
+    // preserved content is exactly the original unmanaged file, never empty/generic content.
+    const versionsAfterRetry = await instructionsService.listOwnerVersions({
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'project_override',
+      projectId: project.id,
+    });
+    expect(versionsAfterRetry).toHaveLength(1);
+    expect(versionsAfterRetry[0].content).toBe('# hand-written notes');
+    expect(fakeFs.targets.get(`${root}|claude_code`)?.header).not.toBeNull();
+  });
+
+  it('never forces an unconditional Replace on Retry when the import save itself fails (also pre-save)', async () => {
+    const fakeFs = createFakeHarnessFilesystem();
+    seedUnmanaged(fakeFs, root, 'claude_code', '# hand-written notes');
+    const services = buildServices(fakeFs);
+    const originalSave = services.instructionsService.saveAndActivate.bind(
+      services.instructionsService,
+    );
+    let failNextSave = true;
+    services.instructionsService.saveAndActivate = (async (params) => {
+      if (failNextSave) {
+        failNextSave = false;
+        throw new Error('network dropped before saving');
+      }
+      return originalSave(params);
+    }) as typeof services.instructionsService.saveAndActivate;
+
+    renderStudio({ services });
+    fireEvent.click(await screen.findByRole('button', { name: 'Import existing content' }));
+
+    await screen.findByText('network dropped before saving');
+    expect(fakeFs.targets.get(`${root}|claude_code`)?.header).toBeNull();
+    expect(fakeFs.targets.get(`${root}|claude_code`)?.content).toBe('# hand-written notes');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.getByText('Hammond-managed')).toBeInTheDocument());
+
+    const versions = await services.instructionsService.listOwnerVersions({
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'project_override',
+      projectId: project.id,
+    });
+    expect(versions).toHaveLength(1);
+    expect(versions[0].content).toBe('# hand-written notes');
+  });
+
   // -------------------------------------------------------------------
   // 5. Dirty-navigation Save/Discard/Cancel; overlapping/out-of-order
   //    async; stale retries after a context switch.
@@ -643,6 +955,167 @@ describe('InstructionStudio', () => {
   });
 
   // -------------------------------------------------------------------
+  // 5b. Advanced provider-variant selector: dirty-guard + overlapping/
+  //     stale-load protection, and retry invalidation on provider/
+  //     directory change.
+  // -------------------------------------------------------------------
+
+  it('guards an unsaved variant edit before switching variants: Cancel stays on the edited variant, Discard drops it and switches, Save persists to the OLD variant first', async () => {
+    const services = buildServices();
+    renderStudio({ services });
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByText('Advanced'));
+    fireEvent.change(screen.getByLabelText('Provider variant content'), {
+      target: { value: 'edited claude_code variant' },
+    });
+
+    fireEvent.change(screen.getByLabelText('Provider variant'), {
+      target: { value: 'codex' },
+    });
+    let dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.getByLabelText('Provider variant')).toHaveValue('claude_code');
+    expect(screen.getByLabelText('Provider variant content')).toHaveValue(
+      'edited claude_code variant',
+    );
+
+    fireEvent.change(screen.getByLabelText('Provider variant'), {
+      target: { value: 'codex' },
+    });
+    dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard changes' }));
+
+    await waitFor(() => expect(screen.getByLabelText('Provider variant')).toHaveValue('codex'));
+    const claudeVersions = await services.instructionsService.listOwnerVersions({
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'provider',
+      projectId: null,
+    });
+    expect(claudeVersions.map((v) => v.content)).not.toContain('edited claude_code variant');
+
+    // Edit again, then Save: it must land on claude_code (the variant open when Save was
+    // clicked), never on codex (the one being switched to).
+    fireEvent.change(screen.getByLabelText('Provider variant'), {
+      target: { value: 'claude_code' },
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText('Provider variant')).toHaveValue('claude_code'),
+    );
+    fireEvent.change(screen.getByLabelText('Provider variant content'), {
+      target: { value: 'saved before switch' },
+    });
+    fireEvent.change(screen.getByLabelText('Provider variant'), {
+      target: { value: 'codex' },
+    });
+    dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(screen.getByLabelText('Provider variant')).toHaveValue('codex'));
+    const versionsAfterSave = await services.instructionsService.listOwnerVersions({
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'provider',
+      projectId: null,
+    });
+    expect(versionsAfterSave.map((v) => v.content)).toContain('saved before switch');
+    const codexVersions = await services.instructionsService.listOwnerVersions({
+      role: 'worker',
+      provider: 'codex',
+      layer: 'provider',
+      projectId: null,
+    });
+    expect(codexVersions.map((v) => v.content)).not.toContain('saved before switch');
+  });
+
+  it('a late-resolving load for a previously picked variant can never overwrite a since-picked different variant', async () => {
+    const services = buildServices();
+    await services.instructionsService.saveAndActivate({
+      projectId: project.id,
+      role: 'worker',
+      provider: 'kilo_code',
+      layer: 'provider',
+      content: 'KILO VARIANT',
+    });
+    await services.instructionsService.saveAndActivate({
+      projectId: project.id,
+      role: 'worker',
+      provider: 'codex',
+      layer: 'provider',
+      content: 'CODEX VARIANT',
+    });
+    const original = services.instructionsService.getActiveLayerContents.bind(
+      services.instructionsService,
+    );
+    let releaseKilo!: () => void;
+    const kiloGate = new Promise<void>((resolve) => {
+      releaseKilo = resolve;
+    });
+    let kiloGateArmed = false;
+    services.instructionsService.getActiveLayerContents = (async (params) => {
+      if (params.provider === 'kilo_code') {
+        kiloGateArmed = true;
+        await kiloGate;
+      }
+      return original(params);
+    }) as typeof services.instructionsService.getActiveLayerContents;
+
+    renderStudio({ services });
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByText('Advanced'));
+
+    fireEvent.change(screen.getByLabelText('Provider variant'), {
+      target: { value: 'kilo_code' },
+    });
+    await waitFor(() => expect(kiloGateArmed).toBe(true));
+
+    // Before kilo_code's load resolves, the owner picks codex instead — which resolves right away.
+    fireEvent.change(screen.getByLabelText('Provider variant'), {
+      target: { value: 'codex' },
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText('Provider variant content')).toHaveValue('CODEX VARIANT'),
+    );
+
+    // The stale kilo_code load resolves only now, well after codex's own load completed.
+    releaseKilo();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(screen.getByLabelText('Provider variant')).toHaveValue('codex');
+    expect(screen.getByLabelText('Provider variant content')).toHaveValue('CODEX VARIANT');
+  });
+
+  it('clears a queued action Retry when the assigned provider or the linked directory changes, so a stale retry can never fire against a different target', async () => {
+    const fakeFs = createFakeHarnessFilesystem();
+    const services = buildServices(fakeFs);
+    const inject = services.harnessService.inject.bind(services.harnessService);
+    services.harnessService.inject = (async (params) => {
+      if (params.role === 'worker') throw new Error('worker inject failed');
+      return inject(params);
+    }) as typeof services.harnessService.inject;
+
+    const { rerender } = renderStudio({ services });
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Inject' }));
+    await screen.findByText('worker inject failed');
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+
+    // Re-linking the directory (still the same role/provider) invalidates the queued retry.
+    rerender(
+      <InstructionStudio
+        instructionsService={services.instructionsService}
+        assignmentsService={services.assignmentsService}
+        harnessService={services.harnessService}
+        project={project}
+        directoryRoot="/home/owner/project-1-relinked"
+      />,
+    );
+    await waitFor(() => expect(screen.queryByText('worker inject failed')).not.toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------
   // 6. Keyboard/dialog behavior.
   // -------------------------------------------------------------------
 
@@ -653,6 +1126,85 @@ describe('InstructionStudio', () => {
     const dialog = await screen.findByRole('dialog');
     fireEvent.keyDown(dialog, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('the Unsaved changes dialog focuses itself, traps Tab, treats Escape as Cancel, and returns focus afterward', async () => {
+    renderStudio();
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    const customizeButton = await screen.findByRole('button', { name: 'Customize' });
+    customizeButton.focus();
+    fireEvent.click(customizeButton);
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'dirty edit' },
+    });
+
+    const orchestratorButton = screen.getByRole('button', { name: 'Orchestrator' });
+    orchestratorButton.focus();
+    fireEvent.click(orchestratorButton);
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    const saveButton = within(dialog).getByRole('button', { name: 'Save changes' });
+    const discardButton = within(dialog).getByRole('button', { name: 'Discard changes' });
+    const cancelButton = within(dialog).getByRole('button', { name: 'Cancel' });
+    // Focus enters the dialog on its first focusable control.
+    await waitFor(() => expect(saveButton).toHaveFocus());
+
+    // Shift+Tab from the dialog container wraps to the LAST focusable control.
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
+    expect(cancelButton).toHaveFocus();
+    // Tab from the last control wraps back to the first.
+    fireEvent.keyDown(dialog, { key: 'Tab' });
+    expect(saveButton).toHaveFocus();
+    void discardButton; // exists between Save and Cancel in the trapped tab order
+
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    // Escape acted as Cancel: the role switch never happened, and the draft is untouched.
+    expect(
+      screen.getByRole('heading', { name: 'Worker instructions for Claude Code' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Project override content')).toHaveValue('dirty edit');
+    // Focus returns to whatever had it before the dialog opened.
+    expect(orchestratorButton).toHaveFocus();
+  });
+
+  it('a Save left pending when the dialog is Cancelled can never execute the cancelled transition once it resolves', async () => {
+    const services = buildServices();
+    let resolveSave!: () => void;
+    const originalSaveAndActivate = services.instructionsService.saveAndActivate.bind(
+      services.instructionsService,
+    );
+    services.instructionsService.saveAndActivate = ((params) =>
+      new Promise((resolve) => {
+        resolveSave = () => resolve(originalSaveAndActivate(params));
+      })) as typeof services.instructionsService.saveAndActivate;
+
+    renderStudio({ services });
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'pending save' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrator' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    // The Save is now in flight (awaiting `resolveSave`). Before it resolves, cancel the dialog.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(
+      screen.getByRole('heading', { name: 'Worker instructions for Claude Code' }),
+    ).toBeInTheDocument();
+
+    // The save finally completes — it must NOT retroactively execute the role switch the owner
+    // already cancelled their way out of.
+    resolveSave();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(
+      screen.getByRole('heading', { name: 'Worker instructions for Claude Code' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: /Orchestrator instructions/ }),
+    ).not.toBeInTheDocument();
   });
 
   // -------------------------------------------------------------------

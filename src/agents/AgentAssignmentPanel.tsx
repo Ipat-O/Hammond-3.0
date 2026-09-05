@@ -24,6 +24,12 @@ export interface AgentAssignmentPanelProps {
   onSelectRole?: (role: InstructionRole) => void;
   /** Called after a provider assignment change (direct update or a full safe provider switch) completes. */
   onAssignmentChanged?: () => void;
+  /**
+   * Asked before actually changing a role's provider; resolving `false` aborts the change (e.g. a
+   * host screen editing that role's instructions has unsaved edits and the owner chose to stay).
+   * When omitted, every change proceeds unguarded.
+   */
+  onBeforeProviderChange?: (role: InstructionRole) => Promise<boolean>;
 }
 
 function roleLabel(role: InstructionRole): string {
@@ -57,6 +63,7 @@ export function AgentAssignmentPanel({
   selectedRole,
   onSelectRole,
   onAssignmentChanged,
+  onBeforeProviderChange,
 }: AgentAssignmentPanelProps) {
   const [assignments, setAssignments] = useState<AgentAssignment[] | null>(null);
   const [assignmentsLoading, setAssignmentsLoading] = useState(true);
@@ -80,6 +87,10 @@ export function AgentAssignmentPanel({
   }, [loadAssignments]);
 
   async function changeProvider(role: InstructionRole, provider: ProviderFamily) {
+    if (onBeforeProviderChange) {
+      const proceed = await onBeforeProviderChange(role);
+      if (!proceed) return;
+    }
     setSavingRole(role);
     setAssignmentError(null);
     try {
@@ -96,6 +107,16 @@ export function AgentAssignmentPanel({
       await loadAssignments();
       onAssignmentChanged?.();
     } catch (error) {
+      // A linked provider switch persists the assignment durably before attempting the local
+      // injection, so it may have already gone through even though this call failed. Reload and
+      // notify regardless, so this panel and any host screen (e.g. the Instruction Studio's
+      // effective-instructions editor) never keep showing the old provider once it has actually
+      // changed — the failed local write becomes visible instead as pending local state in the
+      // generated-document preview (still Missing/needs Inject), rather than a silent mismatch.
+      // Reload before surfacing the error: `loadAssignments` itself clears any existing message,
+      // so setting this failure's message has to come after, not before.
+      await loadAssignments();
+      onAssignmentChanged?.();
       setAssignmentError(errorMessage(error));
     } finally {
       setSavingRole(null);

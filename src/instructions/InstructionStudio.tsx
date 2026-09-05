@@ -3,6 +3,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { AgentAssignmentPanel } from '../agents/AgentAssignmentPanel';
 import type { AssignmentsService } from '../assignments/service';
 import type { AgentAssignment } from '../assignments/types';
+import { ImportPostSaveFailure } from '../harness/errors';
 import type { HarnessInjectionService } from '../harness/service';
 import type { HarnessClassification, InjectionPreview } from '../harness/types';
 import { composeInstructions } from './composition';
@@ -10,6 +11,7 @@ import { HistoryDrawer } from './HistoryDrawer';
 import { MarkdownView } from './MarkdownView';
 import type { InstructionsService } from './service';
 import { PROVIDER_FAMILIES } from './types';
+import { useFocusTrap } from './useFocusTrap';
 import type {
   ActiveVersionIds,
   InstructionRole,
@@ -96,12 +98,18 @@ export const InstructionStudio = forwardRef<InstructionStudioHandle, Instruction
     const assignment = assignments?.find((a) => a.role === role) ?? null;
     const assignedProvider = assignment?.provider ?? null;
 
-    // Invalidates any in-flight async work whenever the (project, role) context changes, so a
-    // stale completion can never overwrite state that belongs to a different context.
+    // Invalidates any in-flight async work whenever the effective-instructions context changes —
+    // project, role, the role's assigned provider, or the linked directory — so a stale
+    // completion (e.g. a load for the previous provider, issued just before a switch) can never
+    // overwrite state that belongs to a different context. Provider and directory used to be
+    // missing here: a role switch was covered, but a same-role provider switch (from Agent
+    // assignment) or a directory relink was not, so a slow in-flight load for the old
+    // provider/directory could resolve after the new one's own load had already rendered
+    // correctly, silently clobbering it right back to stale content.
     const contextGenRef = useRef(0);
     useEffect(() => {
       contextGenRef.current += 1;
-    }, [project.id, role]);
+    }, [project.id, role, assignedProvider, directoryRoot]);
 
     const [effective, setEffective] = useState<EffectiveData | null>(null);
     const [effectiveLoading, setEffectiveLoading] = useState(true);
@@ -154,6 +162,22 @@ export const InstructionStudio = forwardRef<InstructionStudioHandle, Instruction
     const [pendingTransition, setPendingTransition] = useState<(() => void) | null>(null);
     const [transitionSaving, setTransitionSaving] = useState(false);
     const [transitionError, setTransitionError] = useState<string | null>(null);
+    // Runs if the pending transition is explicitly cancelled (Cancel button, Escape) rather than
+    // saved/discarded through — e.g. to reject a caller awaiting "may I proceed?" (a provider
+    // change requested from Agent assignment while this role has unsaved edits).
+    const pendingCancelRef = useRef<(() => void) | null>(null);
+    // Bumped whenever the pending transition is dismissed (Cancel, Discard, or a new transition
+    // superseding it). A Save in flight when that happens must not act on a stale `pendingTransition`
+    // once it resolves — checking this token before running it is what prevents a late save
+    // completion from executing a transition the owner already cancelled or already discarded
+    // their way past.
+    const transitionTokenRef = useRef(0);
+    const transitionDialogRef = useRef<HTMLDivElement>(null);
+    useFocusTrap(transitionDialogRef, pendingTransition !== null, () => {
+      const onCancel = pendingCancelRef.current;
+      dismissPendingTransition();
+      onCancel?.();
+    });
 
     const overrideDirty =
       customizing && overrideDraft !== (effective?.layers.projectOverride ?? '');
@@ -270,14 +294,34 @@ export const InstructionStudio = forwardRef<InstructionStudioHandle, Instruction
       setHarnessPreview(null);
     }, [project.id, role]);
 
+    // A queued Retry (`lastActionRef`) and its error are bound to the exact root/provider they
+    // were captured against. A provider switch or a re-linked directory means Retry could now
+    // target a different file than the one the failure happened on — silently reusing it (e.g. a
+    // forced Replace queued for import) could act on the wrong target, so drop it instead of
+    // letting it survive into a new context.
+    useEffect(() => {
+      lastActionRef.current = null;
+      setActionError(null);
+    }, [assignedProvider, directoryRoot]);
+
+    // Separate from `contextGenRef`: that one covers the outer (project, role, provider,
+    // directory) context, but two `loadVariant` calls for two DIFFERENT target variants can
+    // overlap within the very same outer context (pick kilo_code, then pick codex before the
+    // first resolves) — `contextGenRef` alone would not detect that race. Bumped at the start of
+    // every `loadVariant` call, including the synchronous same-as-assigned branch, so whichever
+    // call started last is always the only one allowed to land.
+    const variantGenRef = useRef(0);
+
     const loadVariant = useCallback(
       async (provider: ProviderFamily) => {
+        variantGenRef.current += 1;
+        const gen = variantGenRef.current;
         if (provider === assignedProvider) {
           setVariantOverride(null);
           setVariantDraft(effective?.layers.provider ?? '');
           return;
         }
-        const gen = contextGenRef.current;
+        const contextGen = contextGenRef.current;
         setVariantLoading(true);
         setVariantLoadError(null);
         try {
@@ -291,7 +335,7 @@ export const InstructionStudio = forwardRef<InstructionStudioHandle, Instruction
               projectId: null,
             }),
           ]);
-          if (contextGenRef.current !== gen) return;
+          if (contextGenRef.current !== contextGen || variantGenRef.current !== gen) return;
           setVariantOverride({
             provider,
             content: layers.provider,
@@ -300,14 +344,24 @@ export const InstructionStudio = forwardRef<InstructionStudioHandle, Instruction
           });
           setVariantDraft(layers.provider);
         } catch (error) {
-          if (contextGenRef.current !== gen) return;
+          if (contextGenRef.current !== contextGen || variantGenRef.current !== gen) return;
           setVariantLoadError(errorMessage(error));
         } finally {
-          if (contextGenRef.current === gen) setVariantLoading(false);
+          if (contextGenRef.current === contextGen && variantGenRef.current === gen) {
+            setVariantLoading(false);
+          }
         }
       },
       [instructionsService, project.id, role, assignedProvider, effective],
     );
+
+    /** Routes an Advanced variant-selector change through the same dirty guard as everything
+     * else: Save persists the draft to the OLD variant's slot before switching, Discard drops it,
+     * Cancel leaves the selection untouched. Without this, picking a different variant while
+     * editing one silently discarded the unsaved edit. */
+    function selectVariant(provider: ProviderFamily) {
+      guardedTransition(() => void loadVariant(provider));
+    }
 
     useEffect(() => {
       if (!assignedProvider) return;
@@ -362,17 +416,43 @@ export const InstructionStudio = forwardRef<InstructionStudioHandle, Instruction
       void loadHarnessPreview();
     }, [loadHarnessPreview, refreshToken]);
 
-    function guardedTransition(action: () => void) {
+    function guardedTransition(action: () => void, onCancel?: () => void) {
       if (isDirty) {
         setTransitionError(null);
+        transitionTokenRef.current += 1;
+        pendingCancelRef.current = onCancel ?? null;
         setPendingTransition(() => action);
       } else {
         action();
       }
     }
 
+    /** Dismisses the pending-transition dialog and invalidates any in-flight Save resolution for it. */
+    function dismissPendingTransition() {
+      transitionTokenRef.current += 1;
+      setPendingTransition(null);
+      pendingCancelRef.current = null;
+    }
+
     function selectRole(nextRole: InstructionRole) {
       guardedTransition(() => setRoleState(nextRole));
+    }
+
+    /**
+     * Gate for a provider change requested from Agent assignment: only guards when the change
+     * targets the role currently open here and it has unsaved edits, so a draft is never silently
+     * carried into a different provider's slot. Save persists the draft against the *current*
+     * (about-to-be-replaced) provider before the switch proceeds; Discard drops it; Cancel leaves
+     * the provider untouched.
+     */
+    function guardProviderChange(changedRole: InstructionRole): Promise<boolean> {
+      if (changedRole !== role || !isDirty) return Promise.resolve(true);
+      return new Promise<boolean>((resolve) => {
+        guardedTransition(
+          () => resolve(true),
+          () => resolve(false),
+        );
+      });
     }
 
     function toggleAdvanced() {
@@ -519,6 +599,13 @@ export const InstructionStudio = forwardRef<InstructionStudioHandle, Instruction
     }
 
     function handleAssignmentChanged() {
+      // The panel keeps its own assignments array (so it works standalone). Reload this
+      // component's own copy too, on every success *and* partial failure (a linked provider
+      // switch persists the assignment before attempting local injection, so it can be durably
+      // changed even when the panel reports an error) — otherwise `assignedProvider` here stays
+      // stale and the effective-instructions editor keeps composing/saving against the old
+      // provider while the generated preview below independently resolves the new one.
+      void loadAssignments();
       bumpRefresh();
     }
 
@@ -550,11 +637,18 @@ export const InstructionStudio = forwardRef<InstructionStudioHandle, Instruction
         try {
           return await harnessService.importThenReplace({ root, projectId: project.id, role });
         } catch (error) {
-          // The import's own save can succeed before a local write failure. A naive retry would
-          // re-run the whole import — re-saving the already-imported content as a duplicate
-          // version — so once import has been attempted, retry only the local write.
-          lastActionRef.current = () =>
-            harnessService.inject({ root, projectId: project.id, role, forceReplace: true });
+          if (error instanceof ImportPostSaveFailure) {
+            // The preservation save already succeeded before the local write failed. A naive
+            // retry would re-run the whole import — re-saving the already-imported content as a
+            // duplicate version — so once import has actually saved, retry only the local write.
+            lastActionRef.current = () =>
+              harnessService.inject({ root, projectId: project.id, role, forceReplace: true });
+          }
+          // Any other import failure (assignment resolution, classification, file read, or the
+          // save itself) happened *before* anything was preserved — leave `lastActionRef`
+          // pointing at this same closure (set by `runAction` below) so Retry safely re-attempts
+          // the whole import, including preservation, rather than jumping straight to an
+          // unconditional forced Replace that was never confirmed safe.
           throw error;
         }
       });
@@ -645,6 +739,7 @@ export const InstructionStudio = forwardRef<InstructionStudioHandle, Instruction
           selectedRole={role}
           onSelectRole={selectRole}
           onAssignmentChanged={handleAssignmentChanged}
+          onBeforeProviderChange={guardProviderChange}
         />
 
         <section
@@ -840,7 +935,7 @@ export const InstructionStudio = forwardRef<InstructionStudioHandle, Instruction
                     Variant
                     <select
                       value={variantProvider}
-                      onChange={(event) => void loadVariant(event.target.value as ProviderFamily)}
+                      onChange={(event) => selectVariant(event.target.value as ProviderFamily)}
                       aria-label="Provider variant"
                     >
                       {PROVIDER_FAMILIES.map((provider) => (
@@ -1088,6 +1183,8 @@ export const InstructionStudio = forwardRef<InstructionStudioHandle, Instruction
               role="dialog"
               aria-modal="true"
               aria-label="Unsaved changes"
+              ref={transitionDialogRef}
+              tabIndex={-1}
             >
               <h2>Unsaved changes</h2>
               <p className="muted-copy">
@@ -1106,18 +1203,27 @@ export const InstructionStudio = forwardRef<InstructionStudioHandle, Instruction
                   onClick={() => {
                     setTransitionSaving(true);
                     setTransitionError(null);
+                    const token = transitionTokenRef.current;
                     void saveAllDirty()
                       .then((ok) => {
+                        // Cancelled or discarded past while this save was in flight: never let a
+                        // late success execute a transition the owner already backed away from.
+                        if (transitionTokenRef.current !== token) return;
                         if (ok) {
                           const run = pendingTransition;
-                          setPendingTransition(null);
+                          dismissPendingTransition();
                           run?.();
                         } else {
                           setTransitionError('Save failed — see the error above for details.');
                         }
                       })
-                      .catch((error: unknown) => setTransitionError(errorMessage(error)))
-                      .finally(() => setTransitionSaving(false));
+                      .catch((error: unknown) => {
+                        if (transitionTokenRef.current !== token) return;
+                        setTransitionError(errorMessage(error));
+                      })
+                      .finally(() => {
+                        if (transitionTokenRef.current === token) setTransitionSaving(false);
+                      });
                   }}
                 >
                   {transitionSaving ? 'Saving…' : 'Save changes'}
@@ -1128,7 +1234,7 @@ export const InstructionStudio = forwardRef<InstructionStudioHandle, Instruction
                   onClick={() => {
                     discardAllDirty();
                     const run = pendingTransition;
-                    setPendingTransition(null);
+                    dismissPendingTransition();
                     run?.();
                   }}
                 >
@@ -1137,7 +1243,11 @@ export const InstructionStudio = forwardRef<InstructionStudioHandle, Instruction
                 <button
                   className="button button-quiet"
                   type="button"
-                  onClick={() => setPendingTransition(null)}
+                  onClick={() => {
+                    const onCancel = pendingCancelRef.current;
+                    dismissPendingTransition();
+                    onCancel?.();
+                  }}
                 >
                   Cancel
                 </button>
