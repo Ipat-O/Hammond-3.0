@@ -253,6 +253,194 @@ describe('TrackerPage navigation and Instruction Studio integration', () => {
     ).toBeInTheDocument();
   });
 
+  it('a completed Save-and-navigate never leaves a later nav dialog stuck on a stale Saving state', async () => {
+    const { services, instructions } = makeServices();
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'first nav save' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }));
+    let dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await waitFor(async () =>
+      expect(
+        (await screen.findAllByRole('heading', { name: 'Hammond project' })).length,
+      ).toBeGreaterThan(0),
+    );
+
+    // Back to Instructions, a second dirty edit, and a second guarded nav. The first Save's own
+    // completion invalidated its token via `dismissPendingNav` — that must not leave THIS
+    // brand-new dialog's Save permanently busy/disabled.
+    fireEvent.click(screen.getByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'second nav save' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }));
+    dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    const saveButton = within(dialog).getByRole('button', { name: 'Save changes' });
+    expect(saveButton).not.toBeDisabled();
+    expect(saveButton).toHaveTextContent('Save changes');
+    fireEvent.click(saveButton);
+
+    await waitFor(async () =>
+      expect(
+        (await screen.findAllByRole('heading', { name: 'Hammond project' })).length,
+      ).toBeGreaterThan(0),
+    );
+    const versions = await instructions.listOwnerVersions({
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'project_override',
+      projectId: project().id,
+    });
+    expect(versions.map((v) => v.content)).toEqual(
+      expect.arrayContaining(['first nav save', 'second nav save']),
+    );
+    expect(versions).toHaveLength(2);
+  });
+
+  it('a nav Save left pending when Cancelled resets busy so a later dialog Save still works', async () => {
+    const { services, instructions } = makeServices();
+    // Each call to saveAndActivate resolves only when the test explicitly triggers it, so a Save
+    // started from one dialog can be left in flight while a completely separate Save (from a
+    // later, independent dialog) runs and resolves first.
+    const pendingSaves: Array<() => void> = [];
+    const originalSaveAndActivate = services.instructions.saveAndActivate.bind(
+      services.instructions,
+    );
+    services.instructions.saveAndActivate = ((params) =>
+      new Promise((resolve) => {
+        pendingSaves.push(() => resolve(originalSaveAndActivate(params)));
+      })) as typeof services.instructions.saveAndActivate;
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'pending nav save' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }));
+    let dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    // Cancel while that Save is still in flight.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(
+      screen.getByRole('heading', { name: 'Worker instructions for Claude Code' }),
+    ).toBeInTheDocument();
+
+    // A second, independent dirty edit and dialog must behave normally rather than inheriting
+    // the cancelled Save's busy state.
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'second nav edit' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }));
+    dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    const saveButton = within(dialog).getByRole('button', { name: 'Save changes' });
+    expect(saveButton).not.toBeDisabled();
+    expect(saveButton).toHaveTextContent('Save changes');
+    fireEvent.click(saveButton);
+    expect(pendingSaves).toHaveLength(2);
+    pendingSaves[1]();
+    await waitFor(async () =>
+      expect(
+        (await screen.findAllByRole('heading', { name: 'Hammond project' })).length,
+      ).toBeGreaterThan(0),
+    );
+
+    // The FIRST save (from the cancelled dialog) finally resolves late — it must not retroactively
+    // execute the cancelled nav, nor disturb the state left by the second, completed save.
+    pendingSaves[0]();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(
+      (await screen.findAllByRole('heading', { name: 'Hammond project' })).length,
+    ).toBeGreaterThan(0);
+
+    const versions = await instructions.listOwnerVersions({
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'project_override',
+      projectId: project().id,
+    });
+    expect(versions.map((v) => v.content)).toContain('second nav edit');
+  });
+
+  it('a nav Discard during a pending Save cannot let that stale completion clear a later save busy state', async () => {
+    const { services, instructions } = makeServices();
+    const pendingSaves: Array<() => void> = [];
+    const originalSaveAndActivate = services.instructions.saveAndActivate.bind(
+      services.instructions,
+    );
+    services.instructions.saveAndActivate = ((params) =>
+      new Promise((resolve) => {
+        pendingSaves.push(() => resolve(originalSaveAndActivate(params)));
+      })) as typeof services.instructions.saveAndActivate;
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'will be discarded via nav' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }));
+    let dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    // Discard while that Save is still in flight — it proceeds immediately, without waiting.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard changes' }));
+    await waitFor(async () =>
+      expect(
+        (await screen.findAllByRole('heading', { name: 'Hammond project' })).length,
+      ).toBeGreaterThan(0),
+    );
+
+    // Back to Instructions with a completely fresh dirty edit and a new Save.
+    fireEvent.click(screen.getByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'kept nav edit' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }));
+    dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    const saveButton = within(dialog).getByRole('button', { name: 'Save changes' });
+    expect(saveButton).not.toBeDisabled();
+    fireEvent.click(saveButton);
+    expect(pendingSaves).toHaveLength(2);
+    pendingSaves[1](); // resolve the SECOND (new) save so the UI can proceed
+    await waitFor(async () =>
+      expect(
+        (await screen.findAllByRole('heading', { name: 'Hammond project' })).length,
+      ).toBeGreaterThan(0),
+    );
+
+    // The FIRST (discarded) save finally resolves late — it must not retroactively clear or
+    // otherwise disturb the state left by the second, already-completed save.
+    pendingSaves[0]();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(
+      (await screen.findAllByRole('heading', { name: 'Hammond project' })).length,
+    ).toBeGreaterThan(0);
+
+    const versions = await instructions.listOwnerVersions({
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'project_override',
+      projectId: project().id,
+    });
+    expect(versions.map((v) => v.content)).toContain('kept nav edit');
+  });
+
   it('app/window-close dirty protection: a dirty Instruction Studio blocks the close and shows the guard dialog; Save then lets it proceed', async () => {
     const { services, instructions } = makeServices();
     const windowLifecycle = createFakeWindowLifecycle();

@@ -418,6 +418,10 @@ export const InstructionStudio = forwardRef<InstructionStudioHandle, Instruction
 
     function guardedTransition(action: () => void, onCancel?: () => void) {
       if (isDirty) {
+        // Busy belongs to the dialog currently open, not to whatever a previous one left behind —
+        // a stale Saving state (a prior success or a cancelled-but-still-in-flight save) must never
+        // carry into this new dialog and disable its Save button forever.
+        setTransitionSaving(false);
         setTransitionError(null);
         transitionTokenRef.current += 1;
         pendingCancelRef.current = onCancel ?? null;
@@ -432,6 +436,10 @@ export const InstructionStudio = forwardRef<InstructionStudioHandle, Instruction
       transitionTokenRef.current += 1;
       setPendingTransition(null);
       pendingCancelRef.current = null;
+      // The dialog this busy flag belonged to is gone (Cancel, Discard, or a superseding Save
+      // success) — clear it here rather than leaving it to the in-flight Save's `.finally()`,
+      // which guards on a token this call just invalidated and would otherwise never run.
+      setTransitionSaving(false);
     }
 
     function selectRole(nextRole: InstructionRole) {

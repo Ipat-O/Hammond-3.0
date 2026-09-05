@@ -1207,6 +1207,192 @@ describe('InstructionStudio', () => {
     ).not.toBeInTheDocument();
   });
 
+  /** Waits for the effective-instructions fetch for the CURRENT role/provider to settle, so a
+   * subsequent guarded action reads fresh (not still-loading, possibly stale) dirty flags. */
+  async function waitForEffectiveLoaded() {
+    await waitFor(() =>
+      expect(screen.queryByText('Loading instructions…')).not.toBeInTheDocument(),
+    );
+  }
+
+  it('a completed Save-and-transition never leaves a later dialog stuck on a stale Saving state', async () => {
+    const services = buildServices();
+    renderStudio({ services });
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'first save' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrator' }));
+    let dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole('heading', { name: /Orchestrator instructions/ }),
+      ).toBeInTheDocument(),
+    );
+    await waitForEffectiveLoaded();
+
+    // Back to Worker (clean — no dialog), a second dirty edit, and a second guarded switch. The
+    // first Save's own completion invalidated its token via `dismissPendingTransition` — that
+    // must not leave THIS brand-new dialog's Save permanently busy/disabled.
+    fireEvent.click(screen.getByRole('button', { name: 'Worker' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    await waitForEffectiveLoaded();
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'second edit' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrator' }));
+    dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    const saveButton = within(dialog).getByRole('button', { name: 'Save changes' });
+    expect(saveButton).not.toBeDisabled();
+    expect(saveButton).toHaveTextContent('Save changes');
+    fireEvent.click(saveButton);
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('heading', { name: /Orchestrator instructions/ }),
+      ).toBeInTheDocument(),
+    );
+    const versions = await services.instructionsService.listOwnerVersions({
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'project_override',
+      projectId: project.id,
+    });
+    expect(versions.map((v) => v.content)).toEqual(
+      expect.arrayContaining(['first save', 'second edit']),
+    );
+    expect(versions).toHaveLength(2);
+  });
+
+  it('a Save left pending when Cancelled resets busy so a later dialog Save still works, and the stale save never fires', async () => {
+    const services = buildServices();
+    // Each call to saveAndActivate resolves only when the test explicitly triggers it, so a
+    // Save started from one dialog can be left in flight while a completely separate Save
+    // (from a later, independent dialog) runs and resolves first.
+    const pendingSaves: Array<() => void> = [];
+    const originalSaveAndActivate = services.instructionsService.saveAndActivate.bind(
+      services.instructionsService,
+    );
+    services.instructionsService.saveAndActivate = ((params) =>
+      new Promise((resolve) => {
+        pendingSaves.push(() => resolve(originalSaveAndActivate(params)));
+      })) as typeof services.instructionsService.saveAndActivate;
+
+    renderStudio({ services });
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'pending save' },
+    });
+
+    // First dialog targets Orchestrator — Save it, then Cancel while it is still in flight.
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrator' }));
+    let dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(
+      screen.getByRole('heading', { name: 'Worker instructions for Claude Code' }),
+    ).toBeInTheDocument();
+
+    // A second, independent dirty edit and dialog — targeting a DIFFERENT role (Auditor), so the
+    // eventual heading unambiguously proves which transition actually ran — must behave normally
+    // rather than inheriting the cancelled Save's busy state.
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'second dirty edit' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Auditor' }));
+    dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    const saveButton = within(dialog).getByRole('button', { name: 'Save changes' });
+    expect(saveButton).not.toBeDisabled();
+    expect(saveButton).toHaveTextContent('Save changes');
+    fireEvent.click(saveButton);
+    expect(pendingSaves).toHaveLength(2);
+    pendingSaves[1]();
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: /Auditor instructions/ })).toBeInTheDocument(),
+    );
+
+    // The FIRST save (from the cancelled Orchestrator dialog) finally resolves late — it must not
+    // retroactively execute the cancelled switch to Orchestrator, nor disturb the second save.
+    pendingSaves[0]();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByRole('heading', { name: /Auditor instructions/ })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: /Orchestrator instructions/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("Discard during a pending Save cannot let that stale completion clear a later save's busy state", async () => {
+    const services = buildServices();
+    const pendingSaves: Array<() => void> = [];
+    const originalSaveAndActivate = services.instructionsService.saveAndActivate.bind(
+      services.instructionsService,
+    );
+    services.instructionsService.saveAndActivate = ((params) =>
+      new Promise((resolve) => {
+        pendingSaves.push(() => resolve(originalSaveAndActivate(params)));
+      })) as typeof services.instructionsService.saveAndActivate;
+
+    renderStudio({ services });
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'will be discarded' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrator' }));
+    let dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    // Discard while that Save is still in flight — it proceeds immediately, without waiting.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard changes' }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole('heading', { name: /Orchestrator instructions/ }),
+      ).toBeInTheDocument(),
+    );
+    await waitForEffectiveLoaded();
+
+    // Back to Worker with a completely fresh dirty edit and a new Save.
+    fireEvent.click(screen.getByRole('button', { name: 'Worker' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    await waitForEffectiveLoaded();
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'kept edit' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrator' }));
+    dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    const saveButton = within(dialog).getByRole('button', { name: 'Save changes' });
+    expect(saveButton).not.toBeDisabled();
+    fireEvent.click(saveButton);
+    expect(pendingSaves).toHaveLength(2);
+    pendingSaves[1](); // resolve the SECOND (new) save so the UI can proceed
+    await waitFor(() =>
+      expect(
+        screen.getByRole('heading', { name: /Orchestrator instructions/ }),
+      ).toBeInTheDocument(),
+    );
+
+    // The FIRST (discarded) save finally resolves late — it must not retroactively clear or
+    // otherwise disturb the state left by the second, already-completed save.
+    pendingSaves[0]();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByRole('heading', { name: /Orchestrator instructions/ })).toBeInTheDocument();
+
+    const versions = await services.instructionsService.listOwnerVersions({
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'project_override',
+      projectId: project.id,
+    });
+    expect(versions.map((v) => v.content)).toContain('kept edit');
+  });
+
   // -------------------------------------------------------------------
   // 7. Full generated preview matches canonical formatting.
   // -------------------------------------------------------------------

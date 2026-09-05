@@ -464,6 +464,10 @@ export function TrackerPage({
 
   function guardedNav(action: () => void, onCancel?: () => void) {
     if (primaryView === 'instructions' && studioRef.current?.isDirty()) {
+      // Busy belongs to the dialog currently open, not to whatever a previous one left behind —
+      // a stale Saving state (a prior success or a cancelled-but-still-in-flight save) must never
+      // carry into this new dialog and disable its Save button forever.
+      setNavTransitionSaving(false);
       setNavTransitionError(null);
       navTransitionTokenRef.current += 1;
       pendingNavCancelRef.current = onCancel ?? null;
@@ -478,6 +482,10 @@ export function TrackerPage({
     navTransitionTokenRef.current += 1;
     setPendingNav(null);
     pendingNavCancelRef.current = null;
+    // The dialog this busy flag belonged to is gone (Cancel, Discard, or a superseding Save
+    // success) — clear it here rather than leaving it to the in-flight Save's `.finally()`, which
+    // guards on a token this call just invalidated and would otherwise never run.
+    setNavTransitionSaving(false);
   }
 
   function cancelPendingNav() {
@@ -501,6 +509,7 @@ export function TrackerPage({
       () =>
         new Promise<boolean>((resolve) => {
           if (primaryViewRef.current === 'instructions' && studioRef.current?.isDirty()) {
+            setNavTransitionSaving(false);
             setNavTransitionError(null);
             navTransitionTokenRef.current += 1;
             pendingNavCancelRef.current = () => resolve(false);
