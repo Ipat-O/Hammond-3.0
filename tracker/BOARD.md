@@ -19,7 +19,7 @@ None.
 ## in_development
 
 - [HAM3-007](./tasks/HAM3-007.md) — Instruction Studio UI
-  PR #9 · pre-audit Correction 1 at `9815d75` · Sonnet continuation
+  PR #9 · pre-audit Correction 2 at `c80aa0d` · Sonnet continuation
 
 ## in_review
 

@@ -176,15 +176,16 @@ tasks:
     auditor: Kilo Code / DeepSeek V4 Pro
     branch: claude/instruction-studio-ui-7r37xf
     base_sha: 2dc845bd4d1b4bdc6a91efdde926c7b1b6b62f16
-    head_sha: 9815d751c4a05c962608e01f809a3ced4c47cc32
+    head_sha: c80aa0d6f7da3bd5e302fa7140b2d4f5b6018205
     pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/9
     worker_report: https://github.com/Ipat-O/Hammond-3.0/pull/9#issuecomment-5551620184
     branch_provenance: harness-forced name accepted; sole implementation commit has prescribed base as its sole parent; worker did not stop before editing as requested
-    correction_packet: tracker/work-orders/HAM3-007-CORRECTION-1.md (device-local transfer packet)
-    correction_round: 1
+    correction_1_report: https://github.com/Ipat-O/Hammond-3.0/pull/9#issuecomment-5551916095
+    correction_packet: tracker/work-orders/HAM3-007-CORRECTION-2.md (device-local transfer packet)
+    correction_round: 2
     current_audit_status: not routed; source-based intake correction required, no independent verdict
-    worker_verification: reported 205 frontend tests, 77 Linux Rust tests, static/build checks and three restored mutations; not independently reproduced
-    outstanding: import retry preservation, assignment coherence, dirty and async context guards, dialog keyboard and window-close protection; independent audit and Windows owner smoke
+    worker_verification: reported 224 frontend tests, static/build checks and seven correction mutations; original 77 Linux Rust tests, no native correction changes; not independently reproduced
+    outstanding: production close adapter must await decision; dirty-dialog saving state must reset safely; independent audit and Windows owner smoke
     design_note: D-017 makes effective instructions the default experience and moves composition layers/version mechanics behind Customize and History
   - id: HAM3-008
     title: Project home, directory switching, and resume
