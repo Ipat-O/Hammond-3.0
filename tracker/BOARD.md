@@ -17,12 +17,12 @@ None.
 
 ## in_development
 
-- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
-  Draft PR #10 at `1c89249`; Correction 1 required before independent audit.
+None.
 
 ## in_review
 
-None.
+- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
+  Draft PR #10 at `090a045`; full-PR DeepSeek audit routed after Correction 1.
 
 ## testing
 
