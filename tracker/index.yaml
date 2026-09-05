@@ -170,7 +170,7 @@ tasks:
     design_note: D-017 adds explicit per-project, per-role execution-provider assignment, separate from provider-specific instruction content
   - id: HAM3-007
     title: Instruction Studio UI
-    state: in_review
+    state: testing
     depends_on: [HAM3-005, HAM3-006]
     worker: Anthropic / Claude Code / Claude Sonnet 5
     auditor: Kilo Code / DeepSeek V4 Pro
@@ -189,15 +189,18 @@ tasks:
     assigned_auditor_identity: Kilo / Kilo Code / DeepSeek V4 Pro
     audit_target_sha: 0ff691372c2b697f564da91a9785c8402f750efd
     audit_round: 2
-    current_audit_status: round-2 exact-head packet prepared for owner transfer; prior CHANGES at e20991b is historical, no current-head verdict
-    audit_verdict: CHANGES
-    audited_head_sha: e20991be6d920400dbcb14f9c01023cd6cda48f6
-    audit_report: not_available on PR at intake; owner-supplied full report preserved in tracker/work-orders/HAM3-007-AUDIT-REPORT-1.md device-locally
-    audit_verification: reported focused 168/170 and full 236/237 with diagnosed timing flakes, isolated lifecycle 7/7 and retry 2/2 across four runs; static/build/format and Windows Rust fmt/74 tests/clippy passed; six mutations restored; no native display smoke
-    audit_findings: F1 blocking missing core:window:allow-destroy; F2 non-blocking Windows jsdom timing sensitivity
+    current_audit_status: APPROVE by DeepSeek at exact head 0ff6913; Windows owner smoke pending
+    audit_verdict: APPROVE
+    audited_head_sha: 0ff691372c2b697f564da91a9785c8402f750efd
+    audit_report: https://github.com/Ipat-O/Hammond-3.0/pull/9#issuecomment-5553171827
+    audit_round_1_report: https://github.com/Ipat-O/Hammond-3.0/pull/9#issuecomment-5553167520
+    audit_verification: Windows full frontend 237/237 twice, affected group 105/105, lifecycle and Studio 40/40 three times; native build/75 Rust tests/fmt/clippy and static/frontend build passed; three mutations restored; no live desktop smoke
+    audit_findings: F1 closed; F2 not reproduced on Windows; default.json Prettier wrapping is non-blocking cosmetic note
     worker_verification: reported 237 frontend tests in 22 files, static/build/format checks and reverted-fix regressions; original 77 Linux Rust tests, no native correction changes; not independently reproduced
     correction_3_verification: worker reports 78 Linux Rust tests, native build/fmt/clippy, 237 frontend tests and static/build/format checks; permission-removal and dropped-promise mutations restored; Windows stability awaits re-audit
-    outstanding: round-1 public audit report, exact-new-head DeepSeek re-audit and Windows owner smoke
+    owner_test_packet: tracker/work-orders/HAM3-007-OWNER-TEST.md (device-local transfer packet)
+    human_check: pending at approved exact head; includes real native window-X close
+    outstanding: Windows owner smoke and owner merge authorization
     design_note: D-017 makes effective instructions the default experience and moves composition layers/version mechanics behind Customize and History
   - id: HAM3-008
     title: Project home, directory switching, and resume

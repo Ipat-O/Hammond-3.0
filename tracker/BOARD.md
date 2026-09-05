@@ -22,12 +22,12 @@ None.
 
 ## in_review
 
-- [HAM3-007](./tasks/HAM3-007.md) — Instruction Studio UI
-  PR #9 · exact head `0ff6913` · DeepSeek round-2 re-audit packet prepared
+None.
 
 ## testing
 
-None.
+- [HAM3-007](./tasks/HAM3-007.md) — Instruction Studio UI
+  PR #9 · DeepSeek APPROVE `0ff6913` · Windows owner smoke pending
 
 ## merged
 
