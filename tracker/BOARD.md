@@ -13,11 +13,12 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## ready_for_development
 
-- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
+None.
 
 ## in_development
 
-None.
+- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
+  Draft PR #10 at `1c89249`; Correction 1 required before independent audit.
 
 ## in_review
 
