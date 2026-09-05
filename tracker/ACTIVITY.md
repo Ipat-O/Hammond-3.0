@@ -686,3 +686,10 @@
 - Stopped the exact test session; no matching Hammond/node/cargo test processes or port-1420 listener remained. Restored clean synchronized dev before recording this update.
 - Live PR #9 retains the approved head and targets dev. Marked ready for review; GitHub reports MERGEABLE/CLEAN and no status checks listed. Independent APPROVE and owner smoke are complete; the capability JSON formatting note remains explicitly non-blocking and unchanged.
 - HAM3-007 remains `testing` pending explicit owner merge authorization. No merge or next-task promotion occurred; packaged-release shipped status remains unestablished.
+
+## 2026-09-05 — HAM3-007 merged; HAM3-008 promoted
+
+- Owner explicitly authorized merge. PR #9 merged into dev as `85a012577d3384258b0c1d586a3a0ff08d70e863` with a required-head match to approved implementation `0ff691372c2b697f564da91a9785c8402f750efd`. Verified the merge commit's second parent equals that independently approved and owner-tested head.
+- Fast-forwarded local dev to the merge. HAM3-007 is `merged`, not yet shipped: owner testing used the exact-head development app rather than a packaged release built from merged dev. Non-blocking JSON formatting remains recorded.
+- Under sequential delivery, HAM3-008 is next; dependencies HAM3-003, HAM3-004 and HAM3-006 are merged, so it moves to `ready_for_development`. No worker dispatch has occurred; the work order must be refreshed against the exact dev head at handoff.
+- Test app remains stopped. No temporary directories were created during launch, smoke intake or merge.
