@@ -621,3 +621,11 @@
 - The auditor explicitly recorded the owner-accepted evidence debt: three permanent Windows symbolic-link tests skip on privilege denial, while an independent real `mklink /J` probe confirms runtime escape rejection and outside-file preservation. No actual confinement defect was found.
 - HAM3-006 moved from `in_review` to `testing`. The new assignment migration has not been applied to hosted Supabase; explicit owner authorization is required before deployment. After post-deploy verification, the owner must run the exact-head assignment/injection/provider-switch/foreign-conflict/removal/restart smoke flow.
 - No merge is authorized.
+
+## 2026-09-05 — HAM3-006 owner smoke passed and PR #8 merged; HAM3-007 promoted
+
+- The owner explicitly authorized the hosted deployment of `20260904155232_create_project_agent_assignments.sql`. The linked Hammond project accepted that single migration, and a subsequent dry run reported the remote migration set up to date.
+- The owner completed the HAM3-006 exact-head smoke on `06980a319731a6f665623cf80cdb60c40ed311e7` and reported all checks perfect, covering assignment, injection, provider switching, conflict handling, removal, and restart behavior.
+- PR #8 was marked ready and merged into `dev` as merge commit `5533c5a6ddbcd8c8f518a9058de2b7b20b1520ee`, whose second parent is the independently approved implementation head.
+- HAM3-006 moved from `testing` to `merged`. It is not yet `shipped`, because the accepted check ran in the exact-head development app rather than a packaged release built from merged `dev`.
+- Under D-011 sequential delivery, HAM3-007 is the next foundation task. Its HAM3-005 and HAM3-006 dependencies are merged, so it moved from `in_design` to `ready_for_development`.
