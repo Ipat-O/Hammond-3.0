@@ -15,7 +15,10 @@ export type TrackerSession = Pick<Session, 'user'>;
 export interface TrackerRepositories {
   projects: Pick<ProjectRepository, 'list' | 'create' | 'update' | 'archive'>;
   tasks: Pick<TaskRepository, 'list' | 'create' | 'update' | 'archive'>;
-  memory: Pick<ProjectMemoryRepository, 'listComments' | 'addComment'>;
+  memory: Pick<
+    ProjectMemoryRepository,
+    'listComments' | 'addComment' | 'listRecentComments' | 'listActivity' | 'listEvidence'
+  >;
 }
 
 export interface TrackerAuth {

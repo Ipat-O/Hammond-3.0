@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { DirectoryContextManager } from './directoryContextManager';
 import type { DirectoryContextServices } from './contracts';
-import { createDefaultLocalSettingsState, type LocalSettingsStateV1 } from './state';
+import { createDefaultLocalSettingsState, type LocalSettingsStateV2 } from './state';
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Local settings could not be loaded.';
@@ -15,7 +15,7 @@ function errorMessage(error: unknown) {
  */
 export function useDirectoryContextState(services: DirectoryContextServices) {
   const manager = useMemo(() => new DirectoryContextManager(services), [services]);
-  const [state, setState] = useState<LocalSettingsStateV1 | null>(null);
+  const [state, setState] = useState<LocalSettingsStateV2 | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {

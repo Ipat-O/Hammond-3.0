@@ -1,10 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { assertNoParentCycle, getTaskSubtreeIds, TASK_STATUSES, type Database } from '../data';
+import {
+  assertNoParentCycle,
+  getTaskAncestorIds,
+  getTaskSubtreeIds,
+  TASK_STATUSES,
+  type Database,
+} from '../data';
+import type { HarnessClassification, InjectionPreview } from '../harness/types';
 import { InstructionStudio } from '../instructions/InstructionStudio';
 import type { InstructionStudioHandle } from '../instructions/InstructionStudio';
+import { INSTRUCTION_ROLES } from '../instructions/types';
+import type { InstructionRole, ProviderFamily } from '../instructions/types';
 import { useFocusTrap } from '../instructions/useFocusTrap';
 import { DirectoryContextPanel } from '../settings/DirectoryContextPanel';
+import { labelFromPath } from '../settings/directoryContextManager';
+import type { DirectoryContextRecord } from '../settings/state';
 import { useDirectoryContextState } from '../settings/useDirectoryContextState';
 import type { TrackerServices } from './contracts';
 import type { TaskStatus } from '../data';
@@ -12,14 +23,29 @@ import { createTauriWindowLifecycle, type WindowLifecycle } from './windowLifecy
 
 const defaultWindowLifecycle = createTauriWindowLifecycle();
 
-type PrimaryView = 'workspace' | 'instructions';
+type PrimaryView = 'home' | 'workspace' | 'instructions';
 
 type Project = Database['public']['Tables']['projects']['Row'];
 type ProjectInsert = Database['public']['Tables']['projects']['Insert'];
 type Task = Database['public']['Tables']['tasks']['Row'];
 type TaskInsert = Database['public']['Tables']['tasks']['Insert'];
 type Comment = Database['public']['Tables']['comments']['Row'];
+type ActivityEvent = Database['public']['Tables']['activity']['Row'];
+type TaskEvidence = Database['public']['Tables']['task_evidence']['Row'];
 type TaskRetry = { kind: 'move' | 'archive'; taskId: string; status?: TaskStatus };
+type Reachability = boolean | 'checking';
+
+type OpenDirectoryFlow =
+  | { kind: 'ambiguous'; path: string; matches: DirectoryContextRecord[] }
+  | { kind: 'unknown'; path: string; mode: 'choose' | 'create' | 'link' }
+  | { kind: 'linkRetry'; path: string; projectId: string; error: string };
+
+interface InstructionStatus {
+  provider: ProviderFamily | null;
+  preview: InjectionPreview | null;
+  loading: boolean;
+  error: string | null;
+}
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
   backlog: 'Backlog',
@@ -53,6 +79,32 @@ function displayDate(value: string) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'The save failed. Your changes are still here.';
+}
+
+function roleLabel(role: InstructionRole): string {
+  return role.charAt(0).toUpperCase() + role.slice(1);
+}
+
+function providerLabel(provider: ProviderFamily): string {
+  return provider
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function classificationBadge(classification: HarnessClassification): string {
+  switch (classification.kind) {
+    case 'Missing':
+      return 'Not set up';
+    case 'ManagedValid':
+      return 'Configured';
+    case 'ManagedForeign':
+      return 'Belongs elsewhere';
+    case 'ManagedMalformed':
+      return 'Needs repair';
+    case 'Unmanaged':
+      return 'Unmanaged file present';
+  }
 }
 
 function getChildrenByParent(tasks: Task[]) {
@@ -405,6 +457,341 @@ function TaskOutliner({
   return <ul className="task-outliner">{roots.map((task) => renderTask(task))}</ul>;
 }
 
+interface NoProjectStateProps {
+  onCreateProject: () => void;
+  onOpenDirectory: () => void;
+  openDirectoryDisabled: boolean;
+}
+
+/**
+ * The "nothing here yet" landing content, identical whether it is reached from Home or
+ * Workspace — there is exactly one project-less empty state, not two subtly different ones.
+ */
+function NoProjectState({ onCreateProject, onOpenDirectory, openDirectoryDisabled }: NoProjectStateProps) {
+  return (
+    <div className="empty-state-grid">
+      <section className="welcome-card">
+        <div className="welcome-copy">
+          <p className="card-kicker">Hammond is ready</p>
+          <h2>A calm place for project context.</h2>
+          <p>Create your first project, then add work that can move from backlog to shipped.</p>
+          <div className="form-actions">
+            <button className="button button-primary" type="button" onClick={onCreateProject}>
+              Create your first project
+            </button>
+            <button
+              className="button button-secondary"
+              type="button"
+              onClick={onOpenDirectory}
+              disabled={openDirectoryDisabled}
+            >
+              Open directory
+            </button>
+          </div>
+        </div>
+        <div className="welcome-orbit" aria-hidden="true">
+          <span className="orbit-ring orbit-ring-large" />
+          <span className="orbit-ring orbit-ring-small" />
+          <span className="orbit-core">H</span>
+        </div>
+      </section>
+      <section className="boundary-section" aria-labelledby="boundary-heading">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Foundation map</p>
+            <h2 id="boundary-heading">Clear boundaries, ready to extend.</h2>
+          </div>
+          <span className="section-count">03 modules</span>
+        </div>
+        <div className="boundary-grid">
+          <article className="boundary-card">
+            <span className="boundary-index">01</span>
+            <h3>Local workspace</h3>
+            <p>Native filesystem commands stay behind a typed command surface.</p>
+          </article>
+          <article className="boundary-card">
+            <span className="boundary-index">02</span>
+            <h3>Project memory</h3>
+            <p>Owner-scoped project data stays behind the repository boundary.</p>
+          </article>
+          <article className="boundary-card">
+            <span className="boundary-index">03</span>
+            <h3>Local settings</h3>
+            <p>Device-specific settings remain separate from durable records.</p>
+          </article>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+interface HomeDashboardProps {
+  project: Project;
+  activeContext: DirectoryContextRecord | null;
+  activeReachable: Reachability | undefined;
+  taskStatusCounts: Record<TaskStatus, number>;
+  totalTaskCount: number;
+  selectedTask: Task | null;
+  comments: Comment[];
+  commentsLoading: boolean;
+  recentComments: Comment[];
+  recentCommentsLoading: boolean;
+  recentCommentsError: string | null;
+  instructionStatuses: Record<InstructionRole, InstructionStatus> | null;
+  hasDirectory: boolean;
+  recentActivity: ActivityEvent[];
+  recentActivityLoading: boolean;
+  recentActivityError: string | null;
+  recentEvidence: TaskEvidence[];
+  recentEvidenceLoading: boolean;
+  recentEvidenceError: string | null;
+  onOpenDirectory: () => void;
+  onCloseDirectory: () => void;
+  onOpenWorkspace: () => void;
+  onOpenTask: (taskId: string) => void;
+  onOpenInstructions: () => void;
+}
+
+function HomeDashboard({
+  project,
+  activeContext,
+  activeReachable,
+  taskStatusCounts,
+  totalTaskCount,
+  selectedTask,
+  comments,
+  commentsLoading,
+  recentComments,
+  recentCommentsLoading,
+  recentCommentsError,
+  instructionStatuses,
+  hasDirectory,
+  recentActivity,
+  recentActivityLoading,
+  recentActivityError,
+  recentEvidence,
+  recentEvidenceLoading,
+  recentEvidenceError,
+  onOpenDirectory,
+  onCloseDirectory,
+  onOpenWorkspace,
+  onOpenTask,
+  onOpenInstructions,
+}: HomeDashboardProps) {
+  return (
+    <div className="home-grid">
+      <section className="home-identity-card" aria-labelledby="home-identity-heading">
+        <p className="eyebrow">Project home {project.archived_at && '· Archived'}</p>
+        <h2 id="home-identity-heading">{project.name}</h2>
+        <p className="project-description">{project.description || 'No project description yet.'}</p>
+      </section>
+
+      <section className="home-directory-section" aria-labelledby="home-directory-heading">
+        <div className="section-heading compact-heading">
+          <div>
+            <p className="eyebrow">Local directory</p>
+            <h2 id="home-directory-heading">Where this project lives on disk</h2>
+          </div>
+        </div>
+        {activeContext ? (
+          <>
+            <p className="directory-context-current">
+              Open: <code>{activeContext.path}</code>
+              {activeReachable === false && (
+                <span className="directory-context-status directory-context-status-missing">
+                  {' '}
+                  — missing
+                </span>
+              )}
+            </p>
+            <div className="form-actions">
+              <button className="button button-secondary" type="button" onClick={onOpenDirectory}>
+                Open a different directory
+              </button>
+              <button className="button button-quiet" type="button" onClick={onCloseDirectory}>
+                Close
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="muted-copy">No directory is open for this project.</p>
+            <button className="button button-secondary" type="button" onClick={onOpenDirectory}>
+              Open directory
+            </button>
+          </>
+        )}
+      </section>
+
+      <section className="home-tasks-section" aria-labelledby="home-tasks-heading">
+        <div className="section-heading compact-heading">
+          <div>
+            <p className="eyebrow">Tasks</p>
+            <h2 id="home-tasks-heading">{totalTaskCount} tracked</h2>
+          </div>
+          <button className="button button-secondary" type="button" onClick={onOpenWorkspace}>
+            Open workspace
+          </button>
+        </div>
+        <div className="outliner-summary" aria-label="Task status counts">
+          {TASK_STATUSES.map((status) => (
+            <div key={status} className="outliner-summary-item">
+              <h3>{STATUS_LABELS[status]}</h3>
+              <strong>{taskStatusCounts[status]}</strong>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="home-comments-section" aria-labelledby="home-comments-heading">
+        <div className="section-heading compact-heading">
+          <div>
+            <p className="eyebrow">Comments</p>
+            <h2 id="home-comments-heading">{selectedTask ? 'Selected task' : 'Recent in this project'}</h2>
+          </div>
+        </div>
+        {selectedTask ? (
+          <>
+            <p className="home-selected-task-title">{selectedTask.title}</p>
+            {commentsLoading ? (
+              <p className="muted-copy">Loading comments…</p>
+            ) : comments.length === 0 ? (
+              <p className="muted-copy">No comments yet on this task.</p>
+            ) : (
+              <ul className="comment-list">
+                {comments.slice(-3).map((comment) => (
+                  <li key={comment.id} className="comment-card">
+                    <p>{comment.body}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <button className="button button-quiet" type="button" onClick={() => onOpenTask(selectedTask.id)}>
+              View task
+            </button>
+          </>
+        ) : recentCommentsLoading ? (
+          <p className="muted-copy">Loading recent comments…</p>
+        ) : recentCommentsError ? (
+          <div className="save-error" role="alert">
+            {recentCommentsError}
+          </div>
+        ) : recentComments.length === 0 ? (
+          <p className="muted-copy">No comments yet in this project.</p>
+        ) : (
+          <ul className="comment-list">
+            {recentComments.map((comment) => (
+              <li key={comment.id} className="comment-card">
+                <p>{comment.body}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="home-instructions-section" aria-labelledby="home-instructions-heading">
+        <div className="section-heading compact-heading">
+          <div>
+            <p className="eyebrow">Instructions</p>
+            <h2 id="home-instructions-heading">Active instruction selection</h2>
+          </div>
+          <button className="button button-quiet" type="button" onClick={onOpenInstructions}>
+            Open Instruction Studio
+          </button>
+        </div>
+        <ul className="instruction-status-list">
+          {INSTRUCTION_ROLES.map((role) => {
+            const status = instructionStatuses?.[role];
+            return (
+              <li key={role} className="instruction-status-row">
+                <span className="instruction-status-role">{roleLabel(role)}</span>
+                <span className="instruction-status-provider">
+                  {status?.provider ? providerLabel(status.provider) : 'Unassigned'}
+                </span>
+                {!hasDirectory ? (
+                  <span className="muted-copy">Link a directory to check status</span>
+                ) : status?.loading ? (
+                  <span className="muted-copy">Checking…</span>
+                ) : status?.error ? (
+                  <span className="instruction-status-error">{status.error}</span>
+                ) : status?.preview ? (
+                  <>
+                    <span
+                      className={`instruction-status-badge instruction-status-${status.preview.classification.kind}`}
+                    >
+                      {classificationBadge(status.preview.classification)}
+                    </span>
+                    {status.preview.classification.kind === 'Missing' && (
+                      <button className="button button-small" type="button" onClick={onOpenInstructions}>
+                        Set up instructions
+                      </button>
+                    )}
+                  </>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+
+      <section className="home-activity-section" aria-labelledby="home-activity-heading">
+        <div className="section-heading compact-heading">
+          <div>
+            <p className="eyebrow">Recent activity</p>
+            <h2 id="home-activity-heading">What happened recently</h2>
+          </div>
+        </div>
+        {recentActivityLoading ? (
+          <p className="muted-copy">Loading recent activity…</p>
+        ) : recentActivityError ? (
+          <div className="save-error" role="alert">
+            {recentActivityError}
+          </div>
+        ) : recentActivity.length === 0 ? (
+          <p className="muted-copy">No activity recorded yet.</p>
+        ) : (
+          <ul className="home-activity-list">
+            {recentActivity.map((event) => (
+              <li key={event.id}>
+                <span>{event.event_type}</span>
+                <time dateTime={event.created_at}>{displayDate(event.created_at)}</time>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="home-evidence-section" aria-labelledby="home-evidence-heading">
+        <div className="section-heading compact-heading">
+          <div>
+            <p className="eyebrow">Evidence</p>
+            <h2 id="home-evidence-heading">Recently recorded</h2>
+          </div>
+        </div>
+        {recentEvidenceLoading ? (
+          <p className="muted-copy">Loading recent evidence…</p>
+        ) : recentEvidenceError ? (
+          <div className="save-error" role="alert">
+            {recentEvidenceError}
+          </div>
+        ) : recentEvidence.length === 0 ? (
+          <p className="muted-copy">No evidence recorded yet.</p>
+        ) : (
+          <ul className="home-evidence-list">
+            {recentEvidence.map((evidence) => (
+              <li key={evidence.id}>
+                <span className="home-evidence-kind">{evidence.kind}</span>
+                <span>{evidence.summary || 'No summary provided.'}</span>
+                <time dateTime={evidence.created_at}>{displayDate(evidence.created_at)}</time>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+}
+
 interface TrackerPageProps {
   services: TrackerServices;
   ownerId: string;
@@ -424,7 +811,14 @@ export function TrackerPage({
   const repositories = services.repositories;
   const directory = useDirectoryContextState(services.directoryContext);
   const resumeAppliedRef = useRef(false);
-  const [primaryView, setPrimaryView] = useState<PrimaryView>('workspace');
+  const pendingTaskResumeRef = useRef<{ projectId: string; taskId: string } | null>(null);
+  // Set the instant the owner explicitly picks a screen (a nav click), so a still-pending device
+  // resume that resolves moments later never flips the screen back out from under them. Project
+  // selection needs no equivalent flag: reading `selectedProjectId` directly at resume time
+  // already tells us whether an explicit pick (e.g. a sidebar project click) beat resume to it.
+  const screenNavigatedRef = useRef(false);
+  const [resumeReady, setResumeReady] = useState(false);
+  const [primaryView, setPrimaryView] = useState<PrimaryView>('home');
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -461,6 +855,32 @@ export function TrackerPage({
   // away from once it resolves.
   const navTransitionTokenRef = useRef(0);
   const navDialogRef = useRef<HTMLDivElement>(null);
+
+  // Directory context reachability, mirrored here (not just inside DirectoryContextPanel) so
+  // Home's compact directory summary can show a "missing" state too.
+  const [directoryReachability, setDirectoryReachability] = useState<Record<string, Reachability>>(
+    {},
+  );
+  const [openDirectoryBusy, setOpenDirectoryBusy] = useState(false);
+  const [openDirectoryError, setOpenDirectoryError] = useState<string | null>(null);
+  const [openDirectoryFlow, setOpenDirectoryFlow] = useState<OpenDirectoryFlow | null>(null);
+  const [directoryFlowProjectDraft, setDirectoryFlowProjectDraft] = useState(emptyProjectDraft);
+  const [directoryFlowSaving, setDirectoryFlowSaving] = useState(false);
+  const [directoryFlowError, setDirectoryFlowError] = useState<string | null>(null);
+
+  const [recentComments, setRecentComments] = useState<Comment[]>([]);
+  const [recentCommentsLoading, setRecentCommentsLoading] = useState(false);
+  const [recentCommentsError, setRecentCommentsError] = useState<string | null>(null);
+  const [recentActivity, setRecentActivity] = useState<ActivityEvent[]>([]);
+  const [recentActivityLoading, setRecentActivityLoading] = useState(false);
+  const [recentActivityError, setRecentActivityError] = useState<string | null>(null);
+  const [recentEvidence, setRecentEvidence] = useState<TaskEvidence[]>([]);
+  const [recentEvidenceLoading, setRecentEvidenceLoading] = useState(false);
+  const [recentEvidenceError, setRecentEvidenceError] = useState<string | null>(null);
+  const [instructionStatuses, setInstructionStatuses] = useState<Record<
+    InstructionRole,
+    InstructionStatus
+  > | null>(null);
 
   function guardedNav(action: () => void, onCancel?: () => void) {
     if (primaryView === 'instructions' && studioRef.current?.isDirty()) {
@@ -500,6 +920,11 @@ export function TrackerPage({
   // `windowLifecycle` identity, not on every render) always sees the current view.
   const primaryViewRef = useRef(primaryView);
   primaryViewRef.current = primaryView;
+
+  // Kept fresh every render so the resume-persistence effect below always writes against the
+  // latest directory-context state without needing it as a dependency (see that effect for why).
+  const directoryStateRef = useRef(directory.state);
+  directoryStateRef.current = directory.state;
 
   // App/window-close dirty protection: reuses the same guard and dialog as an in-app primary-nav
   // switch. Not dirty (or not even in Instructions) closes immediately; dirty shows the dialog,
@@ -549,6 +974,17 @@ export function TrackerPage({
     return visibleTasks.filter((task) => focusedTaskIds.has(task.id));
   }, [focusedTaskId, visibleTasks]);
 
+  // The one and only active directory for the SELECTED project — never a first-binding guess,
+  // and never another project's active context. `null` whenever nothing is currently open here.
+  const activeDirectoryContext =
+    directory.state && selectedProject
+      ? directory.manager.activeContextForProject(directory.state, selectedProject.id)
+      : null;
+  const activeDirectoryRoot = activeDirectoryContext?.path ?? null;
+  const activeDirectoryReachable = activeDirectoryContext
+    ? directoryReachability[activeDirectoryContext.id]
+    : undefined;
+
   useEffect(() => {
     let mounted = true;
     setLoading(true);
@@ -557,7 +993,6 @@ export function TrackerPage({
       .then((result) => {
         if (!mounted) return;
         setProjects(result);
-        setSelectedProjectId((current) => current ?? result.find((project) => !project.archived_at)?.id ?? result[0]?.id ?? null);
       })
       .catch((error: unknown) => mounted && setContentError(errorMessage(error)))
       .finally(() => mounted && setLoading(false));
@@ -566,20 +1001,50 @@ export function TrackerPage({
     };
   }, [repositories.projects]);
 
-  // Cold-restart resume: once both the project list and local directory-context state have
-  // loaded, prefer whichever project the last-open directory context belongs to over the
-  // ordinary "first project" default. Applied at most once per mount.
+  // Cold-restart / device resume: once both the project list and local settings state have
+  // loaded, restore the saved project, screen, and (once its tasks arrive, below) task — applied
+  // at most once per mount, and never by defaulting to a first project before this decides. A
+  // project the owner has already explicitly picked (read directly off `selectedProjectId`, e.g.
+  // via a sidebar click that beat this effect to it) is never overwritten with the saved/default
+  // one; an explicit screen navigation is honored the same way, gated by `screenNavigatedRef`
+  // (set by `navigateToScreen`) since `primaryView`'s own default value can't otherwise be told
+  // apart from an explicit choice of that same screen.
   useEffect(() => {
-    if (resumeAppliedRef.current) return;
-    if (!directory.state || projects.length === 0) return;
-    resumeAppliedRef.current = true;
-    const lastContextId = directory.state.lastOpenContextId;
-    if (!lastContextId) return;
-    const lastContext = directory.manager.findContext(directory.state, lastContextId);
-    if (lastContext && projects.some((project) => project.id === lastContext.projectId)) {
-      setSelectedProjectId(lastContext.projectId);
+    if (loading || !directory.state) return;
+    if (!resumeAppliedRef.current) {
+      resumeAppliedRef.current = true;
+      const saved = directory.state;
+
+      if (selectedProjectId === null) {
+        const savedProjectExists = Boolean(
+          saved.selectedProjectId && projects.some((project) => project.id === saved.selectedProjectId),
+        );
+        const activeContext = saved.lastOpenContextId
+          ? directory.manager.findContext(saved, saved.lastOpenContextId)
+          : null;
+        const activeContextProjectExists = Boolean(
+          activeContext && projects.some((project) => project.id === activeContext.projectId),
+        );
+
+        const resolvedProjectId = savedProjectExists
+          ? saved.selectedProjectId
+          : activeContextProjectExists
+            ? (activeContext as DirectoryContextRecord).projectId
+            : (projects.find((project) => !project.archived_at) ?? projects[0])?.id ?? null;
+
+        if (resolvedProjectId && saved.selectedTaskId && resolvedProjectId === saved.selectedProjectId) {
+          pendingTaskResumeRef.current = { projectId: resolvedProjectId, taskId: saved.selectedTaskId };
+        }
+
+        setSelectedProjectId(resolvedProjectId);
+      }
+
+      if (!screenNavigatedRef.current) {
+        setPrimaryView(saved.resumeScreen ?? 'home');
+      }
     }
-  }, [directory.state, directory.manager, projects]);
+    setResumeReady(true);
+  }, [loading, directory.state, directory.manager, projects, selectedProjectId]);
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -592,13 +1057,23 @@ export function TrackerPage({
     let mounted = true;
     setContentError(null);
     setFocusedTaskId(null);
-    setExpandedTaskIds(new Set());
     void repositories.tasks
       .list(selectedProjectId, { includeArchived: true })
       .then((result) => {
         if (!mounted) return;
         setTasks(result);
+        const pendingResume = pendingTaskResumeRef.current;
+        if (pendingResume && pendingResume.projectId === selectedProjectId) {
+          pendingTaskResumeRef.current = null;
+          const resumedTask = result.find((task) => task.id === pendingResume.taskId);
+          if (resumedTask) {
+            setSelectedTaskId(resumedTask.id);
+            setExpandedTaskIds(getTaskAncestorIds(result, resumedTask.id));
+            return;
+          }
+        }
         setSelectedTaskId((current) => (current && result.some((task) => task.id === current) ? current : null));
+        setExpandedTaskIds(new Set());
       })
       .catch((error: unknown) => mounted && setContentError(errorMessage(error)));
     return () => {
@@ -623,6 +1098,173 @@ export function TrackerPage({
       mounted = false;
     };
   }, [repositories.memory, selectedTask]);
+
+  // Home's project-wide "recent" feed only matters when no single task is selected — a selected
+  // task's own comments (above) already cover that case with a navigable summary instead.
+  useEffect(() => {
+    if (!selectedProjectId || selectedTaskId) {
+      setRecentComments([]);
+      setRecentCommentsError(null);
+      return;
+    }
+    let mounted = true;
+    setRecentCommentsLoading(true);
+    setRecentCommentsError(null);
+    void repositories.memory
+      .listRecentComments(selectedProjectId, 5)
+      .then((result) => mounted && setRecentComments(result))
+      .catch((error: unknown) => mounted && setRecentCommentsError(errorMessage(error)))
+      .finally(() => mounted && setRecentCommentsLoading(false));
+    return () => {
+      mounted = false;
+    };
+  }, [repositories.memory, selectedProjectId, selectedTaskId]);
+
+  useEffect(() => {
+    if (!selectedProjectId) {
+      setRecentActivity([]);
+      setRecentActivityError(null);
+      return;
+    }
+    let mounted = true;
+    setRecentActivityLoading(true);
+    setRecentActivityError(null);
+    void repositories.memory
+      .listActivity(selectedProjectId, { limit: 10 })
+      .then((result) => mounted && setRecentActivity(result))
+      .catch((error: unknown) => mounted && setRecentActivityError(errorMessage(error)))
+      .finally(() => mounted && setRecentActivityLoading(false));
+    return () => {
+      mounted = false;
+    };
+  }, [repositories.memory, selectedProjectId]);
+
+  useEffect(() => {
+    if (!selectedProjectId) {
+      setRecentEvidence([]);
+      setRecentEvidenceError(null);
+      return;
+    }
+    let mounted = true;
+    setRecentEvidenceLoading(true);
+    setRecentEvidenceError(null);
+    void repositories.memory
+      .listEvidence(selectedProjectId, 5)
+      .then((result) => mounted && setRecentEvidence(result))
+      .catch((error: unknown) => mounted && setRecentEvidenceError(errorMessage(error)))
+      .finally(() => mounted && setRecentEvidenceLoading(false));
+    return () => {
+      mounted = false;
+    };
+  }, [repositories.memory, selectedProjectId]);
+
+  // Instruction presence per role: assignment always shown once known; classification (which
+  // needs a directory to inspect) only attempted when one is actually linked for THIS project.
+  useEffect(() => {
+    if (!selectedProject) {
+      setInstructionStatuses(null);
+      return;
+    }
+    let mounted = true;
+    const projectId = selectedProject.id;
+    const root = activeDirectoryRoot;
+    setInstructionStatuses(
+      Object.fromEntries(
+        INSTRUCTION_ROLES.map((role) => [role, { provider: null, preview: null, loading: true, error: null }]),
+      ) as Record<InstructionRole, InstructionStatus>,
+    );
+    void Promise.all(
+      INSTRUCTION_ROLES.map(async (role) => {
+        try {
+          const assignment = await services.assignments.getAssignment({ projectId, role });
+          if (!assignment) {
+            return [role, { provider: null, preview: null, loading: false, error: null }] as const;
+          }
+          if (!root) {
+            return [
+              role,
+              { provider: assignment.provider, preview: null, loading: false, error: null },
+            ] as const;
+          }
+          try {
+            const preview = await services.harness.preview({ root, projectId, role });
+            return [
+              role,
+              { provider: assignment.provider, preview, loading: false, error: null },
+            ] as const;
+          } catch (error) {
+            return [
+              role,
+              { provider: assignment.provider, preview: null, loading: false, error: errorMessage(error) },
+            ] as const;
+          }
+        } catch (error) {
+          return [role, { provider: null, preview: null, loading: false, error: errorMessage(error) }] as const;
+        }
+      }),
+    ).then((entries) => {
+      if (!mounted) return;
+      setInstructionStatuses(Object.fromEntries(entries) as Record<InstructionRole, InstructionStatus>);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [selectedProject, activeDirectoryRoot, services.assignments, services.harness]);
+
+  // Persists the resume position (project/task/screen) whenever it actually changes, but only
+  // once the initial restore above has applied — never overwriting a not-yet-restored saved
+  // position with the pre-restore defaults. `directory.state` is read through a ref (kept fresh
+  // every render, above) rather than listed as a dependency: including it would re-fire this
+  // effect the moment its own write updates that state, looping forever.
+  useEffect(() => {
+    if (!resumeReady) return;
+    const state = directoryStateRef.current;
+    if (!state) return;
+    void directory.manager
+      .updateResumeSelection(state, {
+        selectedProjectId,
+        selectedTaskId,
+        resumeScreen: primaryView,
+      })
+      .then(directory.setState)
+      // Best-effort device-local convenience state: a failed write here (e.g. disk full) must
+      // never surface as an unhandled rejection or block navigation — the owner simply resumes
+      // to an older position next launch, the same graceful degradation `loadState` already uses.
+      .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeReady, selectedProjectId, selectedTaskId, primaryView, directory.manager]);
+
+  // Directory reachability for whichever contexts belong to the selected project — mirrors the
+  // check DirectoryContextPanel runs on its own, so Home's compact summary can show "missing" too.
+  useEffect(() => {
+    if (!directory.state || !selectedProject) {
+      setDirectoryReachability({});
+      return;
+    }
+    const contexts = directory.manager.contextsForProject(directory.state, selectedProject.id);
+    let mounted = true;
+    setDirectoryReachability((current) => {
+      const next: Record<string, Reachability> = {};
+      for (const context of contexts) next[context.id] = current[context.id] ?? 'checking';
+      return next;
+    });
+    void Promise.all(
+      contexts.map(async (context) => {
+        const reachable = await directory.manager.checkReachable(context.path).catch(() => false);
+        return [context.id, reachable] as const;
+      }),
+    ).then((results) => {
+      if (!mounted) return;
+      setDirectoryReachability((current) => {
+        const next = { ...current };
+        for (const [id, reachable] of results) next[id] = reachable;
+        return next;
+      });
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [directory.state, directory.manager, selectedProject]);
 
   function openNewProject() {
     setProjectDraft(emptyProjectDraft);
@@ -893,6 +1535,174 @@ export function TrackerPage({
     if (retryCommentDraft !== null) void addComment();
   };
 
+  function switchToProject(projectId: string) {
+    guardedNav(() => {
+      setSelectedProjectId(projectId);
+      setSelectedTaskId(null);
+      setFocusedTaskId(null);
+      setExpandedTaskIds(new Set());
+      setTaskEditor(null);
+    });
+  }
+
+  /** Every explicit screen pick goes through here, so device resume never flips it back out. */
+  function navigateToScreen(view: PrimaryView) {
+    screenNavigatedRef.current = true;
+    setPrimaryView(view);
+  }
+
+  function goToWorkspace() {
+    guardedNav(() => navigateToScreen('workspace'));
+  }
+
+  function goToWorkspaceTask(taskId: string) {
+    guardedNav(() => {
+      navigateToScreen('workspace');
+      setSelectedTaskId(taskId);
+      setExpandedTaskIds((current) => {
+        const next = new Set(current);
+        for (const ancestorId of getTaskAncestorIds(tasks, taskId)) next.add(ancestorId);
+        return next;
+      });
+    });
+  }
+
+  function goToInstructions() {
+    guardedNav(() => navigateToScreen('instructions'));
+  }
+
+  function closeActiveDirectory() {
+    if (!directory.state) return;
+    const state = directory.state;
+    guardedNav(() => {
+      void directory.manager
+        .closeActive(state)
+        .then(directory.setState)
+        .catch((error: unknown) => setOpenDirectoryError(errorMessage(error)));
+    });
+  }
+
+  async function openDirectory() {
+    if (!directory.state) return;
+    setOpenDirectoryError(null);
+    setOpenDirectoryBusy(true);
+    try {
+      const path = await directory.manager.pickDirectory();
+      if (path === null) return;
+      const state = directory.state;
+      const matches = directory.manager.findContextsForPath(state, path);
+      if (matches.length === 1) {
+        const match = matches[0];
+        guardedNav(() => {
+          void directory.manager
+            .setActive(state, match.id)
+            .then(directory.setState)
+            .catch((error: unknown) => setOpenDirectoryError(errorMessage(error)));
+          switchToProject(match.projectId);
+        });
+        return;
+      }
+      if (matches.length > 1) {
+        setOpenDirectoryFlow({ kind: 'ambiguous', path, matches });
+        return;
+      }
+      setDirectoryFlowProjectDraft({ name: labelFromPath(path), description: '' });
+      setDirectoryFlowError(null);
+      setOpenDirectoryFlow({ kind: 'unknown', path, mode: 'choose' });
+    } catch (error) {
+      setOpenDirectoryError(errorMessage(error));
+    } finally {
+      setOpenDirectoryBusy(false);
+    }
+  }
+
+  function resolveAmbiguousMatch(match: DirectoryContextRecord) {
+    if (!directory.state) return;
+    const state = directory.state;
+    setOpenDirectoryFlow(null);
+    guardedNav(() => {
+      void directory.manager
+        .setActive(state, match.id)
+        .then(directory.setState)
+        .catch((error: unknown) => setOpenDirectoryError(errorMessage(error)));
+      switchToProject(match.projectId);
+    });
+  }
+
+  async function submitDirectoryFlowCreate(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!openDirectoryFlow || openDirectoryFlow.kind !== 'unknown' || !directory.state) return;
+    const path = openDirectoryFlow.path;
+    const name = directoryFlowProjectDraft.name.trim();
+    if (!name) {
+      setDirectoryFlowError('Project name is required.');
+      return;
+    }
+    setDirectoryFlowSaving(true);
+    setDirectoryFlowError(null);
+    try {
+      const created = await repositories.projects.create({
+        name,
+        description: directoryFlowProjectDraft.description.trim(),
+      });
+      setProjects((current) => [created, ...current]);
+      try {
+        const { state: nextState } = await directory.manager.linkDirectory(
+          directory.state,
+          created.id,
+          path,
+        );
+        directory.setState(nextState);
+        setOpenDirectoryFlow(null);
+        switchToProject(created.id);
+      } catch (linkError) {
+        // The project already exists — never re-create it on retry, only retry the link.
+        setOpenDirectoryFlow({
+          kind: 'linkRetry',
+          path,
+          projectId: created.id,
+          error: errorMessage(linkError),
+        });
+      }
+    } catch (error) {
+      setDirectoryFlowError(errorMessage(error));
+    } finally {
+      setDirectoryFlowSaving(false);
+    }
+  }
+
+  async function retryDirectoryFlowLink() {
+    if (!openDirectoryFlow || openDirectoryFlow.kind !== 'linkRetry' || !directory.state) return;
+    const { path, projectId } = openDirectoryFlow;
+    try {
+      const { state: nextState } = await directory.manager.linkDirectory(directory.state, projectId, path);
+      directory.setState(nextState);
+      setOpenDirectoryFlow(null);
+      switchToProject(projectId);
+    } catch (error) {
+      setOpenDirectoryFlow({ kind: 'linkRetry', path, projectId, error: errorMessage(error) });
+    }
+  }
+
+  async function submitDirectoryFlowLink(projectId: string) {
+    if (!openDirectoryFlow || openDirectoryFlow.kind !== 'unknown' || !directory.state) return;
+    const path = openDirectoryFlow.path;
+    setDirectoryFlowSaving(true);
+    setDirectoryFlowError(null);
+    try {
+      const { state: nextState } = await directory.manager.linkDirectory(directory.state, projectId, path);
+      directory.setState(nextState);
+      setOpenDirectoryFlow(null);
+      switchToProject(projectId);
+    } catch (error) {
+      setDirectoryFlowError(errorMessage(error));
+    } finally {
+      setDirectoryFlowSaving(false);
+    }
+  }
+
+  const initializing = loading || !resumeReady;
+
   return (
     <main className="app-shell">
       <aside className="sidebar" aria-label="Application navigation">
@@ -903,20 +1713,40 @@ export function TrackerPage({
         <nav className="primary-nav" aria-label="Primary">
           <button
             type="button"
+            className={`nav-item ${primaryView === 'home' ? 'nav-item-active' : ''}`}
+            onClick={() => guardedNav(() => navigateToScreen('home'))}
+          >
+            <span className="nav-icon" aria-hidden="true">⌂</span>Home
+          </button>
+          <button
+            type="button"
             className={`nav-item ${primaryView === 'workspace' ? 'nav-item-active' : ''}`}
-            onClick={() => guardedNav(() => setPrimaryView('workspace'))}
+            onClick={() => guardedNav(() => navigateToScreen('workspace'))}
           >
             <span className="nav-icon" aria-hidden="true">◈</span>Workspace
           </button>
           <button
             type="button"
             className={`nav-item ${primaryView === 'instructions' ? 'nav-item-active' : ''}`}
-            onClick={() => guardedNav(() => setPrimaryView('instructions'))}
+            onClick={() => guardedNav(() => navigateToScreen('instructions'))}
           >
             <span className="nav-icon" aria-hidden="true">▤</span>Instructions
           </button>
           <span className="nav-item nav-item-muted"><span className="nav-icon" aria-hidden="true">⚙</span>Settings</span>
         </nav>
+        <button
+          className="button button-secondary sidebar-open-directory"
+          type="button"
+          onClick={() => void openDirectory()}
+          disabled={!directory.state || openDirectoryBusy}
+        >
+          {openDirectoryBusy ? 'Choosing…' : 'Open directory'}
+        </button>
+        {openDirectoryError && (
+          <div className="save-error" role="alert">
+            <span>{openDirectoryError}</span>
+          </div>
+        )}
         <div className="project-list-heading">
           <span className="eyebrow">Projects</span>
           <button className="icon-button" type="button" onClick={openNewProject} aria-label="Create project">+</button>
@@ -927,15 +1757,7 @@ export function TrackerPage({
               className={`project-nav-item ${project.id === selectedProjectId ? 'project-nav-item-active' : ''}`}
               key={project.id}
               type="button"
-              onClick={() =>
-                guardedNav(() => {
-                  setSelectedProjectId(project.id);
-                  setSelectedTaskId(null);
-                  setFocusedTaskId(null);
-                  setExpandedTaskIds(new Set());
-                  setTaskEditor(null);
-                })
-              }
+              onClick={() => switchToProject(project.id)}
             >
               <span className="project-nav-dot" aria-hidden="true" />
               <span>{project.name}</span>
@@ -956,6 +1778,71 @@ export function TrackerPage({
       </aside>
 
       <section className="content-area" id="workspace">
+      {primaryView === 'home' && (
+        <>
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">Project home</p>
+            <h1>{selectedProject ? selectedProject.name : 'Good morning, owner.'}</h1>
+          </div>
+          <div className="topbar-actions">
+            <span className="version-pill">v0.1.0</span>
+            {!selectedProject && (
+              <button className="button button-primary" type="button" onClick={openNewProject}>
+                New project
+              </button>
+            )}
+          </div>
+        </header>
+
+        {contentError && <div className="global-error" role="alert">{contentError}</div>}
+        {initializing ? (
+          <div className="empty-state"><p className="eyebrow">Loading workspace</p><h2>Gathering your projects…</h2></div>
+        ) : !selectedProject ? (
+          <NoProjectState
+            onCreateProject={openNewProject}
+            onOpenDirectory={() => void openDirectory()}
+            openDirectoryDisabled={!directory.state || openDirectoryBusy}
+          />
+        ) : (
+          <HomeDashboard
+            project={selectedProject}
+            activeContext={activeDirectoryContext}
+            activeReachable={activeDirectoryReachable}
+            taskStatusCounts={taskStatusCounts}
+            totalTaskCount={visibleTasks.length}
+            selectedTask={selectedTask}
+            comments={comments}
+            commentsLoading={commentsLoading}
+            recentComments={recentComments}
+            recentCommentsLoading={recentCommentsLoading}
+            recentCommentsError={recentCommentsError}
+            instructionStatuses={instructionStatuses}
+            hasDirectory={Boolean(activeDirectoryRoot)}
+            recentActivity={recentActivity}
+            recentActivityLoading={recentActivityLoading}
+            recentActivityError={recentActivityError}
+            recentEvidence={recentEvidence}
+            recentEvidenceLoading={recentEvidenceLoading}
+            recentEvidenceError={recentEvidenceError}
+            onOpenDirectory={() => void openDirectory()}
+            onCloseDirectory={closeActiveDirectory}
+            onOpenWorkspace={goToWorkspace}
+            onOpenTask={goToWorkspaceTask}
+            onOpenInstructions={goToInstructions}
+          />
+        )}
+
+        {projectEditor && (
+          <div className="modal-backdrop">
+            <div className="modal-card" role="dialog" aria-modal="true" aria-label={projectEditor === 'new' ? 'Create project' : 'Edit project'}>
+              <ProjectForm draft={projectDraft} saving={projectSaving} error={projectSaveError} onChange={setProjectDraft} onSubmit={(event) => void saveProject(event)} onCancel={() => setProjectEditor(null)} isNew={projectEditor === 'new'} onRetry={() => void saveProject()} />
+            </div>
+          </div>
+        )}
+        </>
+      )}
+
       {primaryView === 'workspace' && (
         <>
         <header className="topbar">
@@ -970,28 +1857,14 @@ export function TrackerPage({
         </header>
 
         {contentError && <div className="global-error" role="alert">{contentError}</div>}
-        {loading ? (
+        {initializing ? (
           <div className="empty-state"><p className="eyebrow">Loading workspace</p><h2>Gathering your projects…</h2></div>
         ) : !selectedProject ? (
-          <div className="empty-state-grid">
-            <section className="welcome-card">
-              <div className="welcome-copy">
-                <p className="card-kicker">Hammond is ready</p>
-                <h2>A calm place for project context.</h2>
-                <p>Create your first project, then add work that can move from backlog to shipped.</p>
-                <button className="button button-primary" type="button" onClick={openNewProject}>Create your first project</button>
-              </div>
-              <div className="welcome-orbit" aria-hidden="true"><span className="orbit-ring orbit-ring-large" /><span className="orbit-ring orbit-ring-small" /><span className="orbit-core">H</span></div>
-            </section>
-            <section className="boundary-section" aria-labelledby="boundary-heading">
-              <div className="section-heading"><div><p className="eyebrow">Foundation map</p><h2 id="boundary-heading">Clear boundaries, ready to extend.</h2></div><span className="section-count">03 modules</span></div>
-              <div className="boundary-grid">
-                <article className="boundary-card"><span className="boundary-index">01</span><h3>Local workspace</h3><p>Native filesystem commands stay behind a typed command surface.</p></article>
-                <article className="boundary-card"><span className="boundary-index">02</span><h3>Project memory</h3><p>Owner-scoped project data stays behind the repository boundary.</p></article>
-                <article className="boundary-card"><span className="boundary-index">03</span><h3>Local settings</h3><p>Device-specific settings remain separate from durable records.</p></article>
-              </div>
-            </section>
-          </div>
+          <NoProjectState
+            onCreateProject={openNewProject}
+            onOpenDirectory={() => void openDirectory()}
+            openDirectoryDisabled={!directory.state || openDirectoryBusy}
+          />
         ) : (
           <div className="workspace-grid">
             <div className="project-workspace">
@@ -1013,6 +1886,7 @@ export function TrackerPage({
                   state={directory.state}
                   onStateChange={directory.setState}
                   projectId={selectedProject.id}
+                  beforeChange={guardedNav}
                 />
               )}
               <section className="outliner-section" aria-labelledby="outliner-heading">
@@ -1103,15 +1977,7 @@ export function TrackerPage({
             assignmentsService={services.assignments}
             harnessService={services.harness}
             project={selectedProject}
-            directoryRoot={
-              directory.state
-                ? (directory.manager
-                    .contextsForProject(directory.state, selectedProject.id)
-                    .find((context) => context.id === directory.state?.lastOpenContextId) ??
-                    directory.manager.contextsForProject(directory.state, selectedProject.id)[0] ??
-                    null)?.path ?? null
-                : null
-            }
+            directoryRoot={activeDirectoryRoot}
           />
         ) : (
           <p className="sidebar-empty">Select a project to manage its instructions.</p>
@@ -1119,6 +1985,184 @@ export function TrackerPage({
         </>
       )}
       </section>
+
+      {openDirectoryFlow?.kind === 'ambiguous' && (
+        <div className="modal-backdrop">
+          <div className="modal-card" role="dialog" aria-modal="true" aria-label="Choose a project">
+            <h2>This directory is linked to more than one project</h2>
+            <p className="muted-copy">
+              <code>{openDirectoryFlow.path}</code> is bound to more than one Hammond project.
+              Choose which one to open.
+            </p>
+            <ul className="directory-choice-list">
+              {openDirectoryFlow.matches.map((match) => {
+                const owner = projects.find((project) => project.id === match.projectId);
+                return (
+                  <li key={match.id}>
+                    <button
+                      className="button button-secondary"
+                      type="button"
+                      onClick={() => resolveAmbiguousMatch(match)}
+                    >
+                      {owner?.name ?? match.projectId}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="form-actions">
+              <button className="button button-quiet" type="button" onClick={() => setOpenDirectoryFlow(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {openDirectoryFlow?.kind === 'unknown' && (
+        <div className="modal-backdrop">
+          <div className="modal-card" role="dialog" aria-modal="true" aria-label="Unlinked directory">
+            <h2>This directory isn&apos;t linked to a project yet</h2>
+            <p className="muted-copy">
+              <code>{openDirectoryFlow.path}</code>
+            </p>
+            {openDirectoryFlow.mode === 'choose' && (
+              <div className="form-actions">
+                <button
+                  className="button button-primary"
+                  type="button"
+                  onClick={() =>
+                    setOpenDirectoryFlow(
+                      openDirectoryFlow.kind === 'unknown' ? { ...openDirectoryFlow, mode: 'create' } : openDirectoryFlow,
+                    )
+                  }
+                >
+                  Create project
+                </button>
+                <button
+                  className="button button-secondary"
+                  type="button"
+                  onClick={() =>
+                    setOpenDirectoryFlow(
+                      openDirectoryFlow.kind === 'unknown' ? { ...openDirectoryFlow, mode: 'link' } : openDirectoryFlow,
+                    )
+                  }
+                >
+                  Link to existing project
+                </button>
+                <button className="button button-quiet" type="button" onClick={() => setOpenDirectoryFlow(null)}>
+                  Cancel
+                </button>
+              </div>
+            )}
+            {openDirectoryFlow.mode === 'create' && (
+              <form onSubmit={(event) => void submitDirectoryFlowCreate(event)}>
+                <label>
+                  Project name
+                  <input
+                    value={directoryFlowProjectDraft.name}
+                    onChange={(event) =>
+                      setDirectoryFlowProjectDraft({ ...directoryFlowProjectDraft, name: event.target.value })
+                    }
+                    maxLength={200}
+                    required
+                  />
+                </label>
+                <label>
+                  Description
+                  <textarea
+                    value={directoryFlowProjectDraft.description}
+                    onChange={(event) =>
+                      setDirectoryFlowProjectDraft({
+                        ...directoryFlowProjectDraft,
+                        description: event.target.value,
+                      })
+                    }
+                    rows={3}
+                  />
+                </label>
+                {directoryFlowError && (
+                  <div className="save-error" role="alert">
+                    {directoryFlowError}
+                  </div>
+                )}
+                <div className="form-actions">
+                  <button className="button button-primary" type="submit" disabled={directoryFlowSaving}>
+                    {directoryFlowSaving ? 'Creating…' : 'Create and link'}
+                  </button>
+                  <button className="button button-quiet" type="button" onClick={() => setOpenDirectoryFlow(null)}>
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            )}
+            {openDirectoryFlow.mode === 'link' && (
+              <>
+                {projects.length === 0 ? (
+                  <p className="muted-copy">No existing projects to link to.</p>
+                ) : (
+                  <ul className="directory-choice-list">
+                    {projects.map((project) => (
+                      <li key={project.id}>
+                        <button
+                          className="button button-secondary"
+                          type="button"
+                          disabled={directoryFlowSaving}
+                          onClick={() => void submitDirectoryFlowLink(project.id)}
+                        >
+                          {project.name}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {directoryFlowError && (
+                  <div className="save-error" role="alert">
+                    {directoryFlowError}
+                  </div>
+                )}
+                <div className="form-actions">
+                  <button className="button button-quiet" type="button" onClick={() => setOpenDirectoryFlow(null)}>
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {openDirectoryFlow?.kind === 'linkRetry' && (
+        <div className="modal-backdrop">
+          <div className="modal-card" role="dialog" aria-modal="true" aria-label="Finish linking the new project">
+            <h2>Project created, but linking the directory failed</h2>
+            <p className="muted-copy">
+              The new project was created successfully. Retry linking{' '}
+              <code>{openDirectoryFlow.path}</code> to it — this will not create a duplicate
+              project.
+            </p>
+            <div className="save-error" role="alert">
+              {openDirectoryFlow.error}
+            </div>
+            <div className="form-actions">
+              <button className="button button-primary" type="button" onClick={() => void retryDirectoryFlowLink()}>
+                Retry linking
+              </button>
+              <button
+                className="button button-quiet"
+                type="button"
+                onClick={() => {
+                  const projectId = openDirectoryFlow.projectId;
+                  setOpenDirectoryFlow(null);
+                  switchToProject(projectId);
+                }}
+              >
+                Open project without linking
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {pendingNav && (
         <div className="modal-backdrop">

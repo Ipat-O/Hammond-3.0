@@ -3,12 +3,16 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 
 import { DirectoryContextPanel } from './DirectoryContextPanel';
 import { DirectoryContextManager } from './directoryContextManager';
-import { createDefaultLocalSettingsState, type LocalSettingsStateV1 } from './state';
+import { createDefaultLocalSettingsState, type LocalSettingsStateV2 } from './state';
 import { createFakeFilesystem, createFakeLocalSettings } from './testFakes';
 
 const projectId = 'project-1';
 
-function renderPanel(manager: DirectoryContextManager, initialState: LocalSettingsStateV1) {
+function renderPanel(
+  manager: DirectoryContextManager,
+  initialState: LocalSettingsStateV2,
+  beforeChange?: (action: () => void) => void,
+) {
   function Harness() {
     const [state, setState] = useState(initialState);
     return (
@@ -17,6 +21,7 @@ function renderPanel(manager: DirectoryContextManager, initialState: LocalSettin
         state={state}
         onStateChange={setState}
         projectId={projectId}
+        beforeChange={beforeChange}
       />
     );
   }
@@ -66,6 +71,36 @@ describe('DirectoryContextPanel', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  it('routes a new link through the beforeChange guard before it takes effect', async () => {
+    const { filesystem, manager } = buildManager();
+    (filesystem.selectDirectory as ReturnType<typeof vi.fn>).mockResolvedValue('/home/owner/repo');
+    filesystem.existingRoots.add('/home/owner/repo');
+    const beforeChange = vi.fn((action: () => void) => action());
+
+    renderPanel(manager, createDefaultLocalSettingsState(), beforeChange);
+    fireEvent.click(screen.getByRole('button', { name: 'Link directory' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('/home/owner/repo', { selector: '.directory-context-path' }),
+      ).toBeInTheDocument(),
+    );
+    expect(beforeChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('a beforeChange guard that never calls the action blocks the link from taking effect', async () => {
+    const { filesystem, manager } = buildManager();
+    (filesystem.selectDirectory as ReturnType<typeof vi.fn>).mockResolvedValue('/home/owner/repo');
+    filesystem.existingRoots.add('/home/owner/repo');
+    const beforeChange = vi.fn();
+
+    renderPanel(manager, createDefaultLocalSettingsState(), beforeChange);
+    fireEvent.click(screen.getByRole('button', { name: 'Link directory' }));
+
+    await waitFor(() => expect(beforeChange).toHaveBeenCalledTimes(1));
+    expect(screen.getByText('No directory is open for this project yet.')).toBeInTheDocument();
+  });
+
   it('switches the active context between two directories bound to the same project', async () => {
     const { filesystem, manager } = buildManager();
     filesystem.existingRoots.add('/home/owner/a');
@@ -90,7 +125,7 @@ describe('DirectoryContextPanel', () => {
     expect(screen.getByRole('button', { name: 'Open b' })).toBeInTheDocument();
   });
 
-  it('closes (unlinks) a context without deleting the directory', async () => {
+  it('closes the active context without deleting the directory or forgetting the binding', async () => {
     const { filesystem, manager } = buildManager();
     filesystem.existingRoots.add('/home/owner/repo');
     const linked = await manager.linkDirectory(
@@ -108,6 +143,56 @@ describe('DirectoryContextPanel', () => {
       expect(screen.getByText('No directory is open for this project yet.')).toBeInTheDocument(),
     );
     expect(filesystem.removePath).not.toHaveBeenCalled();
+    // The binding survives the Close: it still renders, now as an inactive, reopenable context.
+    expect(
+      screen.getByText('/home/owner/repo', { selector: '.directory-context-path' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: `Open ${linked.context.label}` }),
+    ).toBeInTheDocument();
+  });
+
+  it('routes Close through the beforeChange guard before it takes effect', async () => {
+    const { filesystem, manager } = buildManager();
+    filesystem.existingRoots.add('/home/owner/repo');
+    const linked = await manager.linkDirectory(
+      createDefaultLocalSettingsState(),
+      projectId,
+      '/home/owner/repo',
+    );
+    const beforeChange = vi.fn();
+
+    renderPanel(manager, linked.state, beforeChange);
+    await waitFor(() => expect(screen.getByText('Current')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: `Close ${linked.context.label}` }));
+
+    expect(beforeChange).toHaveBeenCalledTimes(1);
+    // The guard never invoked the action, so nothing actually closed.
+    expect(screen.getByText('Current')).toBeInTheDocument();
+  });
+
+  it('forgetting an inactive binding removes it, leaving the active one untouched', async () => {
+    const { filesystem, manager } = buildManager();
+    filesystem.existingRoots.add('/home/owner/a');
+    filesystem.existingRoots.add('/home/owner/b');
+    let state = createDefaultLocalSettingsState();
+    const first = await manager.linkDirectory(state, projectId, '/home/owner/a');
+    state = first.state;
+    state = (await manager.linkDirectory(state, projectId, '/home/owner/b')).state;
+
+    renderPanel(manager, state);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open a' })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: `Forget ${first.context.label}` }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText('/home/owner/a', { selector: '.directory-context-path' }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByText((_, node) => node?.textContent === 'Current path: /home/owner/b'),
+    ).toBeInTheDocument();
   });
 
   it('shows recovery actions for a missing directory instead of Open/Reveal', async () => {
@@ -129,7 +214,7 @@ describe('DirectoryContextPanel', () => {
       screen.queryByRole('button', { name: `Open ${linked.context.label}` }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: `Unlink ${linked.context.label}` }),
+      screen.getByRole('button', { name: `Forget ${linked.context.label}` }),
     ).toBeInTheDocument();
   });
 
