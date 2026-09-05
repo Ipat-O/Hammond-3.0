@@ -170,10 +170,21 @@ tasks:
     design_note: D-017 adds explicit per-project, per-role execution-provider assignment, separate from provider-specific instruction content
   - id: HAM3-007
     title: Instruction Studio UI
-    state: ready_for_development
+    state: in_development
     depends_on: [HAM3-005, HAM3-006]
-    worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
+    worker: Anthropic / Claude Code / Claude Sonnet 5
     auditor: Kilo Code / DeepSeek V4 Pro
+    branch: claude/instruction-studio-ui-7r37xf
+    base_sha: 2dc845bd4d1b4bdc6a91efdde926c7b1b6b62f16
+    head_sha: 9815d751c4a05c962608e01f809a3ced4c47cc32
+    pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/9
+    worker_report: https://github.com/Ipat-O/Hammond-3.0/pull/9#issuecomment-5551620184
+    branch_provenance: harness-forced name accepted; sole implementation commit has prescribed base as its sole parent; worker did not stop before editing as requested
+    correction_packet: tracker/work-orders/HAM3-007-CORRECTION-1.md (device-local transfer packet)
+    correction_round: 1
+    current_audit_status: not routed; source-based intake correction required, no independent verdict
+    worker_verification: reported 205 frontend tests, 77 Linux Rust tests, static/build checks and three restored mutations; not independently reproduced
+    outstanding: import retry preservation, assignment coherence, dirty and async context guards, dialog keyboard and window-close protection; independent audit and Windows owner smoke
     design_note: D-017 makes effective instructions the default experience and moves composition layers/version mechanics behind Customize and History
   - id: HAM3-008
     title: Project home, directory switching, and resume
