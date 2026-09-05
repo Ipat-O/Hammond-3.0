@@ -8,7 +8,7 @@ import type { AgentAssignment } from '../assignments/types';
 import type { InstructionsService } from '../instructions/service';
 import type { InstructionRole, InstructionVersion, ProviderFamily } from '../instructions/types';
 import type { HarnessAdapter } from './contracts';
-import { deriveAction } from './types';
+import { deriveAction, MANAGED_HEADER_FORMAT_VERSION } from './types';
 import type { InjectionPreview } from './types';
 
 export interface HarnessInjectionServiceDeps {
@@ -66,19 +66,44 @@ export class HarnessInjectionService {
     role: InstructionRole;
   }): Promise<InjectionPreview> {
     const assignment = await this.resolveAssignment(params.projectId, params.role);
-    const effectiveContent = await this.instructions.composePreview({
-      projectId: params.projectId,
-      role: params.role,
-      provider: assignment.provider,
-    });
+    const [effectiveContent, active] = await Promise.all([
+      this.instructions.composePreview({
+        projectId: params.projectId,
+        role: params.role,
+        provider: assignment.provider,
+      }),
+      this.instructions.resolveActiveVersionIds({
+        projectId: params.projectId,
+        role: params.role,
+        provider: assignment.provider,
+      }),
+    ]);
     const adapter = this.adapterFor(assignment.provider);
     const classified = await adapter.classify(params.root, params.projectId, params.role);
+    const generatedHeaderFields = {
+      projectId: params.projectId,
+      role: params.role,
+      sharedRoleVersionId: active.sharedRoleVersionId,
+      providerVersionId: active.providerVersionId,
+      overrideVersionId: active.overrideVersionId,
+      generatedAt: this.now(),
+    };
+    const generatedDocument = await adapter.renderDocumentPreview(
+      generatedHeaderFields,
+      effectiveContent,
+    );
     return {
       role: params.role,
       provider: assignment.provider,
       relativePath: classified.relativePath,
       classification: classified.classification,
       effectiveContent,
+      generatedDocument,
+      generatedHeader: {
+        ...generatedHeaderFields,
+        provider: assignment.provider,
+        formatVersion: MANAGED_HEADER_FORMAT_VERSION,
+      },
       action: deriveAction(classified.classification),
     };
   }

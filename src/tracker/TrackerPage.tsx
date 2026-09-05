@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { assertNoParentCycle, getTaskSubtreeIds, TASK_STATUSES, type Database } from '../data';
-import { AgentAssignmentPanel } from '../agents/AgentAssignmentPanel';
-import { InstructionsPanel } from '../instructions/InstructionsPanel';
+import { InstructionStudio } from '../instructions/InstructionStudio';
+import type { InstructionStudioHandle } from '../instructions/InstructionStudio';
 import { DirectoryContextPanel } from '../settings/DirectoryContextPanel';
 import { useDirectoryContextState } from '../settings/useDirectoryContextState';
 import type { TrackerServices } from './contracts';
 import type { TaskStatus } from '../data';
 
-type PrimaryView = 'workspace' | 'instructions' | 'agents';
+type PrimaryView = 'workspace' | 'instructions';
 
 type Project = Database['public']['Tables']['projects']['Row'];
 type ProjectInsert = Database['public']['Tables']['projects']['Insert'];
@@ -437,6 +437,19 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
   const [commentSaving, setCommentSaving] = useState(false);
   const [commentSaveError, setCommentSaveError] = useState<string | null>(null);
   const [retryCommentDraft, setRetryCommentDraft] = useState<string | null>(null);
+  const studioRef = useRef<InstructionStudioHandle>(null);
+  const [pendingNav, setPendingNav] = useState<(() => void) | null>(null);
+  const [navTransitionSaving, setNavTransitionSaving] = useState(false);
+  const [navTransitionError, setNavTransitionError] = useState<string | null>(null);
+
+  function guardedNav(action: () => void) {
+    if (primaryView === 'instructions' && studioRef.current?.isDirty()) {
+      setNavTransitionError(null);
+      setPendingNav(() => action);
+    } else {
+      action();
+    }
+  }
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
@@ -821,23 +834,16 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
           <button
             type="button"
             className={`nav-item ${primaryView === 'workspace' ? 'nav-item-active' : ''}`}
-            onClick={() => setPrimaryView('workspace')}
+            onClick={() => guardedNav(() => setPrimaryView('workspace'))}
           >
             <span className="nav-icon" aria-hidden="true">◈</span>Workspace
           </button>
           <button
             type="button"
             className={`nav-item ${primaryView === 'instructions' ? 'nav-item-active' : ''}`}
-            onClick={() => setPrimaryView('instructions')}
+            onClick={() => guardedNav(() => setPrimaryView('instructions'))}
           >
             <span className="nav-icon" aria-hidden="true">▤</span>Instructions
-          </button>
-          <button
-            type="button"
-            className={`nav-item ${primaryView === 'agents' ? 'nav-item-active' : ''}`}
-            onClick={() => setPrimaryView('agents')}
-          >
-            <span className="nav-icon" aria-hidden="true">◎</span>Agents
           </button>
           <span className="nav-item nav-item-muted"><span className="nav-icon" aria-hidden="true">⚙</span>Settings</span>
         </nav>
@@ -851,13 +857,15 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
               className={`project-nav-item ${project.id === selectedProjectId ? 'project-nav-item-active' : ''}`}
               key={project.id}
               type="button"
-              onClick={() => {
-                setSelectedProjectId(project.id);
-                setSelectedTaskId(null);
-                setFocusedTaskId(null);
-                setExpandedTaskIds(new Set());
-                setTaskEditor(null);
-              }}
+              onClick={() =>
+                guardedNav(() => {
+                  setSelectedProjectId(project.id);
+                  setSelectedTaskId(null);
+                  setFocusedTaskId(null);
+                  setExpandedTaskIds(new Set());
+                  setTaskEditor(null);
+                })
+              }
             >
               <span className="project-nav-dot" aria-hidden="true" />
               <span>{project.name}</span>
@@ -1014,24 +1022,14 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
         <>
         <header className="topbar">
           <div>
-            <p className="eyebrow">Versioned instructions</p>
-            <h1>Instruction composer</h1>
-          </div>
-        </header>
-        <InstructionsPanel service={services.instructions} projects={visibleProjects} />
-        </>
-      )}
-
-      {primaryView === 'agents' && (
-        <>
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">Execution providers</p>
-            <h1>Agent assignment</h1>
+            <p className="eyebrow">Instruction Studio</p>
+            <h1>Assign, customize, and inject effective instructions.</h1>
           </div>
         </header>
         {selectedProject ? (
-          <AgentAssignmentPanel
+          <InstructionStudio
+            ref={studioRef}
+            instructionsService={services.instructions}
             assignmentsService={services.assignments}
             harnessService={services.harness}
             project={selectedProject}
@@ -1046,11 +1044,66 @@ export function TrackerPage({ services, ownerId, ownerEmail, onSignOut }: Tracke
             }
           />
         ) : (
-          <p className="sidebar-empty">Select a project to manage its agent assignments.</p>
+          <p className="sidebar-empty">Select a project to manage its instructions.</p>
         )}
         </>
       )}
       </section>
+
+      {pendingNav && (
+        <div className="modal-backdrop">
+          <div className="modal-card" role="dialog" aria-modal="true" aria-label="Unsaved changes">
+            <h2>Unsaved changes</h2>
+            <p className="muted-copy">
+              You have unsaved instruction edits. Save them, discard them, or stay here.
+            </p>
+            {navTransitionError && (
+              <div className="save-error" role="alert">
+                {navTransitionError}
+              </div>
+            )}
+            <div className="form-actions">
+              <button
+                className="button button-primary"
+                type="button"
+                disabled={navTransitionSaving}
+                onClick={() => {
+                  setNavTransitionSaving(true);
+                  setNavTransitionError(null);
+                  void (studioRef.current?.save() ?? Promise.resolve(true))
+                    .then((ok) => {
+                      if (ok) {
+                        const run = pendingNav;
+                        setPendingNav(null);
+                        run?.();
+                      } else {
+                        setNavTransitionError('Save failed — see the error in Instruction Studio for details.');
+                      }
+                    })
+                    .finally(() => setNavTransitionSaving(false));
+                }}
+              >
+                {navTransitionSaving ? 'Saving…' : 'Save changes'}
+              </button>
+              <button
+                className="button button-danger"
+                type="button"
+                onClick={() => {
+                  studioRef.current?.discard();
+                  const run = pendingNav;
+                  setPendingNav(null);
+                  run?.();
+                }}
+              >
+                Discard changes
+              </button>
+              <button className="button button-quiet" type="button" onClick={() => setPendingNav(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

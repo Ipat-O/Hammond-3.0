@@ -109,4 +109,11 @@ export interface HarnessCommands {
     role: HarnessRole,
     provider: HarnessProvider,
   ): Promise<HarnessRemoveOutcome>;
+  /**
+   * Pure preview rendering: the exact managed-document text `inject` would write for these
+   * fields and content, without touching the filesystem or requiring a root at all. Lets the
+   * owner inspect the complete generated document before ever writing it, guaranteed
+   * byte-identical to a real Inject/Update because both go through the same native formatter.
+   */
+  renderDocumentPreview(header: ManagedHeaderFields, composedContent: string): Promise<string>;
 }

@@ -7,6 +7,7 @@ import { HarnessInjectionService } from './service';
 import {
   createFakeHarnessAdapters,
   createFakeHarnessFilesystem,
+  renderManagedDocumentText,
   seedManaged,
   seedUnmanaged,
   type FakeHarnessFilesystem,
@@ -137,6 +138,59 @@ describe('HarnessInjectionService', () => {
       expect(preview.classification.kind).toBe('ManagedForeign');
       expect(preview.action).toBe('requires_decision');
     });
+
+    it('exposes the complete generated document, byte-identical to the canonical managed-document format, distinct from the bare effective content', async () => {
+      const { service, instructions } = buildService();
+      await instructions.saveAndActivate({
+        projectId: project1,
+        role: 'worker',
+        provider: 'claude_code',
+        layer: 'project_override',
+        content: 'be precise',
+      });
+
+      const preview = await service.preview({ root, projectId: project1, role: 'worker' });
+
+      expect(preview.generatedDocument).not.toBe(preview.effectiveContent);
+      expect(preview.generatedDocument).toContain(preview.effectiveContent);
+      expect(preview.generatedDocument.startsWith('<!-- hammond:managed')).toBe(true);
+      expect(preview.generatedHeader.projectId).toBe(project1);
+      expect(preview.generatedHeader.role).toBe('worker');
+      expect(preview.generatedHeader.provider).toBe('claude_code');
+      expect(preview.generatedDocument).toBe(
+        renderManagedDocumentText(preview.generatedHeader, preview.effectiveContent),
+      );
+    });
+
+    it("uses the preview call's own generation time, independent of a later Inject's timestamp", async () => {
+      let tick = 0;
+      const now = () => `2026-09-0${(tick += 1)}T00:00:00.000Z`;
+      const assignmentRepo = createFakeAssignmentRepository();
+      seedProjectDefaults(assignmentRepo.store, project1, 'owner-1');
+      const assignments = new AssignmentsService(assignmentRepo);
+      const instructions = new InstructionsService(createFakeInstructionRepository());
+      const fakeFs = createFakeHarnessFilesystem();
+      const adapters = createFakeHarnessAdapters(fakeFs, root);
+      const service = new HarnessInjectionService({
+        assignments,
+        instructions,
+        adapters,
+        filesystem: {
+          async readTextFile() {
+            throw new Error('unused');
+          },
+        },
+        now,
+      });
+
+      const preview = await service.preview({ root, projectId: project1, role: 'worker' });
+      expect(preview.generatedHeader.generatedAt).toBe('2026-09-01T00:00:00.000Z');
+
+      await service.inject({ root, projectId: project1, role: 'worker' });
+      const writtenHeader = fakeFs.targets.get(`${root}|claude_code`)?.header;
+      expect(writtenHeader?.generatedAt).toBe('2026-09-02T00:00:00.000Z');
+      expect(writtenHeader?.generatedAt).not.toBe(preview.generatedHeader.generatedAt);
+    });
   });
 
   describe('inject', () => {
@@ -258,6 +312,9 @@ describe('HarnessInjectionService', () => {
           throw new Error('disk full');
         },
         async remove() {
+          throw new Error('unused');
+        },
+        async renderDocumentPreview() {
           throw new Error('unused');
         },
       };

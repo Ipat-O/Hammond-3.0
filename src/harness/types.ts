@@ -43,5 +43,13 @@ export interface InjectionPreview {
   relativePath: string;
   classification: HarnessClassification;
   effectiveContent: string;
+  /**
+   * The complete generated document Inject/Update would write right now: the canonical Hammond
+   * header block followed by `effectiveContent`, rendered through the same formatter the native
+   * write uses. Never label `effectiveContent` alone as "the file" — this field is the file.
+   */
+  generatedDocument: string;
+  /** The version ids and preview-time timestamp embedded in `generatedDocument`'s header. A real Inject/Update computes its own `generatedAt` at write time, which can differ from this preview. */
+  generatedHeader: ManagedHeaderFields;
   action: PendingAction;
 }

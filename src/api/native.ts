@@ -89,4 +89,6 @@ export const nativeHarness: HarnessCommands = {
     }),
   remove: (root, projectId, role: HarnessRole, provider) =>
     invokeFs<HarnessRemoveOutcome>('harness_remove', { root, projectId, role, provider }),
+  renderDocumentPreview: (header: ManagedHeaderFields, composedContent) =>
+    invokeFs<string>('harness_render_preview', { header, composedContent }),
 };

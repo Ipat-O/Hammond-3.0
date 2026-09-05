@@ -26,6 +26,7 @@ pub fn run() {
             harness_commands::harness_classify,
             harness_commands::harness_inject,
             harness_commands::harness_remove,
+            harness_commands::harness_render_preview,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hammond");
