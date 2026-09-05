@@ -18,12 +18,12 @@ None.
 
 ## in_development
 
-- [HAM3-007](./tasks/HAM3-007.md) — Instruction Studio UI
-  PR #9 · audit CHANGES at `e20991b` · Sonnet Correction 3
+None.
 
 ## in_review
 
-None.
+- [HAM3-007](./tasks/HAM3-007.md) — Instruction Studio UI
+  PR #9 · exact head `0ff6913` · DeepSeek round-2 re-audit packet prepared
 
 ## testing
 
