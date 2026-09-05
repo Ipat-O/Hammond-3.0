@@ -18,12 +18,12 @@ None.
 
 ## in_development
 
-- [HAM3-007](./tasks/HAM3-007.md) — Instruction Studio UI
-  PR #9 · pre-audit Correction 2 at `c80aa0d` · Sonnet continuation
+None.
 
 ## in_review
 
-None.
+- [HAM3-007](./tasks/HAM3-007.md) — Instruction Studio UI
+  PR #9 · exact head `e20991b` · Kilo / DeepSeek V4 Pro audit packet prepared
 
 ## testing
 
