@@ -170,7 +170,7 @@ tasks:
     design_note: D-017 adds explicit per-project, per-role execution-provider assignment, separate from provider-specific instruction content
   - id: HAM3-007
     title: Instruction Studio UI
-    state: in_review
+    state: in_development
     depends_on: [HAM3-005, HAM3-006]
     worker: Anthropic / Claude Code / Claude Sonnet 5
     auditor: Kilo Code / DeepSeek V4 Pro
@@ -181,16 +181,21 @@ tasks:
     worker_report: https://github.com/Ipat-O/Hammond-3.0/pull/9#issuecomment-5551620184
     branch_provenance: harness-forced name accepted; sole implementation commit has prescribed base as its sole parent; worker did not stop before editing as requested
     correction_1_report: https://github.com/Ipat-O/Hammond-3.0/pull/9#issuecomment-5551916095
-    correction_packet: tracker/work-orders/HAM3-007-CORRECTION-2.md (device-local transfer packet)
-    correction_round: 2
+    correction_packet: tracker/work-orders/HAM3-007-CORRECTION-3.md (device-local transfer packet)
+    correction_round: 3
     correction_2_report: https://github.com/Ipat-O/Hammond-3.0/pull/9#issuecomment-5552119563
     audit_packet: tracker/work-orders/HAM3-007-AUDIT.md (device-local transfer packet)
     assigned_auditor_identity: Kilo / Kilo Code / DeepSeek V4 Pro
     audit_target_sha: e20991be6d920400dbcb14f9c01023cd6cda48f6
     audit_round: 1
-    current_audit_status: exact-head independent audit packet prepared for owner transfer; no verdict
+    current_audit_status: CHANGES at e20991b, owner-supplied audit; top-level PR report not yet found; Correction 3 to Sonnet
+    audit_verdict: CHANGES
+    audited_head_sha: e20991be6d920400dbcb14f9c01023cd6cda48f6
+    audit_report: not_available on PR at intake; owner-supplied full report preserved in tracker/work-orders/HAM3-007-AUDIT-REPORT-1.md device-locally
+    audit_verification: reported focused 168/170 and full 236/237 with diagnosed timing flakes, isolated lifecycle 7/7 and retry 2/2 across four runs; static/build/format and Windows Rust fmt/74 tests/clippy passed; six mutations restored; no native display smoke
+    audit_findings: F1 blocking missing core:window:allow-destroy; F2 non-blocking Windows jsdom timing sensitivity
     worker_verification: reported 237 frontend tests in 22 files, static/build/format checks and reverted-fix regressions; original 77 Linux Rust tests, no native correction changes; not independently reproduced
-    outstanding: full-PR independent audit and Windows owner smoke including real window close
+    outstanding: Correction 3 lifecycle capability, round-1 public audit report, exact-new-head DeepSeek re-audit and Windows owner smoke
     design_note: D-017 makes effective instructions the default experience and moves composition layers/version mechanics behind Customize and History
   - id: HAM3-008
     title: Project home, directory switching, and resume
