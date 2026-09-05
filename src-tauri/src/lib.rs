@@ -4,6 +4,8 @@ mod fs_guard;
 mod harness;
 mod harness_commands;
 mod local_settings;
+#[cfg(test)]
+mod window_close_permission_tests;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

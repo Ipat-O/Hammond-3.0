@@ -65,11 +65,41 @@ vi.mock('@tauri-apps/api/window', async (importOriginal) => {
 // Imported after the mock so the module under test resolves the mocked `@tauri-apps/api/window`.
 const { createTauriWindowLifecycle } = await import('./windowLifecycle');
 
-async function flush() {
-  // The registration chain (dynamic `import()` -> `getCurrentWindow()` -> `onCloseRequested()` ->
-  // `listen()`) crosses several real async boundaries beyond plain microtasks, so wait a real
-  // macrotask tick rather than relying on microtask draining alone.
-  await new Promise((resolve) => setTimeout(resolve, 20));
+/**
+ * Waits for the registration chain (dynamic `import()` -> `getCurrentWindow()` ->
+ * `onCloseRequested()` -> `listen()`) to reach the point where a handler is captured, by polling
+ * the actual observable outcome rather than sleeping a fixed duration. A fixed sleep either wastes
+ * time when the chain settles quickly or, on a loaded CI/Windows/jsdom run, can elapse before the
+ * chain (which crosses real async boundaries beyond plain microtasks) has actually finished —
+ * this instead keeps checking until it has, up to a generous bound.
+ */
+async function waitForRegisteredHandler() {
+  await vi.waitUntil(() => Boolean(getRegisteredHandler()), { timeout: 2000, interval: 5 });
+}
+
+/**
+ * Drains pending microtasks. Everything between firing the close-requested event and the
+ * production adapter blocking on the owner's decision promise is plain promise/async-await
+ * chaining with no timers involved, so repeatedly yielding a microtask turn reaches that blocked
+ * state deterministically, unlike a wall-clock sleep.
+ */
+async function flushMicrotasks() {
+  for (let i = 0; i < 10; i += 1) {
+    await Promise.resolve();
+  }
+}
+
+/**
+ * For a registration path that never produces an observable success signal (e.g. "no Tauri
+ * bridge here" is a deliberate silent no-op), repeatedly yield a real event-loop tick so a slow
+ * run gets as many ticks as it actually needs to cross the registration chain's real async
+ * boundaries, rather than gambling everything on whichever ticks happen to fit inside one
+ * fixed-duration sleep.
+ */
+async function settleRegistrationChain() {
+  for (let i = 0; i < 20; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 }
 
 async function fireCloseRequested() {
@@ -98,14 +128,14 @@ describe('createTauriWindowLifecycle (production Tauri adapter)', () => {
       resolveDecision = resolve;
     });
     lifecycle.onCloseRequested(() => decision);
-    await flush();
+    await waitForRegisteredHandler();
     expect(getRegisteredHandler()).toBeDefined();
 
     let closeSettled = false;
     const closePromise = fireCloseRequested().then(() => {
       closeSettled = true;
     });
-    await flush();
+    await flushMicrotasks();
     // The owner has not decided yet (a still-open dialog): destroy must not have run.
     expect(destroySpy).not.toHaveBeenCalled();
     expect(closeSettled).toBe(false);
@@ -119,7 +149,7 @@ describe('createTauriWindowLifecycle (production Tauri adapter)', () => {
   it('closes exactly once when the decision resolves allowed (Save/Discard)', async () => {
     const lifecycle = createTauriWindowLifecycle();
     lifecycle.onCloseRequested(() => Promise.resolve(true));
-    await flush();
+    await waitForRegisteredHandler();
 
     await fireCloseRequested();
     expect(destroySpy).toHaveBeenCalledTimes(1);
@@ -128,7 +158,7 @@ describe('createTauriWindowLifecycle (production Tauri adapter)', () => {
   it('treats a rejected decision as Cancel and never destroys the window', async () => {
     const lifecycle = createTauriWindowLifecycle();
     lifecycle.onCloseRequested(() => Promise.reject(new Error('decision failed')));
-    await flush();
+    await waitForRegisteredHandler();
 
     await fireCloseRequested();
     expect(destroySpy).not.toHaveBeenCalled();
@@ -140,7 +170,10 @@ describe('createTauriWindowLifecycle (production Tauri adapter)', () => {
 
     const lifecycle = createTauriWindowLifecycle();
     lifecycle.onCloseRequested(() => Promise.resolve(true));
-    await flush();
+    await vi.waitUntil(() => consoleErrorSpy.mock.calls.length > 0, {
+      timeout: 2000,
+      interval: 5,
+    });
 
     expect(consoleErrorSpy).toHaveBeenCalled();
     consoleErrorSpy.mockRestore();
@@ -152,7 +185,7 @@ describe('createTauriWindowLifecycle (production Tauri adapter)', () => {
 
     const lifecycle = createTauriWindowLifecycle();
     const unsubscribe = lifecycle.onCloseRequested(() => Promise.resolve(true));
-    await flush();
+    await settleRegistrationChain();
 
     expect(consoleErrorSpy).not.toHaveBeenCalled();
     expect(destroySpy).not.toHaveBeenCalled();
@@ -163,7 +196,7 @@ describe('createTauriWindowLifecycle (production Tauri adapter)', () => {
   it('unsubscribing after registration completes detaches the real Tauri listener', async () => {
     const lifecycle = createTauriWindowLifecycle();
     const unsubscribe = lifecycle.onCloseRequested(() => Promise.resolve(true));
-    await flush();
+    await waitForRegisteredHandler();
     expect(getRegisteredHandler()).toBeDefined();
 
     unsubscribe();
@@ -174,7 +207,7 @@ describe('createTauriWindowLifecycle (production Tauri adapter)', () => {
     const lifecycle = createTauriWindowLifecycle();
     const unsubscribe = lifecycle.onCloseRequested(() => Promise.resolve(true));
     unsubscribe(); // dispose immediately, before the async registration chain settles
-    await flush();
+    await vi.waitUntil(() => unlistenSpy.mock.calls.length > 0, { timeout: 2000, interval: 5 });
 
     expect(unlistenSpy).toHaveBeenCalledTimes(1);
   });

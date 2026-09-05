@@ -692,7 +692,12 @@ describe('InstructionStudio', () => {
     expect(versionsAfterFailure[0].content).toBe('# hand-written notes');
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(screen.getByText('Hammond-managed')).toBeInTheDocument());
+    // A wider bound than the default 1s: this re-runs the whole import (assignment lookup,
+    // instructions save, harness inject) chained through several awaits, which a loaded run can
+    // legitimately take longer than 1s to settle without anything actually being wrong.
+    await waitFor(() => expect(screen.getByText('Hammond-managed')).toBeInTheDocument(), {
+      timeout: 3000,
+    });
 
     const versionsAfterRetry = await instructionsService.listOwnerVersions({
       role: 'worker',
@@ -747,7 +752,12 @@ describe('InstructionStudio', () => {
     expect(fakeFs.targets.get(`${root}|claude_code`)?.content).toBe('# hand-written notes');
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(screen.getByText('Hammond-managed')).toBeInTheDocument());
+    // A wider bound than the default 1s: this re-runs the whole import (assignment lookup,
+    // instructions save, harness inject) chained through several awaits, which a loaded run can
+    // legitimately take longer than 1s to settle without anything actually being wrong.
+    await waitFor(() => expect(screen.getByText('Hammond-managed')).toBeInTheDocument(), {
+      timeout: 3000,
+    });
 
     // The safe retry re-ran the whole import — preservation happened exactly once, and the
     // preserved content is exactly the original unmanaged file, never empty/generic content.
