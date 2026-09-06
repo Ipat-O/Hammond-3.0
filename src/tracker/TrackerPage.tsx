@@ -941,6 +941,24 @@ export function TrackerPage({
     taskEditorBaselineRef.current = null;
     setTaskEditor(null);
   }
+
+  /** Explicit abandon of the currently open task editor — its OWN Cancel button, or Discard on
+   * the unsaved-changes guard dialog — never a mid-save rebase (see `saveTask`). If the task being
+   * abandoned is an 'edit' still showing a REJECTED (never-persisted) optimistic write, roll the
+   * visible row back to the last CONFIRMED-durable values in `taskEditorBaselineRef` first: an
+   * explicit Cancel/Discard must make the UI visibly return to confirmed content, never leave
+   * unsaved text displayed as if saved so a later reopen of the same task recaptures it as a new,
+   * falsely-clean baseline (Correction 5, F2b). A pending (not yet rejected) save's own optimistic
+   * row is left alone here — its completion (success or failure) governs itself.
+   */
+  function cancelTaskEditor() {
+    const baseline = taskEditorBaselineRef.current;
+    if (taskEditor === 'edit' && baseline && selectedTaskId) {
+      const taskId = selectedTaskId;
+      setTasks((current) => current.map((item) => (item.id === taskId ? { ...item, ...baseline } : item)));
+    }
+    closeTaskEditor();
+  }
   const [resumeReady, setResumeReady] = useState(false);
   // Mirrors `pendingTaskResumeRef` as real state (rather than only a ref) so the resume-persistence
   // effect below re-fires the instant a pending task lookup concludes, even when the concluding
@@ -1225,6 +1243,21 @@ export function TrackerPage({
   useEffect(() => {
     if (previousOwnerIdRef.current === ownerId) return;
     previousOwnerIdRef.current = ownerId;
+    // Any pending-nav guard belongs to the outgoing owner — a showing "Unsaved changes" dialog,
+    // an old Save-all still in flight, or a directory flow awaiting `guardTransition`'s promise
+    // for a decision nobody has answered yet. Settle that decision as cancelled (never leave its
+    // promise dangling) before clearing the dialog/busy/error state itself: bumping the token
+    // alone would stop a late Save-all completion from executing `pendingNav` or touching the new
+    // owner's own guard (see the combined dialog's token check below), but it would never resolve
+    // a caller still awaiting `guardTransition`'s answer (Correction 5, new finding).
+    const previousPendingNavCancel = pendingNavCancelRef.current;
+    navTransitionTokenRef.current += 1;
+    pendingNavCancelRef.current = null;
+    setPendingNav(null);
+    setPendingNavKinds([]);
+    setNavTransitionSaving(false);
+    setNavTransitionError(null);
+    previousPendingNavCancel?.();
     resumeAppliedRef.current = false;
     pendingTaskResumeRef.current = null;
     screenNavigatedRef.current = false;
@@ -2515,7 +2548,7 @@ export function TrackerPage({
               </section>
             </div>
             <aside className="detail-panel" aria-label="Selected task detail">
-              {taskEditor ? <TaskForm draft={taskDraft} tasks={visibleTasks} taskId={taskEditor === 'edit' ? selectedTask?.id : undefined} saving={taskSaving} error={taskSaveError} isNew={taskEditor === 'new'} onChange={setTaskDraft} onSubmit={(event) => void saveTask(event)} onCancel={closeTaskEditor} onRetry={() => void saveTask()} /> : selectedTask ? <>
+              {taskEditor ? <TaskForm draft={taskDraft} tasks={visibleTasks} taskId={taskEditor === 'edit' ? selectedTask?.id : undefined} saving={taskSaving} error={taskSaveError} isNew={taskEditor === 'new'} onChange={setTaskDraft} onSubmit={(event) => void saveTask(event)} onCancel={cancelTaskEditor} onRetry={() => void saveTask()} /> : selectedTask ? <>
                 <div className="task-summary"><p className="eyebrow">Selected task</p><h2>{selectedTask.title}</h2><p>{selectedTask.description || 'No task description yet.'}</p><button className="button button-secondary" type="button" onClick={() => requestEditTask(selectedTask)}>Edit task</button></div>
                 <CommentPanel task={selectedTask} comments={comments} draft={commentDraft} saving={commentSaving} loading={commentsLoading} error={commentSaveError} onDraftChange={setCommentDraft} onSubmit={(event) => void addComment(event)} onRetry={retryComment} />
               </> : <div className="detail-placeholder"><span className="placeholder-mark">✦</span><h2>Task detail</h2><p>Select a task to inspect its context, hierarchy, and comments.</p></div>}
@@ -2813,7 +2846,7 @@ export function TrackerPage({
                 onClick={() => {
                   for (const kind of pendingNavKinds) {
                     if (kind === 'task') {
-                      closeTaskEditor();
+                      cancelTaskEditor();
                       setTaskSaveError(null);
                       setTaskRetry(null);
                     } else if (kind === 'comment') {

@@ -2443,6 +2443,112 @@ describe('Correction 4 — F2b: the task-editor dirty baseline reflects durable 
       within(dialog).getByText('You have an unsaved task edit. Save it, discard it, or stay here.'),
     ).toBeInTheDocument();
   });
+
+  it("Correction 5 — an explicit Cancel on a rejected task edit rolls the list back to confirmed content, so reopening the same task (without leaving the project) never recaptures the failed draft as a new baseline", async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const existingTask = task({ id: 'existing-task', project_id: 'project-a', title: 'Original title' });
+    const { services } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [existingTask] },
+    });
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('save blew up'),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'edited after failure' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await waitFor(() => expect(screen.getAllByText('save blew up').length).toBeGreaterThan(0));
+
+    // Pre-Correction-5, the rejected optimistic row kept showing "edited after failure" in the
+    // outliner even after this explicit Cancel abandoned it — an unsaved edit silently displayed
+    // as if it had been saved.
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('button', { name: /^edited after failure/ })).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /^Original title/ })).toBeInTheDocument();
+
+    // Reopening the SAME task, still on the SAME project (no project switch/refetch to paper over
+    // a stale row), must capture "Original title" — not the abandoned "edited after failure" — as
+    // its baseline.
+    fireEvent.click(screen.getByRole('button', { name: /^Original title/ }));
+    expect(screen.getByLabelText('Task title')).toHaveValue('Original title');
+
+    // With nothing actually dirty now, switching project needs no guard, and truthfully so — the
+    // failed edit was abandoned the moment Cancel was clicked, not silently "saved" and then lost.
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    await waitFor(() =>
+      expect(screen.getAllByRole('heading', { name: 'Project B' }).length).toBeGreaterThan(0),
+    );
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('Correction 5 — a REPEATED rejection/Cancel/reopen cycle never accumulates a stale baseline', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const existingTask = task({ id: 'existing-task', project_id: 'project-a', title: 'Original title' });
+    const { services } = makeServices([projectA], {
+      tasksByProject: { 'project-a': [existingTask] },
+    });
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error('save blew up once'))
+      .mockRejectedValueOnce(new Error('save blew up twice'));
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+
+    for (const [attempt, editedValue] of [
+      ['first', 'first failed edit'],
+      ['second', 'second failed edit'],
+    ] as const) {
+      fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+      expect(screen.getByLabelText('Task title')).toHaveValue('Original title');
+      fireEvent.change(screen.getByLabelText('Task title'), { target: { value: editedValue } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+      await waitFor(() =>
+        expect(screen.getAllByText(`save blew up ${attempt === 'first' ? 'once' : 'twice'}`).length).toBeGreaterThan(0),
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(screen.queryByRole('button', { name: new RegExp(`^${editedValue}`) })).not.toBeInTheDocument();
+    }
+
+    expect(await screen.findByRole('button', { name: /^Original title/ })).toBeInTheDocument();
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2);
+  });
+
+  it('Correction 5 — an explicit Discard on the unsaved-changes guard also rolls the rejected row back, without needing a project switch/refetch to mask it', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const existingTask = task({ id: 'existing-task', project_id: 'project-a', title: 'Original title' });
+    const otherTask = task({ id: 'other-task', project_id: 'project-a', title: 'Other task' });
+    const { services } = makeServices([projectA], {
+      tasksByProject: { 'project-a': [existingTask, otherTask] },
+    });
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('save blew up'),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'edited then rejected' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await waitFor(() => expect(screen.getAllByText('save blew up').length).toBeGreaterThan(0));
+
+    // Trigger the guard via a same-project task switch (no project change, so nothing refetches
+    // and papers over a stale optimistic row) and Discard through the dialog instead of the
+    // editor's own Cancel button.
+    fireEvent.click(screen.getByRole('button', { name: /^Other task/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard changes' }));
+
+    expect(await screen.findByLabelText('Task title')).toHaveValue('Other task');
+    expect(screen.queryByRole('button', { name: /^edited then rejected/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    expect(screen.getByLabelText('Task title')).toHaveValue('Original title');
+  });
 });
 
 
@@ -2531,5 +2637,229 @@ describe('Independent-audit Correction 2 — F3: no competing state publisher re
     // every mutating method (including `forget`) publishes synchronously ahead of its own write.
     fireEvent.click(screen.getByRole('button', { name: 'Close root-a' }));
     expect(screen.getByText('No directory is open for this project yet.')).toBeInTheDocument();
+  });
+});
+
+describe('Correction 5 — a mounted owner change invalidates every old-owner pending-nav/guard state', () => {
+  it('a pending-nav guard dialog still open (Save never clicked) when the owner changes is dismissed, and its action never executes under the new owner', async () => {
+    const owner1 = 'owner-real-3';
+    const owner2 = 'owner-real-4';
+    const projectA = project({ id: 'project-a2', owner_id: owner1, name: 'Project A2' });
+    const projectB = project({ id: 'project-b2', owner_id: owner1, name: 'Project B2' });
+    const projectC = project({ id: 'project-c2', owner_id: owner2, name: 'Owner2 Project 2' });
+    const existingTask = task({ id: 'existing-task-2', project_id: 'project-a2', title: 'Original title 2' });
+    const { services } = makeServices([projectA, projectB, projectC], {
+      tasksByProject: { 'project-a2': [existingTask] },
+    });
+    const listSpy = vi.fn();
+    listSpy.mockResolvedValueOnce([projectA, projectB]).mockResolvedValueOnce([projectC]);
+    services.repositories.projects.list = listSpy as unknown as typeof services.repositories.projects.list;
+
+    const { rerender } = render(<TrackerPage services={services} ownerId={owner1} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title 2/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'never saved before owner change' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B2' }));
+    await screen.findByRole('dialog', { name: 'Unsaved changes' });
+
+    // Owner changes (mounted account switch) while the dialog is showing, nobody having clicked
+    // Save/Discard/Cancel yet.
+    rerender(<TrackerPage services={services} ownerId={owner2} onSignOut={vi.fn()} />);
+    await waitFor(() =>
+      expect(screen.getAllByRole('heading', { name: 'Owner2 Project 2' }).length).toBeGreaterThan(0),
+    );
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Project B2' })).not.toBeInTheDocument();
+    expect(services.repositories.tasks.update).not.toHaveBeenCalled();
+  });
+
+  it("an owner change while a combined task+Studio Save is still in flight discards the old navigation, and a later resolution of that old save never leaks into the new owner's session or guard", async () => {
+    const owner1 = 'owner-real-5';
+    const owner2 = 'owner-real-6';
+    const projectA = project({ id: 'project-a3', owner_id: owner1, name: 'Project A3' });
+    const projectB = project({ id: 'project-b3', owner_id: owner1, name: 'Project B3' });
+    const projectC = project({ id: 'project-c3', owner_id: owner2, name: 'Owner2 Project 3' });
+    const existingTask = task({ id: 'existing-task-3', project_id: 'project-a3', title: 'Original title 3' });
+    const { services } = makeServices([projectA, projectB, projectC], {
+      tasksByProject: { 'project-a3': [existingTask] },
+    });
+    const listSpy = vi.fn();
+    listSpy.mockResolvedValueOnce([projectA, projectB]).mockResolvedValueOnce([projectC]);
+    services.repositories.projects.list = listSpy as unknown as typeof services.repositories.projects.list;
+
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...existingTask,
+      title: 'saved before owner change',
+    });
+    let resolveStudioSave!: () => void;
+    const originalSaveAndActivate = services.instructions.saveAndActivate.bind(services.instructions);
+    services.instructions.saveAndActivate = ((params) =>
+      new Promise((resolve) => {
+        resolveStudioSave = () => resolve(originalSaveAndActivate(params));
+      })) as typeof services.instructions.saveAndActivate;
+
+    const { rerender } = render(<TrackerPage services={services} ownerId={owner1} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title 3/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'saved before owner change' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'pending studio save at owner change' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B3' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    // Owner changes (mounted account switch) while the combined Save is still in flight — only
+    // the Studio half is held; the task half resolves synchronously above. (Device-local resume
+    // settings are not owner-scoped, so owner2 may legitimately resume straight into whichever
+    // screen owner1's session last recorded — the assertions below key off the sidebar's own
+    // active-project state, which IS owner-scoped, rather than assuming a particular screen.)
+    rerender(<TrackerPage services={services} ownerId={owner2} onSignOut={vi.fn()} />);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Owner2 Project 3' })).toHaveClass('project-nav-item-active'),
+    );
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Project B3' })).not.toBeInTheDocument();
+
+    // The old owner's held Studio save finally resolves.
+    resolveStudioSave();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // The stale completion must never execute the old navigation (selecting Project B3) nor
+    // resurrect any of owner1's UI under the now-current owner2 session.
+    expect(screen.queryByRole('button', { name: 'Project B3' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Project A3' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Owner2 Project 3' })).toHaveClass('project-nav-item-active');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    // And the new owner's OWN guard must still work — the shared guard state was invalidated, not
+    // left permanently broken (stuck "Saving…", or a token that can never match again).
+    fireEvent.click(screen.getByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: /^Worker instructions for/ });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), { target: { value: 'owner2 own draft' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }));
+    const newDialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    expect(
+      within(newDialog).getByText('You have unsaved instruction edits. Save them, discard them, or stay here.'),
+    ).toBeInTheDocument();
+  });
+
+  it('an owner change during a partial Save-all success (task saved, Studio still failing) discards the narrowed guard instead of leaking it into the new owner', async () => {
+    const owner1 = 'owner-real-7';
+    const owner2 = 'owner-real-8';
+    const projectA = project({ id: 'project-a4', owner_id: owner1, name: 'Project A4' });
+    const projectB = project({ id: 'project-b4', owner_id: owner1, name: 'Project B4' });
+    const projectC = project({ id: 'project-c4', owner_id: owner2, name: 'Owner2 Project 4' });
+    const existingTask = task({ id: 'existing-task-4', project_id: 'project-a4', title: 'Original title 4' });
+    const { services } = makeServices([projectA, projectB, projectC], {
+      tasksByProject: { 'project-a4': [existingTask] },
+    });
+    const listSpy = vi.fn();
+    listSpy.mockResolvedValueOnce([projectA, projectB]).mockResolvedValueOnce([projectC]);
+    services.repositories.projects.list = listSpy as unknown as typeof services.repositories.projects.list;
+
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...existingTask,
+      title: 'task half saved before owner change',
+    });
+    services.instructions.saveAndActivate = (() =>
+      Promise.reject(new Error('studio blew up'))) as typeof services.instructions.saveAndActivate;
+
+    const { rerender } = render(<TrackerPage services={services} ownerId={owner1} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title 4/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'task half saved before owner change' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'studio half fails before owner change' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B4' }));
+    let dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    await screen.findByText('Save failed — see the error in Instruction Studio for details.');
+    dialog = screen.getByRole('dialog', { name: 'Unsaved changes' });
+    expect(
+      within(dialog).getByText('You have unsaved instruction edits. Save them, discard them, or stay here.'),
+    ).toBeInTheDocument();
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1);
+
+    // Owner changes while the narrowed (Studio-only) guard is still showing its error. (Device-
+    // local resume settings are not owner-scoped, so owner2 may legitimately resume straight into
+    // whichever screen owner1's session last recorded — key off the sidebar's own owner-scoped
+    // active-project state rather than assuming a particular screen.)
+    rerender(<TrackerPage services={services} ownerId={owner2} onSignOut={vi.fn()} />);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Owner2 Project 4' })).toHaveClass('project-nav-item-active'),
+    );
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByText('Save failed — see the error in Instruction Studio for details.')).not.toBeInTheDocument();
+    // Still exactly one task write — the abandoned guard's own retry path never re-fires under owner2.
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('a directory-driven transition awaiting guardTransition when the owner changes is cancelled and never later activates the old binding', async () => {
+    const owner1 = 'owner-real-9';
+    const owner2 = 'owner-real-10';
+    const projectA = project({ id: 'project-a5', owner_id: owner1, name: 'Project A5' });
+    const projectB = project({ id: 'project-b5', owner_id: owner1, name: 'Project B5' });
+    const projectC = project({ id: 'project-c5', owner_id: owner2, name: 'Owner2 Project 5' });
+    const existingTask = task({ id: 'existing-task-5', project_id: 'project-a5', title: 'Original title 5' });
+
+    const filesystem = createFakeFilesystem();
+    filesystem.existingRoots.add('/home/owner/b5-repo');
+    (filesystem.selectDirectory as ReturnType<typeof vi.fn>).mockResolvedValue('/home/owner/b5-repo');
+    const settings = createFakeLocalSettings();
+    const directoryContext: DirectoryContextServices = { filesystem, settings };
+    const seedManager = new DirectoryContextManager(directoryContext);
+    let seededState = await seedManager.loadState();
+    seededState = (await seedManager.linkDirectory(seededState, projectB.id, '/home/owner/b5-repo')).state;
+    await seedManager.updateResumeSelection(seededState, {
+      selectedProjectId: projectA.id,
+      selectedTaskId: null,
+      resumeScreen: 'workspace',
+    });
+
+    const { services } = makeServices([projectA, projectB, projectC], {
+      directoryContext,
+      tasksByProject: { 'project-a5': [existingTask] },
+    });
+    const listSpy = vi.fn();
+    listSpy.mockResolvedValueOnce([projectA, projectB]).mockResolvedValueOnce([projectC]);
+    services.repositories.projects.list = listSpy as unknown as typeof services.repositories.projects.list;
+
+    const { rerender } = render(<TrackerPage services={services} ownerId={owner1} onSignOut={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Workspace' })).toHaveClass('nav-item-active'));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title 5/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'dirty before directory switch' } });
+
+    await clickOpenDirectory();
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    expect(
+      within(dialog).getByText('You have an unsaved task edit. Save it, discard it, or stay here.'),
+    ).toBeInTheDocument();
+
+    // Owner changes while `openDirectory()`'s own `guardTransition()` promise is still awaiting a
+    // decision nobody made.
+    rerender(<TrackerPage services={services} ownerId={owner2} onSignOut={vi.fn()} />);
+    await waitFor(() =>
+      expect(screen.getAllByRole('heading', { name: 'Owner2 Project 5' }).length).toBeGreaterThan(0),
+    );
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole('heading', { name: 'Project B5' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { name: 'Owner2 Project 5' }).length).toBeGreaterThan(0);
   });
 });
