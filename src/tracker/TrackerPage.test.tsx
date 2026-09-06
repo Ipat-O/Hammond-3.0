@@ -2814,27 +2814,30 @@ describe('Correction 6 — a delayed task-save completion must never steal a new
 });
 
 /**
- * Correction 7 (owner round-5 audit) — Finding A: `saveTask`'s unconditional collection
- * reconciliation (`setTasks(current => ... optimisticId -> saved)`) was guarded only by which
- * PROJECT a completion belonged to, never by which SAVE for that task was actually the newest one
- * issued. A normal form Save and an overlapping guard Save-all both fire against the very same
- * open editing context (they share `editorGenAtStart` right up until a successful guard-Save
- * navigates away), so `taskEditorGenRef` cannot tell an older, superseded request from a newer
- * one — only whichever response happens to resolve LAST won, regardless of which request was
- * actually issued last. `taskSaveRevisionRef` fixes this: a per-task counter bumped once, at
- * ISSUANCE, so a response can tell whether it is still the most recently issued attempt for that
- * task id no matter what order responses settle in.
+ * Correction 7 (owner round-5 audit) originally fixed Finding A (an older, superseded save
+ * response settling after a newer one must never regress the collection) with a per-task
+ * "highest ISSUED revision" watermark, and Finding B (Cancel must reveal the CURRENT confirmed
+ * value, not a frozen editor-open baseline) with a separately-maintained confirmed-row ref.
  *
- * Finding B: `cancelTaskEditor` rolled the visible row back to `taskEditorBaselineRef` — a
- * snapshot frozen at the moment THIS editor opened. If a DIFFERENT save for the very same task
- * (an earlier attempt, abandoned and reopened) lands successfully while this editor is open,
- * Cancel would silently resurrect the obsolete pre-save baseline over that newer confirmed
- * result. `confirmedTasksRef` fixes this: it always holds the CURRENT confirmed row, updated by
- * every successful create/update/list-load regardless of which editing context is open, and
- * `cancelTaskEditor` now rolls back to THAT.
+ * Round 6's independent audit found a residual: the watermark tracked ISSUANCE order, not
+ * SUCCESS — so in the sequence "issue v1, issue v2, v2 REJECTS, v1 SUCCEEDS", v1's own success
+ * carried the lower (now-superseded) revision number and was excluded from confirmation entirely,
+ * even though it was the only request that actually persisted anything. Cancel then revealed the
+ * stale pre-save baseline instead of the durable v1 value.
+ *
+ * HAM3-008 Correction 8 removes the race those two mechanisms were patching, instead of adding
+ * another watermark exception: at most one persistence request per task id is ever in flight at a
+ * time (`TaskSaveCoordinator`, `src/tracker/taskSaveCoordinator.ts`), dispatched strictly FIFO. A
+ * second overlapping save for the SAME task (a normal form Save plus an overlapping guard
+ * Save-all, sharing one open editing context) now QUEUES instead of racing a concurrent request —
+ * so "two requests genuinely in flight for the same task at once" is no longer reachable, and
+ * "highest issued" and "highest successful" collapse into the same thing by construction. The
+ * tests below replace the three that asserted the OLD concurrent-dispatch shape (two `update`
+ * calls already both in flight before either settles) with tests that instead prove that shape is
+ * now IMPOSSIBLE, while preserving every content/Cancel/error guarantee the originals proved.
  */
-describe('Correction 7 — task state stays consistent across overlapping saves and Cancel', () => {
-  it("two overlapping saves of the SAME task settle OUT OF ORDER — the newer request's response arrives FIRST, then the older, superseded request's response arrives LAST: the older response must never regress the confirmed collection back to its own stale content (Finding A)", async () => {
+describe('Correction 7/8 — task state stays consistent across overlapping saves and Cancel; overlapping dispatch is now impossible', () => {
+  it("v1 saving, then v2 requested for the SAME task while v1 is still held: v2's own repository call does not begin until v1 settles (overlapping dispatch is impossible); once v1 succeeds it is reconciled immediately, then v2 dispatches and also succeeds — confirmed advances v1 then v2, ending on v2", async () => {
     const projectA = project({ id: 'project-a', name: 'Project A' });
     const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task Alpha' });
     const taskB = task({ id: 'task-b', project_id: 'project-a', title: 'Task Bravo' });
@@ -2842,10 +2845,6 @@ describe('Correction 7 — task state stays consistent across overlapping saves 
       tasksByProject: { 'project-a': [taskA, taskB] },
     });
 
-    // A fake that records exactly what each call was asked to persist, in the order the calls
-    // were ISSUED, and lets the test settle each one's response independently — so "whichever
-    // response arrives first" and "whichever request was issued last" are exercised as the
-    // genuinely different things the finding says they are, not conflated.
     const resolvers: Array<(task: Task) => void> = [];
     (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
       () =>
@@ -2858,56 +2857,57 @@ describe('Correction 7 — task state stays consistent across overlapping saves 
     fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
     fireEvent.click(await screen.findByRole('button', { name: /^Task Alpha/ }));
 
-    // Edit task A to v1 and click the form's own Save — issued as revision 1. Held.
+    // Edit task A to v1 and click the form's own Save. Held.
     fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
     await screen.findByRole('button', { name: 'Saving…' });
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
 
-    // Change the input to v2 while v1's write is still in flight — a newer, unsaved edit.
+    // Change the input to v2 while v1's write is still in flight — a newer, unsaved edit — and
+    // explicitly request it via the guard dialog's own "Save changes" (triggered by clicking away
+    // to task B, still dirty against the original baseline).
     fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v2' } });
-
-    // Click task B: the guard fires (still dirty against the original baseline). Its own "Save
-    // changes" issues a SECOND update for the SAME task — v2, revision 2 — while v1 is still held.
     fireEvent.click(screen.getByRole('button', { name: /^Task Bravo/ }));
     const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
 
-    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
+    // v2 has been explicitly requested, but the coordinator must not dispatch it while v1 is
+    // still in flight — give a wrongly-eager implementation a chance to fire, then prove it
+    // didn't: still exactly ONE `update` call, still v1's own payload. The rest of the app stays
+    // usable — the dialog itself is still interactive, nothing is globally frozen.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1);
     expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(
       1,
       'task-a',
       expect.objectContaining({ title: 'v1' }),
     );
+    expect(screen.getByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+
+    // Settle v1 — this both reconciles task-a's row to "v1" AND is what lets the coordinator
+    // dispatch v2 (its repository call happens strictly after, never before, v1 settles).
+    resolvers[0]({ ...taskA, title: 'v1' });
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
     expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(
       2,
       'task-a',
       expect.objectContaining({ title: 'v2' }),
     );
 
-    // Settle the SECOND (v2, newer-issued) request FIRST.
+    // v2 now succeeds — the guard's Save-all completes and navigates to B.
     resolvers[1]({ ...taskA, title: 'v2' });
     await waitFor(() => expect(screen.getByRole('button', { name: /^v2/ })).toBeInTheDocument());
-    // The guard's Save succeeded with no failed kinds — it should already have navigated to B.
     await waitFor(() => expect(screen.getByLabelText('Task title')).toHaveValue('Task Bravo'));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-
-    // NOW settle the FIRST (v1, older-issued) request — arriving dead last. Its stale response
-    // must never overwrite the newer confirmed v2 content.
-    resolvers[0]({ ...taskA, title: 'v1' });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(screen.getByRole('button', { name: /^v2/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^v1/ })).not.toBeInTheDocument();
-    // Task B's own editor, still open, is untouched by task A's stale completion.
-    expect(screen.getByLabelText('Task title')).toHaveValue('Task Bravo');
   });
 
-  it('overlapping same-task saves are tracked PER TASK: resolving one task\'s stale older save out of order never contaminates a different task\'s own overlapping saves (Finding A)', async () => {
+  it("different tasks' own overlapping-save activity is tracked strictly PER TASK: a completely independent outliner status move for task B dispatches and settles on its OWN schedule while task A's own form Save is still held, and neither task's confirmed content leaks into the other's", async () => {
     const projectA = project({ id: 'project-a', name: 'Project A' });
     const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task Alpha' });
-    const taskB = task({ id: 'task-b', project_id: 'project-a', title: 'Task Bravo' });
-    const taskC = task({ id: 'task-c', project_id: 'project-a', title: 'Task Charlie' });
+    const taskB = task({ id: 'task-b', project_id: 'project-a', title: 'Task Bravo', status: 'backlog' });
     const { services } = makeServices([projectA], {
-      tasksByProject: { 'project-a': [taskA, taskB, taskC] },
+      tasksByProject: { 'project-a': [taskA, taskB] },
     });
     const resolvers: Array<{ id: string; resolve: (task: Task) => void }> = [];
     (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
@@ -2920,53 +2920,35 @@ describe('Correction 7 — task state stays consistent across overlapping saves 
     render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
 
-    // Task A: v1 held, then v2 issued via guard-Save navigating to task B.
+    // Task A: v1 held via its own form Save.
     fireEvent.click(await screen.findByRole('button', { name: /^Task Alpha/ }));
     fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'A-v1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
-    await screen.findByRole('button', { name: 'Saving…' });
-    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'A-v2' } });
-    fireEvent.click(screen.getByRole('button', { name: /^Task Bravo/ }));
-    let dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
+
+    // While task A's own save is still held, move task B's status directly from the outliner — a
+    // fully independent per-task request. It must dispatch immediately, never queuing behind
+    // task A's own unrelated activity (different tasks save independently).
+    fireEvent.change(screen.getByLabelText('Move Task Bravo'), { target: { value: 'done' } });
     await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
+    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(2, 'task-b', { status: 'done' });
 
-    // Resolve task A's NEWER save (index 1) so the guard's Save succeeds and navigates to B —
-    // task A's OLDER save (index 0) is left unresolved, deliberately, until later.
-    resolvers[1].resolve({ ...taskA, title: 'A-v2' });
-    await waitFor(() => expect(screen.getByLabelText('Task title')).toHaveValue('Task Bravo'));
+    const taskBCall = resolvers.find((entry) => entry.id === 'task-b')!;
+    taskBCall.resolve({ ...taskB, status: 'done' });
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Task Bravo/ })).toBeInTheDocument());
+    // Task A's own editor is entirely unaffected by task B's unrelated completion — still open,
+    // still showing its own held save, never stolen or disturbed.
+    expect(screen.getByRole('button', { name: 'Saving…' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Task title')).toHaveValue('A-v1');
 
-    // Task B: w1 held, then w2 issued via guard-Save navigating to task C.
-    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'B-w1' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
-    await screen.findByRole('button', { name: 'Saving…' });
-    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'B-w2' } });
-    fireEvent.click(screen.getByRole('button', { name: /^Task Charlie/ }));
-    dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
-    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(4));
-
-    // Now resolve task A's long-stale OLDER save (index 0) — it must not resurrect "A-v1", and
-    // must not touch task B's still in-flight saves.
-    resolvers[0].resolve({ ...taskA, title: 'A-v1' });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(screen.getByRole('button', { name: /^A-v2/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^A-v1/ })).not.toBeInTheDocument();
-
-    // Resolve task B's NEWER save (index 3) so its own guard-Save succeeds and navigates to C.
-    resolvers[3].resolve({ ...taskB, title: 'B-w2' });
-    await waitFor(() => expect(screen.getByLabelText('Task title')).toHaveValue('Task Charlie'));
-
-    // Finally resolve task B's stale OLDER save (index 2) — must not resurrect "B-w1", and task
-    // A's row (already settled, above) must still read "A-v2".
-    resolvers[2].resolve({ ...taskB, title: 'B-w1' });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(screen.getByRole('button', { name: /^B-w2/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^B-w1/ })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^A-v2/ })).toBeInTheDocument();
+    // NOW resolve task A's own save — its confirmed content is exactly its own, never task B's.
+    const taskACall = resolvers.find((entry) => entry.id === 'task-a')!;
+    taskACall.resolve({ ...taskA, title: 'A-v1' });
+    await waitFor(() => expect(screen.getByRole('button', { name: /^A-v1/ })).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: /^Task Bravo/ })).toBeInTheDocument();
   });
 
-  it('the NEWER of two overlapping same-task saves REJECTS (its error is still the latest and must surface); an OLDER save\'s success then arrives late and must not silently clear that error or resurrect its own stale content; a subsequent guard-dialog Retry (a third, newest revision) that succeeds resolves cleanly and navigates on (Finding A: failure then retry among overlapping revisions)', async () => {
+  it('v1 succeeds while v2 is still queued behind it, and v2 (once it finally dispatches) REJECTS: v1 stays confirmed — never excluded because a later, now-failed v2 was requested after it — the dialog stays open with the error, and an explicit Cancel with NO third retry reveals v1, never the stale pre-save baseline (closes the round-6 residual under Finding A)', async () => {
     const projectA = project({ id: 'project-a', name: 'Project A' });
     const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task Alpha' });
     const taskB = task({ id: 'task-b', project_id: 'project-a', title: 'Task Bravo' });
@@ -2985,46 +2967,54 @@ describe('Correction 7 — task state stays consistent across overlapping saves 
     fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
     fireEvent.click(await screen.findByRole('button', { name: /^Task Alpha/ }));
 
-    // v1 (revision 1) — the form's own Save — held.
+    // v1 — the form's own Save — dispatched, held.
     fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
     await screen.findByRole('button', { name: 'Saving…' });
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
 
-    // v2 (revision 2, the newer of the two overlapping saves): the form's own Save button is now
-    // disabled/relabeled "Saving…" while v1 is held, so — exactly as the audited sequence
-    // describes — the SECOND save for this same task comes from the guard dialog instead: edit
-    // the draft further, then navigate away to fire it.
+    // v2 — requested via the guard dialog while v1 is still held — QUEUES behind it and must not
+    // dispatch yet.
     fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v2' } });
     fireEvent.click(screen.getByRole('button', { name: /^Task Bravo/ }));
     const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
-    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1);
 
-    // v2 (the LATEST issued) rejects — this is the newest attempt, so its error must surface (it
-    // is shown twice, in the outliner's banner and the form's own error box — both are checked),
-    // and the dialog must stay put rather than navigating on a failure.
+    // v1 succeeds — reconciles task-a's row to "v1" AND lets the coordinator dispatch v2.
+    resolvers[0].resolve({ ...taskA, title: 'v1' });
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
+    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(
+      2,
+      'task-a',
+      expect.objectContaining({ title: 'v2' }),
+    );
+
+    // v2 — the only request now outstanding — rejects. Its error surfaces (shown in both the
+    // outliner's banner and the form's own error box) and the dialog stays put.
     resolvers[1].reject(new Error('v2 rejected'));
     await waitFor(() => expect(screen.getAllByText('v2 rejected').length).toBeGreaterThan(0));
     expect(screen.getByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
 
-    // v1 (the OLDER, superseded attempt) now succeeds, arriving after v2 already failed. It must
-    // NOT clear the v2 error, and must not resurrect "v1" in the collection.
-    resolvers[0].resolve({ ...taskA, title: 'v1' });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(screen.getAllByText('v2 rejected').length).toBeGreaterThan(0);
-    expect(screen.queryByRole('button', { name: /^v1/ })).not.toBeInTheDocument();
+    // The round-6 residual this closes: v1's earlier SUCCESS must still be confirmed — pre-
+    // Correction-8, the issuance-order watermark excluded it because a later (now-rejected) v2
+    // had been requested after it.
+    expect(screen.getByRole('button', { name: /^v1/ })).toBeInTheDocument();
 
-    // Retry (revision 3, the newest attempt yet) via the dialog's own "Save changes" again, still
-    // carrying the current draft ("v2"). Succeeding this time clears the failure and lets the
-    // originally-requested navigation to task B finally proceed.
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
-    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(3));
-    resolvers[2].resolve({ ...taskA, title: 'v2' });
-
-    await waitFor(() => expect(screen.getByRole('button', { name: /^v2/ })).toBeInTheDocument());
-    expect(screen.queryByText('v2 rejected')).not.toBeInTheDocument();
-    await waitFor(() => expect(screen.getByLabelText('Task title')).toHaveValue('Task Bravo'));
+    // Dismiss the nav prompt itself first (its own Cancel just stays on task A) so the editor's
+    // OWN Cancel button is the one being exercised next, unambiguously.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Task title')).toHaveValue('v2');
+    expect(screen.getAllByText('v2 rejected').length).toBeGreaterThan(0);
+
+    // The editor's own explicit Cancel — with NO third retry — must reveal v1, the actual durable
+    // value, never "Task Alpha" (the stale pre-save baseline).
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(await screen.findByRole('button', { name: /^v1/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^v2/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Task Alpha/ })).not.toBeInTheDocument();
   });
 
   it("a REJECTED save's optimistic content never becomes confirmed: after Cancel abandons it, reopens the same task with a second draft, and that second draft is also Cancelled, the row reveals the ORIGINAL confirmed value — never either rejected/abandoned draft (Finding B, combined with the rejected-save protection)", async () => {
@@ -3427,5 +3417,365 @@ describe('Correction 5 — a mounted owner change invalidates every old-owner pe
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.queryByRole('heading', { name: 'Project B5' })).not.toBeInTheDocument();
     expect(screen.getAllByRole('heading', { name: 'Owner2 Project 5' }).length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * HAM3-008 Correction 8 — the remaining rows of the mandated transition matrix not already
+ * exercised (unchanged) by the existing suite above: "save first draft, edit newer text without
+ * saving" is the existing Correction 4 F2b delayed-success test; "Cancel/reopen same task while
+ * save pending" is the existing Correction 6 reopen test; "Save-all across Studio/task/comment
+ * with partial failure" is the existing Correction 4 F2a partial-success test — all three continue
+ * to pass unmodified against the coordinator (see the full run in the Correction 8 report). The
+ * tests below cover the rows that genuinely need NEW coverage: failure-then-success ordering,
+ * total failure, duplicate-request dedup, a brand-new task's overlapping creates, queued-save
+ * cancellation, cross-task busy-state isolation, an old-owner queued (not just in-flight) save,
+ * and a same-task save/archive race.
+ */
+describe('Correction 8 — remaining per-task save coordinator matrix rows', () => {
+  it('v1 fails, v2 succeeds: the failure does not poison the queue (v2 still dispatches and settles), confirmed ends on v2, and no stale error from v1 ever flashes once a newer attempt is already on its way to superseding it', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task Alpha' });
+    const taskB = task({ id: 'task-b', project_id: 'project-a', title: 'Task Bravo' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [taskA, taskB] } });
+    const resolvers: Array<{ resolve: (task: Task) => void; reject: (error: Error) => void }> = [];
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise<Task>((resolve, reject) => {
+          resolvers.push({ resolve, reject });
+        }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Task Alpha/ }));
+
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Task Bravo/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1);
+
+    resolvers[0].reject(new Error('v1 rejected'));
+    // v1's own rejection never surfaces here — v2 is already on its way to superseding it.
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
+    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(
+      2,
+      'task-a',
+      expect.objectContaining({ title: 'v2' }),
+    );
+    expect(screen.queryByText('v1 rejected')).not.toBeInTheDocument();
+
+    resolvers[1].resolve({ ...taskA, title: 'v2' });
+    await waitFor(() => expect(screen.getByRole('button', { name: /^v2/ })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText('Task title')).toHaveValue('Task Bravo'));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByText('v1 rejected')).not.toBeInTheDocument();
+  });
+
+  it('both v1 and v2 fail: confirmed stays at the ORIGINAL pre-edit value — never either failed attempt — and the exact latest draft (v2) remains protected/retryable throughout', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Original title' });
+    const taskB = task({ id: 'task-b', project_id: 'project-a', title: 'Task Bravo' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [taskA, taskB] } });
+    const rejecters: Array<(error: Error) => void> = [];
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise<Task>((_resolve, reject) => {
+          rejecters.push(reject);
+        }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Task Bravo/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1);
+
+    rejecters[0](new Error('v1 rejected'));
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
+    rejecters[1](new Error('v2 rejected'));
+
+    await waitFor(() => expect(screen.getAllByText('v2 rejected').length).toBeGreaterThan(0));
+    expect(screen.getByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+    // The exact latest draft is untouched — still "v2", not lost, reverted, or half-applied.
+    expect(screen.getByLabelText('Task title')).toHaveValue('v2');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    // Neither failed attempt was ever confirmed — the row reveals the ORIGINAL value.
+    expect(await screen.findByRole('button', { name: /^Original title/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^v1/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^v2/ })).not.toBeInTheDocument();
+  });
+
+  it('a resubmit of the EXACT same still-unsaved snapshot (no further edit) while the first save is held shares its pending result instead of issuing a duplicate write', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task Alpha' });
+    const taskB = task({ id: 'task-b', project_id: 'project-a', title: 'Task Bravo' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [taskA, taskB] } });
+    let resolveSave!: (task: Task) => void;
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise<Task>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Task Alpha/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
+
+    // Trigger the guard WITHOUT any further edit — still the exact "v1" snapshot the form's own
+    // Save already dispatched (the guard still fires: the draft remains dirty against the
+    // ORIGINAL pre-edit baseline, which the still-pending save has not yet cleared).
+    fireEvent.click(screen.getByRole('button', { name: /^Task Bravo/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Still exactly ONE request — the resubmit shared the already-pending one.
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1);
+
+    resolveSave({ ...taskA, title: 'v1' });
+    await waitFor(() => expect(screen.getByLabelText('Task title')).toHaveValue('Task Bravo'));
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('a brand-new task: overlapping explicit saves before it is ever durably created issue exactly ONE create, and the queued second save becomes an update against the real durable id once it exists — no orphaned or duplicated draft', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const otherTask = task({ id: 'other-task', project_id: 'project-a', title: 'Other task' });
+    const { services } = makeServices([projectA], {
+      tasksByProject: { 'project-a': [otherTask] },
+    });
+    let resolveCreate!: (task: Task) => void;
+    (services.repositories.tasks.create as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise<Task>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
+      (id: string, patch: Record<string, unknown>) =>
+        Promise.resolve({ ...otherTask, ...patch, id, project_id: 'project-a' } as Task),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'New task' }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    await waitFor(() => expect(services.repositories.tasks.create).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Other task/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    // The second save must not begin until the create settles — still exactly one create, zero
+    // updates, no matter how long we wait.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(services.repositories.tasks.create).toHaveBeenCalledTimes(1);
+    expect(services.repositories.tasks.update).not.toHaveBeenCalled();
+
+    resolveCreate({ ...otherTask, id: 'new-task-real-id', title: 'v1', parent_task_id: null });
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
+    expect(services.repositories.tasks.update).toHaveBeenCalledWith(
+      'new-task-real-id',
+      expect.objectContaining({ title: 'v2' }),
+    );
+    // Still exactly one create — the queued save became an update, never a second create.
+    expect(services.repositories.tasks.create).toHaveBeenCalledTimes(1);
+
+    await waitFor(() => expect(screen.getByLabelText('Task title')).toHaveValue('Other task'));
+    expect(screen.getByRole('button', { name: /^v2/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^v1/ })).not.toBeInTheDocument();
+  });
+
+  it('Discard mid-flight (via the Unsaved-changes guard) while a QUEUED (already explicitly requested, not yet dispatched) save is still waiting behind an earlier held one drops the queued request outright — it never reaches the repository — while the earlier, already-sent request still finishes durably', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Original title' });
+    const taskB = task({ id: 'task-b', project_id: 'project-a', title: 'Task Bravo' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [taskA, taskB] } });
+    let resolveV1!: (task: Task) => void;
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise<Task>((resolve) => {
+          resolveV1 = resolve;
+        }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Task Bravo/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    // Explicitly request v2 — it queues behind the still-held v1.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1);
+
+    // Before v1 ever settles, Discard the whole guard mid-flight instead of waiting for Save-all.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard changes' }));
+    expect(await screen.findByLabelText('Task title')).toHaveValue('Task Bravo');
+
+    // Give the now-cancelled queued v2 every chance to wrongly fire anyway, then prove it never did.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1);
+
+    // v1 — already sent before any of this happened — still finishes durably, reconciled into
+    // the row; the cancelled v2 never dispatches even now that v1's slot has freed up.
+    resolveV1({ ...taskA, title: 'v1' });
+    await waitFor(() => expect(screen.getByRole('button', { name: /^v1/ })).toBeInTheDocument());
+    expect(screen.getByLabelText('Task title')).toHaveValue('Task Bravo');
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: /^v2/ })).not.toBeInTheDocument();
+  });
+
+  it('opening a DIFFERENT task while an earlier one is still saving never inherits its busy state: the freshly opened editor never shows "Saving…" before its OWN save is ever invoked', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task Alpha' });
+    const taskB = task({ id: 'task-b', project_id: 'project-a', title: 'Task Bravo' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [taskA, taskB] } });
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise<Task>(() => {}),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Task Alpha/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'A-v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await screen.findByRole('button', { name: 'Saving…' });
+
+    // Abandon task A's editor (its own Cancel — not a Save-all) while its save is still held,
+    // then open a completely different, clean task.
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Task Bravo/ }));
+
+    // Task B's own editor must show its OWN idle Save label, never a busy state it never entered
+    // (A's stale in-flight save must never disable/relabel a completely different task's editor).
+    expect(screen.getByRole('button', { name: 'Save task' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Saving…' })).not.toBeInTheDocument();
+  });
+
+  it("an owner change with an in-flight AND a QUEUED save for the same old-owner task: the queued one is cancelled outright (never dispatched, even once the in-flight one later settles), and nothing leaks into the new owner's UI", async () => {
+    const owner1 = 'owner-real-20';
+    const owner2 = 'owner-real-21';
+    const projectA = project({ id: 'project-a20', owner_id: owner1, name: 'Project A20' });
+    const projectC = project({ id: 'project-c20', owner_id: owner2, name: 'Owner2 Project 20' });
+    const existingTask = task({ id: 'existing-task-20', project_id: 'project-a20', title: 'Original title 20' });
+    const otherTask = task({ id: 'other-task-20', project_id: 'project-a20', title: 'Other task 20' });
+    const { services } = makeServices([projectA, projectC], {
+      tasksByProject: { 'project-a20': [existingTask, otherTask] },
+    });
+    const listSpy = vi.fn();
+    listSpy.mockResolvedValueOnce([projectA]).mockResolvedValueOnce([projectC]);
+    services.repositories.projects.list = listSpy as unknown as typeof services.repositories.projects.list;
+
+    let resolveV1!: (task: Task) => void;
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise<Task>((resolve) => {
+          resolveV1 = resolve;
+        }),
+    );
+
+    const { rerender } = render(<TrackerPage services={services} ownerId={owner1} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title 20/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Other task 20/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1);
+
+    // Owner changes while v1 is in flight and v2 is queued behind it, with the guard's own
+    // Save-all `Promise.all` still pending.
+    rerender(<TrackerPage services={services} ownerId={owner2} onSignOut={vi.fn()} />);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Owner2 Project 20' })).toHaveClass('project-nav-item-active'),
+    );
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    // The old, already-sent v1 finally settles — under the now-abandoned old-owner coordinator
+    // instance. The queued v2 must never dispatch as a result: still exactly one `update` call
+    // ever, and nothing resurrects the old owner's project/dialog under the new owner.
+    resolveV1({ ...existingTask, title: 'v1' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: 'Project A20' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Owner2 Project 20' })).toHaveClass('project-nav-item-active');
+  });
+
+  it('archiving a task while an edit-form save for that SAME task is still in flight serializes behind it: the archive does not dispatch until the save settles, and the final state is correctly archived — a stale save response cannot leave the row looking un-archived', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task Alpha' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [taskA] } });
+    let resolveSave!: (task: Task) => void;
+    let archiveCalled = false;
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise<Task>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    (services.repositories.tasks.archive as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      archiveCalled = true;
+      return Promise.resolve([{ ...taskA, archived_at: '2026-09-06T12:00:00.000Z' }]);
+    });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    // "Show archived" is on from the start so the archived row stays visible (with its own
+    // "Archived" badge) throughout, instead of disappearing the moment the archive applies.
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show archived' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Task Alpha/ }));
+    // Captured before the edit below changes the outliner row's own accessible name.
+    const outlinerRow = screen.getByRole('button', { name: /^Task Alpha/ }).closest('li')!;
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'edited while saving' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
+
+    // Archive the SAME task from the outliner while its own edit-form save is still held — the
+    // archive must not dispatch until the save settles (same per-task coordinator queue). Scoped
+    // to the task's own outliner row: the project detail card has its own, identically-labeled
+    // "Archive" button elsewhere on the page.
+    fireEvent.click(within(outlinerRow).getByRole('button', { name: 'Archive' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(archiveCalled).toBe(false);
+
+    resolveSave({ ...taskA, title: 'edited while saving' });
+    await waitFor(() => expect(archiveCalled).toBe(true));
+    await waitFor(() => expect(within(outlinerRow).getByText('Archived')).toBeInTheDocument());
   });
 });
