@@ -2551,6 +2551,265 @@ describe('Correction 4 — F2b: the task-editor dirty baseline reflects durable 
   });
 });
 
+/**
+ * Correction 6 (Round-4 independent audit, DeepSeek) — `saveTask`'s success branch reselected
+ * whichever task it had just persisted (`setSelectedTaskId(saved.id)`) guarded only by the
+ * project match, not by `taskEditorGenRef` — unlike the adjacent editor-close/rebase branch it
+ * sits beside. A delayed save for an ABANDONED editing context could therefore steal selection
+ * back from a newer editor the owner had already moved on to, and a subsequent Save from that
+ * newer editor would then silently target the OLD task's id with the NEW task's fields.
+ */
+describe('Correction 6 — a delayed task-save completion must never steal a newer editor\'s selection or redirect its save target', () => {
+  it('cancelling task A mid-save, then opening task B, then resolving A\'s save as success: the editor/selection stays on B, and saving B updates task-b (never task-a) with B\'s own fields', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task Alpha' });
+    const taskB = task({ id: 'task-b', project_id: 'project-a', title: 'Task Bravo' });
+    const { services } = makeServices([projectA], {
+      tasksByProject: { 'project-a': [taskA, taskB] },
+    });
+    let resolveTaskASave!: (task: Task) => void;
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>)
+      .mockImplementationOnce(
+        () =>
+          new Promise<Task>((resolve) => {
+            resolveTaskASave = resolve;
+          }),
+      )
+      .mockImplementationOnce((id: string, patch: Partial<Task>) =>
+        Promise.resolve({ ...taskB, ...patch, id } as Task),
+      );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+
+    // Start editing and saving task A — the write is held pending.
+    fireEvent.click(await screen.findByRole('button', { name: /^Task Alpha/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'Task Alpha edited' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await screen.findByRole('button', { name: 'Saving…' });
+
+    // The editor's own Cancel is not disabled while saving — an explicit abandon of THIS
+    // editing context, independent of whatever the in-flight write eventually does.
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    // Open a DIFFERENT task in the same project — a new editing generation.
+    fireEvent.click(await screen.findByRole('button', { name: /^Task Bravo/ }));
+    expect(screen.getByLabelText('Task title')).toHaveValue('Task Bravo');
+
+    // Task A's held save now resolves successfully — durably, for task-a.
+    resolveTaskASave({ ...taskA, title: 'Task Alpha edited' });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^Task Alpha edited/ })).toBeInTheDocument();
+    });
+
+    // The stale completion reconciled task-a's row, but must NOT have stolen focus/selection
+    // back onto it — the editor is still B's, untouched.
+    expect(screen.getByLabelText('Task title')).toHaveValue('Task Bravo');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    // Saving B now must target task-b with B's own fields — never task-a.
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'Task Bravo edited' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
+    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(
+      1,
+      'task-a',
+      expect.objectContaining({ title: 'Task Alpha edited' }),
+    );
+    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(
+      2,
+      'task-b',
+      expect.objectContaining({ title: 'Task Bravo edited' }),
+    );
+
+    // Task A retains only its own legitimate first-save content — never contaminated by B's
+    // payload from the second, unrelated update call — and B's own row reflects its own save.
+    expect(screen.getByRole('button', { name: /^Task Alpha edited/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Task Bravo edited/ })).toBeInTheDocument();
+    expect(screen.queryAllByRole('button', { name: /^Task Alpha/ }).length).toBe(1);
+    expect(screen.queryAllByRole('button', { name: /^Task Bravo/ }).length).toBe(1);
+  });
+
+  it('discarding task A\'s dirty edit (via the Unsaved-changes guard, not the editor\'s own Cancel) while its save is pending, then resolving that save as success, still leaves task B\'s selection alone and its save targeting task-b', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task Alpha' });
+    const taskB = task({ id: 'task-b', project_id: 'project-a', title: 'Task Bravo' });
+    const { services } = makeServices([projectA], {
+      tasksByProject: { 'project-a': [taskA, taskB] },
+    });
+    let resolveTaskASave!: (task: Task) => void;
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>)
+      .mockImplementationOnce(
+        () =>
+          new Promise<Task>((resolve) => {
+            resolveTaskASave = resolve;
+          }),
+      )
+      .mockImplementationOnce((id: string, patch: Partial<Task>) =>
+        Promise.resolve({ ...taskB, ...patch, id } as Task),
+      );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Task Alpha/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'Task Alpha edited' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await screen.findByRole('button', { name: 'Saving…' });
+
+    // Click straight through to task B instead of Cancel first — still dirty (the baseline
+    // hasn't moved yet; this save hasn't resolved), so the guard dialog appears.
+    fireEvent.click(screen.getByRole('button', { name: /^Task Bravo/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard changes' }));
+
+    expect(await screen.findByLabelText('Task title')).toHaveValue('Task Bravo');
+
+    resolveTaskASave({ ...taskA, title: 'Task Alpha edited' });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^Task Alpha edited/ })).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText('Task title')).toHaveValue('Task Bravo');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'Task Bravo edited' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
+    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(
+      2,
+      'task-b',
+      expect.objectContaining({ title: 'Task Bravo edited' }),
+    );
+  });
+
+  it('reopening the SAME task (a fresh editor generation) after Cancelling its pending save: the stale success must not close or revert the freshly reopened, newly-dirty editor', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Original title' });
+    const { services } = makeServices([projectA], {
+      tasksByProject: { 'project-a': [taskA] },
+    });
+    let resolveFirstSave!: (task: Task) => void;
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise<Task>((resolve) => {
+          resolveFirstSave = resolve;
+        }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'first edit, saving now' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await screen.findByRole('button', { name: 'Saving…' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(await screen.findByRole('button', { name: /^Original title/ })).toBeInTheDocument();
+
+    // Reopen the SAME task — a brand-new editor generation — and make a DIFFERENT, unsaved edit.
+    fireEvent.click(screen.getByRole('button', { name: /^Original title/ }));
+    expect(screen.getByLabelText('Task title')).toHaveValue('Original title');
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'second edit, from reopened editor' } });
+
+    // The FIRST save (against the now-abandoned generation) resolves successfully.
+    resolveFirstSave({ ...taskA, title: 'first edit, saving now' });
+
+    // The reopened editor's own newer, unsaved draft must survive untouched — not reverted, not
+    // closed over by the stale completion.
+    await waitFor(() =>
+      expect(screen.getByLabelText('Task title')).toHaveValue('second edit, from reopened editor'),
+    );
+    expect(screen.queryByRole('button', { name: 'Saving…' })).not.toBeInTheDocument();
+
+    // An explicit Cancel now rolls back to the CONFIRMED baseline captured on this reopen
+    // ("Original title") — proving that baseline was never silently rebased onto the stale
+    // "first edit, saving now" completion either.
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(await screen.findByRole('button', { name: /^Original title/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^first edit/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^second edit/ })).not.toBeInTheDocument();
+  });
+
+  it('discarding task A and switching to a DIFFERENT project while its save is pending, then resolving that save: the new project\'s task list is never contaminated', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task Alpha' });
+    const taskB = task({ id: 'task-b', project_id: 'project-b', title: 'Task Bravo' });
+    const { services } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [taskA], 'project-b': [taskB] },
+    });
+    let resolveTaskASave!: (task: Task) => void;
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise<Task>((resolve) => {
+          resolveTaskASave = resolve;
+        }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Task Alpha/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'Task Alpha edited' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await screen.findByRole('button', { name: 'Saving…' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard changes' }));
+
+    await waitFor(() => expect(screen.getAllByRole('heading', { name: 'Project B' }).length).toBeGreaterThan(0));
+    expect(await screen.findByRole('button', { name: /^Task Bravo/ })).toBeInTheDocument();
+
+    // Task A's held save now resolves successfully — AFTER the project switch away from it.
+    resolveTaskASave({ ...taskA, title: 'Task Alpha edited' });
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
+    // Give the resolved promise's continuation inside `saveTask` a tick to run (it intentionally
+    // does nothing observable here — this proves that, not just that the call happened).
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // Project B's list, selection, and dialog state are all untouched by the stale completion —
+    // no old collection update contaminates the new project.
+    expect(screen.getByRole('button', { name: /^Task Bravo/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Task Alpha/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('a Cancelled task A\'s pending save later REJECTING (after task B is opened) must not surface its stale error on task B\'s clean editor', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task Alpha' });
+    const taskB = task({ id: 'task-b', project_id: 'project-a', title: 'Task Bravo' });
+    const { services } = makeServices([projectA], {
+      tasksByProject: { 'project-a': [taskA, taskB] },
+    });
+    let rejectTaskASave!: (error: Error) => void;
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise<Task>((_resolve, reject) => {
+          rejectTaskASave = reject;
+        }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Task Alpha/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'Task Alpha edited' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await screen.findByRole('button', { name: 'Saving…' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Task Bravo/ }));
+    expect(screen.getByLabelText('Task title')).toHaveValue('Task Bravo');
+
+    rejectTaskASave(new Error('task A save blew up'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // Task B's clean, freshly opened editor must show no error and remain untouched by the stale
+    // rejection for the abandoned task-a editing context.
+    expect(screen.queryByText('task A save blew up')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Task title')).toHaveValue('Task Bravo');
+  });
+});
 
 describe('Independent-audit Correction 2 — F3: no competing state publisher regresses the mirrored directory context', () => {
   it('a pending resume-selection write does not regress the mirrored directory context after a subsequent Close; durable settings still end up correct', async () => {

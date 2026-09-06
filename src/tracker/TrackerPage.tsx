@@ -1897,14 +1897,20 @@ export function TrackerPage({
       const saved = editingTask
         ? await repositories.tasks.update(editingTask.id, input)
         : await repositories.tasks.create(input);
-      setTasks((current) => current.map((task) => (task.id === optimisticId ? saved : task)));
       if (selectedProjectIdRef.current === projectIdAtStart) {
-        setSelectedTaskId(saved.id);
-        // Only touch the editor if this is still the SAME editing context this save started
-        // against — a Discard, a switch to a different task, or a fresh "new task" opened while
-        // this write was in flight must never have its own (unrelated) context closed or rebased
-        // by a stale completion.
+        // Reconcile the confirmed, durable record into the collection regardless of which editing
+        // context is open now — a stale completion must never redirect the owner's attention, but
+        // it also must never be treated as if it never happened (Round-4 delayed-save finding: the
+        // saved row itself is always safe to reconcile; only the UI focus/selection is context-bound).
+        setTasks((current) => current.map((task) => (task.id === optimisticId ? saved : task)));
+        // Only move the owner's selection/editor onto this saved record if this is still the SAME
+        // editing context this save started against — a Cancel, a switch to a different task, or a
+        // fresh "new task" opened while this write was in flight must never have the owner's current
+        // selection silently redirected onto a record they are no longer looking at, nor have its
+        // own (unrelated) context closed or rebased by a stale completion (Correction 4, F2b; and the
+        // Round-4 finding that `setSelectedTaskId` had been left outside this same guard).
         if (taskEditorGenRef.current === editorGenAtStart) {
+          setSelectedTaskId(saved.id);
           const savedAsDraft = {
             title: saved.title,
             description: saved.description,
@@ -1928,7 +1934,12 @@ export function TrackerPage({
       }
       return true;
     } catch (error) {
-      if (selectedProjectIdRef.current === projectIdAtStart) setTaskSaveError(errorMessage(error));
+      // Same generation guard as the success branch above: a rejection for an editing context the
+      // owner has already Cancelled/Discarded/replaced must never surface its error on whatever
+      // (unrelated) editor is open now.
+      if (selectedProjectIdRef.current === projectIdAtStart && taskEditorGenRef.current === editorGenAtStart) {
+        setTaskSaveError(errorMessage(error));
+      }
       return false;
     } finally {
       setTaskSaving(false);
