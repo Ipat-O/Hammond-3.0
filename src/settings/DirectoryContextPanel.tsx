@@ -124,7 +124,13 @@ export function DirectoryContextPanel({
     setActionError(null);
     setBusyContextId(contextId);
     try {
-      onStateChange?.(await manager.forget(state, contextId));
+      // The manager call is the required side effect and must run unconditionally — never as an
+      // argument expression to an optional call, which the language short-circuits (skipping
+      // evaluation of its arguments entirely, including this `await`) when `onStateChange` is
+      // absent, as it always is in production since Correction 2 (F3). Only the NOTIFICATION is
+      // optional.
+      const next = await manager.forget(state, contextId);
+      onStateChange?.(next);
     } catch (error) {
       setActionError(errorMessage(error));
     } finally {
@@ -138,7 +144,10 @@ export function DirectoryContextPanel({
     try {
       const path = await manager.pickDirectory();
       if (path === null) return;
-      onStateChange?.(await manager.replacePath(state, contextId, path));
+      // Same reasoning as `forgetContext` above: the manager call must never be skippable by an
+      // absent `onStateChange`.
+      const next = await manager.replacePath(state, contextId, path);
+      onStateChange?.(next);
     } catch (error) {
       setActionError(errorMessage(error));
     } finally {

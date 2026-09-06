@@ -2,9 +2,15 @@ import { useState } from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import { DirectoryContextPanel } from './DirectoryContextPanel';
+import type { DirectoryContextServices } from './contracts';
 import { DirectoryContextManager } from './directoryContextManager';
-import { createDefaultLocalSettingsState, type LocalSettingsStateV2 } from './state';
+import {
+  createDefaultLocalSettingsState,
+  LOCAL_SETTINGS_KEY,
+  type LocalSettingsStateV2,
+} from './state';
 import { createFakeFilesystem, createFakeLocalSettings } from './testFakes';
+import { useDirectoryContextState } from './useDirectoryContextState';
 
 const projectId = 'project-1';
 
@@ -20,6 +26,32 @@ function renderPanel(
         manager={manager}
         state={state}
         onStateChange={setState}
+        projectId={projectId}
+        beforeChange={beforeChange}
+      />
+    );
+  }
+  return render(<Harness />);
+}
+
+/**
+ * Mirrors exactly how `TrackerPage` wires this panel in production: `manager`/`state` come from
+ * `useDirectoryContextState`'s own `subscribe`-backed mirror, and `onStateChange` is OMITTED
+ * entirely — never a locally-owned `useState` setter passed straight through, which is what let
+ * Correction 2's `onStateChange?.(await manager.forget(...))` short-circuit bug (the manager call
+ * itself skipped, not just the notification) go undetected by every other test in this file.
+ */
+function renderProductionShapedPanel(
+  services: DirectoryContextServices,
+  beforeChange?: (action: () => void) => void,
+) {
+  function Harness() {
+    const directory = useDirectoryContextState(services);
+    if (!directory.state) return null;
+    return (
+      <DirectoryContextPanel
+        manager={directory.manager}
+        state={directory.state}
         projectId={projectId}
         beforeChange={beforeChange}
       />
@@ -254,5 +286,136 @@ describe('DirectoryContextPanel', () => {
       .getByText('/home/owner/new-location', { selector: '.directory-context-path' })
       .closest('.directory-context-item') as HTMLElement;
     expect(within(item).getByRole('button', { name: 'Reveal new-location' })).toBeInTheDocument();
+  });
+});
+
+describe('Correction 3 — production shape (onStateChange omitted): Forget and Locate replacement actually run', () => {
+  it('Forget calls the manager, removes the binding via canonical subscription state, persists it, and never touches the filesystem', async () => {
+    const filesystem = createFakeFilesystem();
+    const settings = createFakeLocalSettings();
+    filesystem.existingRoots.add('/home/owner/a');
+    filesystem.existingRoots.add('/home/owner/b');
+    const seedManager = new DirectoryContextManager({ filesystem, settings });
+    const first = await seedManager.linkDirectory(
+      createDefaultLocalSettingsState(),
+      projectId,
+      '/home/owner/a',
+    );
+    await seedManager.linkDirectory(first.state, projectId, '/home/owner/b');
+
+    renderProductionShapedPanel({ filesystem, settings });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open a' })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: `Forget ${first.context.label}` }));
+
+    // Removed from the DOM via the manager's own subscription — never via a locally-owned
+    // `onStateChange` (there isn't one here) — proving the manager call itself actually ran.
+    await waitFor(() =>
+      expect(
+        screen.queryByText('/home/owner/a', { selector: '.directory-context-path' }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByText((_, node) => node?.textContent === 'Current path: /home/owner/b'),
+    ).toBeInTheDocument();
+    expect(filesystem.removePath).not.toHaveBeenCalled();
+
+    await waitFor(async () => {
+      const stored = await settings.read<LocalSettingsStateV2>(LOCAL_SETTINGS_KEY);
+      expect(stored?.directoryContexts.map((c) => c.path)).toEqual(['/home/owner/b']);
+    });
+  });
+
+  it('a failed Forget still surfaces the action error (manager semantics unchanged by the fix)', async () => {
+    const filesystem = createFakeFilesystem();
+    const settings = createFakeLocalSettings();
+    filesystem.existingRoots.add('/home/owner/a');
+    filesystem.existingRoots.add('/home/owner/b');
+    const seedManager = new DirectoryContextManager({ filesystem, settings });
+    let state = createDefaultLocalSettingsState();
+    const first = await seedManager.linkDirectory(state, projectId, '/home/owner/a');
+    state = first.state;
+    // B linked last (and thus active) so A has a "Forget" button to click below.
+    await seedManager.linkDirectory(state, projectId, '/home/owner/b');
+    (settings.write as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('disk full'));
+
+    renderProductionShapedPanel({ filesystem, settings });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open a' })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: `Forget ${first.context.label}` }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('disk full'));
+  });
+
+  it("Locate replacement calls the picker, updates the path via subscription, persists it, and retains the binding's identity and project", async () => {
+    const filesystem = createFakeFilesystem();
+    const settings = createFakeLocalSettings();
+    const seedManager = new DirectoryContextManager({ filesystem, settings });
+    const linked = await seedManager.linkDirectory(
+      createDefaultLocalSettingsState(),
+      projectId,
+      '/home/owner/moved-away',
+    );
+
+    renderProductionShapedPanel({ filesystem, settings });
+    await waitFor(() =>
+      expect(screen.getByText('Missing — this directory could not be found.')).toBeInTheDocument(),
+    );
+
+    filesystem.existingRoots.add('/home/owner/new-location');
+    (filesystem.selectDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(
+      '/home/owner/new-location',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Locate replacement' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('/home/owner/new-location', { selector: '.directory-context-path' }),
+      ).toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByText('Missing — this directory could not be found.'),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getAllByRole('listitem')).toHaveLength(1);
+
+    await waitFor(async () => {
+      const stored = await settings.read<LocalSettingsStateV2>(LOCAL_SETTINGS_KEY);
+      expect(stored?.directoryContexts).toHaveLength(1);
+      expect(stored?.directoryContexts[0].id).toBe(linked.context.id);
+      expect(stored?.directoryContexts[0].projectId).toBe(projectId);
+      expect(stored?.directoryContexts[0].path).toBe('/home/owner/new-location');
+    });
+  });
+
+  it('Locate replacement Cancel (picker returns null) performs no replacement', async () => {
+    const filesystem = createFakeFilesystem();
+    const settings = createFakeLocalSettings();
+    const seedManager = new DirectoryContextManager({ filesystem, settings });
+    await seedManager.linkDirectory(
+      createDefaultLocalSettingsState(),
+      projectId,
+      '/home/owner/moved-away',
+    );
+    (filesystem.selectDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    renderProductionShapedPanel({ filesystem, settings });
+    await waitFor(() =>
+      expect(screen.getByText('Missing — this directory could not be found.')).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Locate replacement' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Locate replacement' })).not.toBeDisabled(),
+    );
+    expect(
+      screen.getByText('/home/owner/moved-away', { selector: '.directory-context-path' }),
+    ).toBeInTheDocument();
+    await waitFor(async () => {
+      const stored = await settings.read<LocalSettingsStateV2>(LOCAL_SETTINGS_KEY);
+      expect(stored?.directoryContexts[0].path).toBe('/home/owner/moved-away');
+    });
   });
 });
