@@ -1797,6 +1797,655 @@ describe('Independent-audit Correction 2 — F2: unsaved task edits and unsent c
   });
 });
 
+describe('Correction 4 — F2a: every dirty context affected by a transition is protected, not just one', () => {
+  it('dirtying a task then Studio (task+Studio) makes a sidebar project switch report BOTH drafts, truthfully', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const existingTask = task({ id: 'existing-task', project_id: 'project-a', title: 'Original title' });
+    const { services } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [existingTask] },
+    });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'dirty task, still open' } });
+
+    // A plain screen switch never discards tracker state, so the task edit stays open (and dirty)
+    // while Studio is dirtied too — the auditor's exact repro.
+    fireEvent.click(screen.getByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'dirty studio draft' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    // Pre-fix, this dialog would report ONLY "unsaved instruction edits" (Studio wins the single
+    // priority pick) despite the task edit being just as much at risk.
+    expect(
+      within(dialog).getByText(
+        'You have unsaved instruction edits and an unsaved task edit. Save them, discard them, or stay here.',
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByLabelText('Project override content')).toHaveValue('dirty studio draft');
+
+    // Re-triggering the guard proves the task edit was never silently lost by Cancel either — if it
+    // had been, this second dialog would report only Studio.
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    const secondDialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    expect(
+      within(secondDialog).getByText(
+        'You have unsaved instruction edits and an unsaved task edit. Save them, discard them, or stay here.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('Save-all on a task+Studio guard persists BOTH drafts to their originating task and instructions target, then navigates', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const existingTask = task({ id: 'existing-task', project_id: 'project-a', title: 'Original title' });
+    const { services, instructions } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [existingTask] },
+    });
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...existingTask,
+      title: 'saved via save-all',
+    });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'saved via save-all' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'studio saved via save-all' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() =>
+      expect(services.repositories.tasks.update).toHaveBeenCalledWith(
+        'existing-task',
+        expect.objectContaining({ title: 'saved via save-all' }),
+      ),
+    );
+    const versions = await instructions.listOwnerVersions({
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'project_override',
+      projectId: 'project-a',
+    });
+    expect(versions.map((v) => v.content)).toContain('studio saved via save-all');
+    // Still on Instructions (a project switch never changes the primary view) — but now for B.
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Project B' })).toHaveClass('project-nav-item-active'),
+    );
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('explicit Discard-all on a task+Studio guard abandons BOTH drafts, then navigates', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const existingTask = task({ id: 'existing-task', project_id: 'project-a', title: 'Original title' });
+    const { services, instructions } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [existingTask] },
+    });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'should never be saved' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'should also never be saved' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard changes' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Project B' })).toHaveClass('project-nav-item-active'),
+    );
+    expect(services.repositories.tasks.update).not.toHaveBeenCalled();
+    const versions = await instructions.listOwnerVersions({
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'project_override',
+      projectId: 'project-a',
+    });
+    expect(versions.map((v) => v.content)).not.toContain('should also never be saved');
+
+    // Switching back to A confirms neither draft survived.
+    fireEvent.click(screen.getByRole('button', { name: 'Project A' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    expect(screen.getByLabelText('Task title')).toHaveValue('Original title');
+  });
+
+  it('one save succeeding (task) and the other failing (Studio) keeps the guard open, preserves the successful save, and a retry saves only the remaining kind — no duplicate task update', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const existingTask = task({ id: 'existing-task', project_id: 'project-a', title: 'Original title' });
+    const { services, instructions } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [existingTask] },
+    });
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...existingTask,
+      title: 'task half of partial success',
+    });
+    let studioAttempts = 0;
+    const originalSaveAndActivate = services.instructions.saveAndActivate.bind(services.instructions);
+    services.instructions.saveAndActivate = ((params) => {
+      studioAttempts += 1;
+      if (studioAttempts === 1) return Promise.reject(new Error('studio blew up'));
+      return originalSaveAndActivate(params);
+    }) as typeof services.instructions.saveAndActivate;
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'task half of partial success' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'studio half of partial success' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    let dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    await screen.findByText('Save failed — see the error in Instruction Studio for details.');
+    dialog = screen.getByRole('dialog', { name: 'Unsaved changes' });
+    // Only Studio remains outstanding — the task half already saved and must never be re-saved.
+    expect(
+      within(dialog).getByText('You have unsaved instruction edits. Save them, discard them, or stay here.'),
+    ).toBeInTheDocument();
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Project A' })).toHaveClass('project-nav-item-active');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Project B' })).toHaveClass('project-nav-item-active'),
+    );
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // Still exactly one task write — the retry never re-saved the already-successful half.
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1);
+    const versions = await instructions.listOwnerVersions({
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'project_override',
+      projectId: 'project-a',
+    });
+    expect(versions.map((v) => v.content)).toContain('studio half of partial success');
+  });
+
+  it('Cancelling a task+Studio guard while its combined Save is still in flight never lets a later success execute the abandoned navigation', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const existingTask = task({ id: 'existing-task', project_id: 'project-a', title: 'Original title' });
+    const { services } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [existingTask] },
+    });
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...existingTask,
+      title: 'saved during pending cancel',
+    });
+    let resolveStudioSave!: () => void;
+    const originalSaveAndActivate = services.instructions.saveAndActivate.bind(services.instructions);
+    services.instructions.saveAndActivate = ((params) =>
+      new Promise((resolve) => {
+        resolveStudioSave = () => resolve(originalSaveAndActivate(params));
+      })) as typeof services.instructions.saveAndActivate;
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'saved during pending cancel' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'pending studio save' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(
+      screen.getByRole('heading', { name: 'Worker instructions for Claude Code' }),
+    ).toBeInTheDocument();
+
+    resolveStudioSave();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Still on Instructions/Project A: the late combined success never executed the cancelled nav.
+    expect(
+      screen.getByRole('heading', { name: 'Worker instructions for Claude Code' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Project B' })).not.toBeInTheDocument();
+  });
+
+  it('a directory-driven project switch also protects a simultaneously dirty task edit and Studio draft', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const existingTask = task({ id: 'existing-task', project_id: 'project-a', title: 'Original title' });
+    const filesystem = createFakeFilesystem();
+    filesystem.existingRoots.add('/home/owner/b-repo');
+    (filesystem.selectDirectory as ReturnType<typeof vi.fn>).mockResolvedValue('/home/owner/b-repo');
+    const settings = createFakeLocalSettings();
+    const directoryContext: DirectoryContextServices = { filesystem, settings };
+    const seedManager = new DirectoryContextManager(directoryContext);
+    let seededState = await seedManager.loadState();
+    seededState = (await seedManager.linkDirectory(seededState, projectB.id, '/home/owner/b-repo')).state;
+    await seedManager.updateResumeSelection(seededState, {
+      selectedProjectId: projectA.id,
+      selectedTaskId: null,
+      resumeScreen: 'workspace',
+    });
+    const { services } = makeServices([projectA, projectB], {
+      directoryContext,
+      tasksByProject: { 'project-a': [existingTask] },
+    });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Workspace' })).toHaveClass('nav-item-active'));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'dirty via directory switch' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'dirty studio via directory switch' },
+    });
+
+    await clickOpenDirectory();
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    expect(
+      within(dialog).getByText(
+        'You have unsaved instruction edits and an unsaved task edit. Save them, discard them, or stay here.',
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.getByLabelText('Project override content')).toHaveValue('dirty studio via directory switch');
+    expect(screen.queryByRole('dialog', { name: 'Unlinked directory' })).not.toBeInTheDocument();
+  });
+
+  it('dirtying a comment then Studio (comment+Studio) makes a sidebar project switch report BOTH drafts, truthfully', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const firstTask = task({ id: 'first-task', project_id: 'project-a', title: 'First task' });
+    const { services } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [firstTask] },
+    });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^First task/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByRole('button', { name: 'Add comment' });
+    fireEvent.change(screen.getByLabelText('Add a comment'), { target: { value: 'not yet sent' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'dirty studio draft' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    expect(
+      within(dialog).getByText(
+        'You have unsaved instruction edits and an unsent comment. Save them, discard them, or stay here.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('Save-all on a comment+Studio guard sends the comment and saves Studio, then navigates', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const firstTask = task({ id: 'first-task', project_id: 'project-a', title: 'First task' });
+    const { services, instructions } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [firstTask] },
+    });
+    (services.repositories.memory.addComment as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'comment-1',
+      owner_id: ownerId,
+      project_id: 'project-a',
+      task_id: 'first-task',
+      body: 'sent via save-all',
+      created_at: '2026-08-13T08:00:00.000Z',
+      updated_at: '2026-08-13T08:00:00.000Z',
+    });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^First task/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByRole('button', { name: 'Add comment' });
+    fireEvent.change(screen.getByLabelText('Add a comment'), { target: { value: 'sent via save-all' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'saved via save-all' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() =>
+      expect(services.repositories.memory.addComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          project_id: 'project-a',
+          task_id: 'first-task',
+          body: 'sent via save-all',
+        }),
+      ),
+    );
+    const versions = await instructions.listOwnerVersions({
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'project_override',
+      projectId: 'project-a',
+    });
+    expect(versions.map((v) => v.content)).toContain('saved via save-all');
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Project B' })).toHaveClass('project-nav-item-active'),
+    );
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('explicit Discard-all on a comment+Studio guard abandons BOTH drafts, then navigates', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const firstTask = task({ id: 'first-task', project_id: 'project-a', title: 'First task' });
+    const { services, instructions } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [firstTask] },
+    });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^First task/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByRole('button', { name: 'Add comment' });
+    fireEvent.change(screen.getByLabelText('Add a comment'), { target: { value: 'discarded comment' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Instructions' }));
+    await screen.findByRole('heading', { name: 'Worker instructions for Claude Code' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.change(screen.getByLabelText('Project override content'), {
+      target: { value: 'discarded studio draft' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard changes' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Project B' })).toHaveClass('project-nav-item-active'),
+    );
+    expect(services.repositories.memory.addComment).not.toHaveBeenCalled();
+    const versions = await instructions.listOwnerVersions({
+      role: 'worker',
+      provider: 'claude_code',
+      layer: 'project_override',
+      projectId: 'project-a',
+    });
+    expect(versions.map((v) => v.content)).not.toContain('discarded studio draft');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project A' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^First task/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByLabelText('Add a comment')).toHaveValue('');
+  });
+});
+
+describe('Correction 4 — F2b: the task-editor dirty baseline reflects durable save success, not an optimistic record', () => {
+  it("a rejected task save's optimistic record no longer masks the guard: switching project after 'save blew up' still shows the Unsaved changes dialog; Cancel keeps the failed draft", async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const existingTask = task({ id: 'existing-task', project_id: 'project-a', title: 'Original title' });
+    const { services } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [existingTask] },
+    });
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('save blew up'),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'edited then rejected' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await waitFor(() => expect(screen.getAllByText('save blew up').length).toBeGreaterThan(0));
+
+    // Pre-F2b, the optimistic (never-persisted) record now equals the draft, so
+    // `isTaskEditorDirty` returned false and this dialog never appeared.
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    expect(
+      within(dialog).getByText('You have an unsaved task edit. Save it, discard it, or stay here.'),
+    ).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.getByLabelText('Task title')).toHaveValue('edited then rejected');
+    expect(screen.getAllByRole('heading', { name: 'Project A' }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('heading', { name: 'Project B' })).not.toBeInTheDocument();
+  });
+
+  it('an explicit Discard on the guard triggered by a rejected task save abandons it for good; the original record is untouched on return', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const existingTask = task({ id: 'existing-task', project_id: 'project-a', title: 'Original title' });
+    const { services } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [existingTask] },
+    });
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('save blew up'),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'should never be saved' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await waitFor(() => expect(screen.getAllByText('save blew up').length).toBeGreaterThan(0));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard changes' }));
+
+    await waitFor(() => expect(screen.getAllByRole('heading', { name: 'Project B' }).length).toBeGreaterThan(0));
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project A' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    expect(screen.getByLabelText('Task title')).toHaveValue('Original title');
+  });
+
+  it('a successful retry from the guard (after a rejected save) persists to the ORIGINAL record, then navigates', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const existingTask = task({ id: 'existing-task', project_id: 'project-a', title: 'Original title' });
+    const { services } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [existingTask] },
+    });
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error('save blew up'))
+      .mockResolvedValueOnce({ ...existingTask, title: 'edited then retried' });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'edited then retried' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await waitFor(() => expect(screen.getAllByText('save blew up').length).toBeGreaterThan(0));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
+    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(
+      2,
+      'existing-task',
+      expect.objectContaining({ title: 'edited then retried' }),
+    );
+    await waitFor(() => expect(screen.getAllByRole('heading', { name: 'Project B' }).length).toBeGreaterThan(0));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('a rejected NEW-task save is also guarded, and a successful retry creates exactly one task (no duplicate)', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    // A mutable backing array (rather than a fresh literal) so a later re-fetch of project A's
+    // tasks — triggered by switching away and back — reflects the create below, proving no
+    // duplicate row was left behind by the failed first attempt.
+    const projectATasks: Task[] = [];
+    const { services } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': projectATasks },
+    });
+    (services.repositories.tasks.create as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error('create blew up'))
+      .mockImplementationOnce(async () => {
+        const created = task({ id: 'new-task-1', project_id: 'project-a', title: 'Freshly created' });
+        projectATasks.push(created);
+        return created;
+      });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'New task' }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'Freshly created' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    await waitFor(() => expect(screen.getAllByText('create blew up').length).toBeGreaterThan(0));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    expect(
+      within(dialog).getByText('You have an unsaved task edit. Save it, discard it, or stay here.'),
+    ).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(services.repositories.tasks.create).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getAllByRole('heading', { name: 'Project B' }).length).toBeGreaterThan(0));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project A' }));
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', { name: /^Freshly created/ }).length).toBe(1),
+    );
+  });
+
+  it('a directory-driven project switch also shows the guard after a rejected task save (not masked by the optimistic record)', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const existingTask = task({ id: 'existing-task', project_id: 'project-a', title: 'Original title' });
+    const filesystem = createFakeFilesystem();
+    filesystem.existingRoots.add('/home/owner/b-repo');
+    (filesystem.selectDirectory as ReturnType<typeof vi.fn>).mockResolvedValue('/home/owner/b-repo');
+    const settings = createFakeLocalSettings();
+    const directoryContext: DirectoryContextServices = { filesystem, settings };
+    const seedManager = new DirectoryContextManager(directoryContext);
+    let seededState = await seedManager.loadState();
+    seededState = (await seedManager.linkDirectory(seededState, projectB.id, '/home/owner/b-repo')).state;
+    await seedManager.updateResumeSelection(seededState, {
+      selectedProjectId: projectA.id,
+      selectedTaskId: null,
+      resumeScreen: 'workspace',
+    });
+    const { services } = makeServices([projectA, projectB], {
+      directoryContext,
+      tasksByProject: { 'project-a': [existingTask] },
+    });
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('save blew up'),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Workspace' })).toHaveClass('nav-item-active'));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), {
+      target: { value: 'dirty then rejected via directory switch' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await waitFor(() => expect(screen.getAllByText('save blew up').length).toBeGreaterThan(0));
+
+    await clickOpenDirectory();
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    expect(
+      within(dialog).getByText('You have an unsaved task edit. Save it, discard it, or stay here.'),
+    ).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByLabelText('Task title')).toHaveValue('dirty then rejected via directory switch');
+  });
+
+  it('a delayed successful save resolving after a NEWER edit was made keeps the editor open and protected on the newer draft, never reverting it', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const existingTask = task({ id: 'existing-task', project_id: 'project-a', title: 'Original title' });
+    const { services } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [existingTask] },
+    });
+    let resolveUpdate!: (task: Task) => void;
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveUpdate = resolve;
+        }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'first edit, saving now' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await screen.findByRole('button', { name: 'Saving…' });
+
+    // A further, NEWER edit lands while the first save is still in flight — inputs are not
+    // disabled while saving, only the submit button is.
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'newer edit, never submitted' } });
+
+    // The held write now resolves successfully — but only for the FIRST (now-stale) content.
+    resolveUpdate({ ...existingTask, title: 'first edit, saving now' });
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving…' })).not.toBeInTheDocument());
+
+    // The editor must still be open, still showing the NEWER (unsaved) draft — a stale success
+    // must never close the editor over a draft it never actually saved (Correction 4, F2b).
+    expect(screen.getByLabelText('Task title')).toHaveValue('newer edit, never submitted');
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    expect(
+      within(dialog).getByText('You have an unsaved task edit. Save it, discard it, or stay here.'),
+    ).toBeInTheDocument();
+  });
+});
+
+
 describe('Independent-audit Correction 2 — F3: no competing state publisher regresses the mirrored directory context', () => {
   it('a pending resume-selection write does not regress the mirrored directory context after a subsequent Close; durable settings still end up correct', async () => {
     const rootA = '/home/owner/root-a';
