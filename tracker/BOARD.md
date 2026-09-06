@@ -17,12 +17,12 @@ None.
 
 ## in_development
 
-- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
-  PR #10 at `80708e9`; DeepSeek CHANGES, Correction 6 for delayed-save task selection.
+None.
 
 ## in_review
 
-None.
+- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
+  PR #10 at `dbdbb07`; DeepSeek round-5 audit routed after Correction 6.
 
 ## testing
 
