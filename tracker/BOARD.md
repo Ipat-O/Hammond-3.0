@@ -18,7 +18,7 @@ None.
 ## in_development
 
 - [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
-  PR #10 at `090a045`; DeepSeek CHANGES, Correction 2 for F1–F3.
+  PR #10 at `6fc1225`; Correction 3 for skipped Forget/Locate replacement before re-audit.
 
 ## in_review
 
