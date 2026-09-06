@@ -17,12 +17,12 @@ None.
 
 ## in_development
 
-- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
-  PR #10 at `2a17ffc`; round-2 CHANGES, Correction 4 for F2a/F2b.
+None.
 
 ## in_review
 
-None.
+- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
+  PR #10 at `39ae643`; DeepSeek round-3 audit routed after Correction 4.
 
 ## testing
 
