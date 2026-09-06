@@ -17,12 +17,12 @@ None.
 
 ## in_development
 
-- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
-  PR #10 at `dbdbb07`; Correction 7 for save ordering and confirmed-state rollback.
+None.
 
 ## in_review
 
-None.
+- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
+  PR #10 at `4bffa92`; DeepSeek round-6 audit routed after Correction 7.
 
 ## testing
 
