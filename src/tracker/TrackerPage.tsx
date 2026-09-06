@@ -922,6 +922,28 @@ export function TrackerPage({
   // `saveTask` completion can tell, once it resolves, whether the live draft still matches exactly
   // what it submitted — see `saveTask`'s success branch.
   const taskDraftRef = useRef(emptyTaskDraft);
+  // Per-task (real id, or the reused `draft-task-` id of a not-yet-persisted "new" draft) counter
+  // bumped once, synchronously, every time a NEW `saveTask` network call is ISSUED for that task —
+  // never on completion. `taskEditorGenRef` alone cannot stop two overlapping saves of the SAME
+  // open editing context (normal Save + a guard-dialog Save-all both fire while the form never
+  // closes in between, so they share one generation): a response's own revision must instead be
+  // compared against whichever revision is now the highest issued for that task id, regardless of
+  // arrival order. Only the response still holding that highest number may update the task's
+  // confirmed data — an older request settling after a newer one (or a newer one settling first)
+  // can never regress the collection to stale content (Correction 7, Finding A).
+  const taskSaveRevisionRef = useRef<Map<string, number>>(new Map());
+  function bumpTaskSaveRevision(id: string): number {
+    const next = (taskSaveRevisionRef.current.get(id) ?? 0) + 1;
+    taskSaveRevisionRef.current.set(id, next);
+    return next;
+  }
+  // The last CONFIRMED-durable row for each task, maintained independently of whichever editing
+  // context is open and of whatever `tasks` currently displays — populated from every full list
+  // load and every successful create/update/status-change/archive, NEVER from an optimistic or
+  // rejected write. `cancelTaskEditor` reads THIS (not a baseline snapshotted once at editor-open
+  // time) so abandoning a draft always reveals the CURRENT confirmed value, even when a different
+  // save for the same task landed while this editor was open (Correction 7, Finding B).
+  const confirmedTasksRef = useRef<Map<string, Task>>(new Map());
 
   function taskDraftFieldsEqual(a: typeof emptyTaskDraft, b: typeof emptyTaskDraft): boolean {
     return (
@@ -945,17 +967,31 @@ export function TrackerPage({
   /** Explicit abandon of the currently open task editor — its OWN Cancel button, or Discard on
    * the unsaved-changes guard dialog — never a mid-save rebase (see `saveTask`). If the task being
    * abandoned is an 'edit' still showing a REJECTED (never-persisted) optimistic write, roll the
-   * visible row back to the last CONFIRMED-durable values in `taskEditorBaselineRef` first: an
-   * explicit Cancel/Discard must make the UI visibly return to confirmed content, never leave
-   * unsaved text displayed as if saved so a later reopen of the same task recaptures it as a new,
-   * falsely-clean baseline (Correction 5, F2b). A pending (not yet rejected) save's own optimistic
-   * row is left alone here — its completion (success or failure) governs itself.
+   * visible row back to CONFIRMED-durable content first: an explicit Cancel/Discard must make the
+   * UI visibly return to confirmed content, never leave unsaved text displayed as if saved so a
+   * later reopen of the same task recaptures it as a new, falsely-clean baseline (Correction 5,
+   * F2b). A pending (not yet rejected) save's own optimistic row is left alone here — its
+   * completion (success or failure) governs itself.
+   *
+   * Rolls back to `confirmedTasksRef` — the CURRENT confirmed record — rather than
+   * `taskEditorBaselineRef`'s snapshot frozen at editor-open time: a DIFFERENT save for this same
+   * task (issued before this editor opened, or against an abandoned earlier generation of it) can
+   * land while this draft is open, and Cancel must reveal that later confirmed result, never the
+   * obsolete value this editor happened to start from (Correction 7, Finding B). `taskEditorBaselineRef`
+   * itself is untouched here — it remains the point of comparison `isTaskEditorDirty` uses.
    */
   function cancelTaskEditor() {
-    const baseline = taskEditorBaselineRef.current;
-    if (taskEditor === 'edit' && baseline && selectedTaskId) {
+    if (taskEditor === 'edit' && selectedTaskId) {
       const taskId = selectedTaskId;
-      setTasks((current) => current.map((item) => (item.id === taskId ? { ...item, ...baseline } : item)));
+      const confirmed = confirmedTasksRef.current.get(taskId);
+      if (confirmed) {
+        setTasks((current) => current.map((item) => (item.id === taskId ? confirmed : item)));
+      } else {
+        const baseline = taskEditorBaselineRef.current;
+        if (baseline) {
+          setTasks((current) => current.map((item) => (item.id === taskId ? { ...item, ...baseline } : item)));
+        }
+      }
     }
     closeTaskEditor();
   }
@@ -1269,6 +1305,8 @@ export function TrackerPage({
     setProjects([]);
     setSelectedProjectId(null);
     setTasks([]);
+    confirmedTasksRef.current = new Map();
+    taskSaveRevisionRef.current = new Map();
     setSelectedTaskId(null);
     setFocusedTaskId(null);
     setExpandedTaskIds(new Set());
@@ -1359,6 +1397,7 @@ export function TrackerPage({
   useEffect(() => {
     if (!selectedProjectId) {
       setTasks([]);
+      confirmedTasksRef.current = new Map();
       setSelectedTaskId(null);
       setFocusedTaskId(null);
       setExpandedTaskIds(new Set());
@@ -1368,6 +1407,7 @@ export function TrackerPage({
     // project's tasks, counts, and clickable row controls must never remain visible/actionable
     // under the newly selected project while its own list is still loading or if it fails.
     setTasks([]);
+    confirmedTasksRef.current = new Map();
     let mounted = true;
     setContentError(null);
     setFocusedTaskId(null);
@@ -1376,6 +1416,8 @@ export function TrackerPage({
       .then((result) => {
         if (!mounted) return;
         setTasks(result);
+        // Every row a fresh list load returns is authoritative confirmed content by definition.
+        confirmedTasksRef.current = new Map(result.map((item) => [item.id, item]));
         const pendingResume = pendingTaskResumeRef.current;
         if (pendingResume && pendingResume.projectId === selectedProjectId) {
           pendingTaskResumeRef.current = null;
@@ -1866,6 +1908,11 @@ export function TrackerPage({
     setTaskRetry(null);
     const existingTaskDraft = taskEditor === 'new' && selectedTask?.id.startsWith('draft-task-') ? selectedTask : null;
     const optimisticId = editingTask?.id ?? existingTaskDraft?.id ?? draftId('task');
+    // Issued (not settled) order for THIS task id — see `taskSaveRevisionRef`'s declaration. A
+    // normal form Save and an overlapping guard Save-all both fire while the very same editor stays
+    // open (they share `editorGenAtStart`), so the generation guard below cannot tell them apart;
+    // this can (Correction 7, Finding A).
+    const saveRevision = bumpTaskSaveRevision(optimisticId);
     const optimisticTask: Task = {
       id: optimisticId,
       owner_id: ownerId,
@@ -1897,12 +1944,20 @@ export function TrackerPage({
       const saved = editingTask
         ? await repositories.tasks.update(editingTask.id, input)
         : await repositories.tasks.create(input);
-      if (selectedProjectIdRef.current === projectIdAtStart) {
+      // True only while no NEWER saveTask() call for this same task id has been ISSUED since this
+      // one started — i.e. this response is still the most recent request in flight or resolved.
+      // An older request settling after a newer one (or a newer one settling first) must never be
+      // allowed to write its now-stale payload over the newer confirmed value (Correction 7,
+      // Finding A). Checked once, up front, and reused below: a response can never regain "latest"
+      // status once superseded, and it stays "latest" for everything it gates here.
+      const isLatestSaveForTask = taskSaveRevisionRef.current.get(optimisticId) === saveRevision;
+      if (selectedProjectIdRef.current === projectIdAtStart && isLatestSaveForTask) {
         // Reconcile the confirmed, durable record into the collection regardless of which editing
         // context is open now — a stale completion must never redirect the owner's attention, but
         // it also must never be treated as if it never happened (Round-4 delayed-save finding: the
         // saved row itself is always safe to reconcile; only the UI focus/selection is context-bound).
         setTasks((current) => current.map((task) => (task.id === optimisticId ? saved : task)));
+        confirmedTasksRef.current.set(saved.id, saved);
         // Only move the owner's selection/editor onto this saved record if this is still the SAME
         // editing context this save started against — a Cancel, a switch to a different task, or a
         // fresh "new task" opened while this write was in flight must never have the owner's current
@@ -1934,10 +1989,16 @@ export function TrackerPage({
       }
       return true;
     } catch (error) {
-      // Same generation guard as the success branch above: a rejection for an editing context the
-      // owner has already Cancelled/Discarded/replaced must never surface its error on whatever
-      // (unrelated) editor is open now.
-      if (selectedProjectIdRef.current === projectIdAtStart && taskEditorGenRef.current === editorGenAtStart) {
+      // Same generation guard as the success branch above, plus the same per-task revision guard:
+      // a rejection for an editing context the owner has already Cancelled/Discarded/replaced must
+      // never surface its error on whatever (unrelated) editor is open now, and neither must a
+      // stale, superseded attempt for the SAME still-open task (Correction 7, Finding A).
+      const isLatestSaveForTask = taskSaveRevisionRef.current.get(optimisticId) === saveRevision;
+      if (
+        selectedProjectIdRef.current === projectIdAtStart &&
+        taskEditorGenRef.current === editorGenAtStart &&
+        isLatestSaveForTask
+      ) {
         setTaskSaveError(errorMessage(error));
       }
       return false;
@@ -1959,6 +2020,7 @@ export function TrackerPage({
       // once that project switch cleared and reloaded it, but the shared `taskRetry` flag does.
       if (selectedProjectIdRef.current === projectIdAtStart) {
         setTasks((current) => current.map((item) => item.id === task.id ? saved : item));
+        confirmedTasksRef.current.set(saved.id, saved);
         setTaskRetry(null);
       }
     } catch (error) {
@@ -1995,6 +2057,7 @@ export function TrackerPage({
       if (selectedProjectIdRef.current === projectIdAtStart) {
         const savedById = new Map(saved.map((item) => [item.id, item]));
         setTasks((current) => current.map((item) => savedById.get(item.id) ?? item));
+        for (const item of saved) confirmedTasksRef.current.set(item.id, item);
         setTaskRetry(null);
       }
     } catch (error) {

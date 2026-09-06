@@ -2682,7 +2682,7 @@ describe('Correction 6 — a delayed task-save completion must never steal a new
     );
   });
 
-  it('reopening the SAME task (a fresh editor generation) after Cancelling its pending save: the stale success must not close or revert the freshly reopened, newly-dirty editor', async () => {
+  it('reopening the SAME task (a fresh editor generation) after Cancelling its pending save: the stale success must not close or revert the freshly reopened, newly-dirty editor, and a LATER Cancel of that reopened draft reveals the stale save\'s now-confirmed value rather than the obsolete pre-save baseline (Correction 7, Finding B)', async () => {
     const projectA = project({ id: 'project-a', name: 'Project A' });
     const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Original title' });
     const { services } = makeServices([projectA], {
@@ -2721,12 +2721,14 @@ describe('Correction 6 — a delayed task-save completion must never steal a new
     );
     expect(screen.queryByRole('button', { name: 'Saving…' })).not.toBeInTheDocument();
 
-    // An explicit Cancel now rolls back to the CONFIRMED baseline captured on this reopen
-    // ("Original title") — proving that baseline was never silently rebased onto the stale
-    // "first edit, saving now" completion either.
+    // An explicit Cancel now must reveal the CURRENT confirmed value — "first edit, saving now",
+    // durably persisted by the stale completion above — never the obsolete "Original title" this
+    // reopened editor happened to start from. Pre-Correction-7, Cancel rolled back to whatever
+    // baseline this editing context captured at open time, silently resurrecting a value the
+    // backend no longer holds and burying the save that actually landed.
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(await screen.findByRole('button', { name: /^Original title/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^first edit/ })).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /^first edit, saving now/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Original title/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^second edit/ })).not.toBeInTheDocument();
   });
 
@@ -2808,6 +2810,311 @@ describe('Correction 6 — a delayed task-save completion must never steal a new
     expect(screen.queryByText('task A save blew up')).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Task title')).toHaveValue('Task Bravo');
+  });
+});
+
+/**
+ * Correction 7 (owner round-5 audit) — Finding A: `saveTask`'s unconditional collection
+ * reconciliation (`setTasks(current => ... optimisticId -> saved)`) was guarded only by which
+ * PROJECT a completion belonged to, never by which SAVE for that task was actually the newest one
+ * issued. A normal form Save and an overlapping guard Save-all both fire against the very same
+ * open editing context (they share `editorGenAtStart` right up until a successful guard-Save
+ * navigates away), so `taskEditorGenRef` cannot tell an older, superseded request from a newer
+ * one — only whichever response happens to resolve LAST won, regardless of which request was
+ * actually issued last. `taskSaveRevisionRef` fixes this: a per-task counter bumped once, at
+ * ISSUANCE, so a response can tell whether it is still the most recently issued attempt for that
+ * task id no matter what order responses settle in.
+ *
+ * Finding B: `cancelTaskEditor` rolled the visible row back to `taskEditorBaselineRef` — a
+ * snapshot frozen at the moment THIS editor opened. If a DIFFERENT save for the very same task
+ * (an earlier attempt, abandoned and reopened) lands successfully while this editor is open,
+ * Cancel would silently resurrect the obsolete pre-save baseline over that newer confirmed
+ * result. `confirmedTasksRef` fixes this: it always holds the CURRENT confirmed row, updated by
+ * every successful create/update/list-load regardless of which editing context is open, and
+ * `cancelTaskEditor` now rolls back to THAT.
+ */
+describe('Correction 7 — task state stays consistent across overlapping saves and Cancel', () => {
+  it("two overlapping saves of the SAME task settle OUT OF ORDER — the newer request's response arrives FIRST, then the older, superseded request's response arrives LAST: the older response must never regress the confirmed collection back to its own stale content (Finding A)", async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task Alpha' });
+    const taskB = task({ id: 'task-b', project_id: 'project-a', title: 'Task Bravo' });
+    const { services } = makeServices([projectA], {
+      tasksByProject: { 'project-a': [taskA, taskB] },
+    });
+
+    // A fake that records exactly what each call was asked to persist, in the order the calls
+    // were ISSUED, and lets the test settle each one's response independently — so "whichever
+    // response arrives first" and "whichever request was issued last" are exercised as the
+    // genuinely different things the finding says they are, not conflated.
+    const resolvers: Array<(task: Task) => void> = [];
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise<Task>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Task Alpha/ }));
+
+    // Edit task A to v1 and click the form's own Save — issued as revision 1. Held.
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await screen.findByRole('button', { name: 'Saving…' });
+
+    // Change the input to v2 while v1's write is still in flight — a newer, unsaved edit.
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v2' } });
+
+    // Click task B: the guard fires (still dirty against the original baseline). Its own "Save
+    // changes" issues a SECOND update for the SAME task — v2, revision 2 — while v1 is still held.
+    fireEvent.click(screen.getByRole('button', { name: /^Task Bravo/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
+    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(
+      1,
+      'task-a',
+      expect.objectContaining({ title: 'v1' }),
+    );
+    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(
+      2,
+      'task-a',
+      expect.objectContaining({ title: 'v2' }),
+    );
+
+    // Settle the SECOND (v2, newer-issued) request FIRST.
+    resolvers[1]({ ...taskA, title: 'v2' });
+    await waitFor(() => expect(screen.getByRole('button', { name: /^v2/ })).toBeInTheDocument());
+    // The guard's Save succeeded with no failed kinds — it should already have navigated to B.
+    await waitFor(() => expect(screen.getByLabelText('Task title')).toHaveValue('Task Bravo'));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    // NOW settle the FIRST (v1, older-issued) request — arriving dead last. Its stale response
+    // must never overwrite the newer confirmed v2 content.
+    resolvers[0]({ ...taskA, title: 'v1' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByRole('button', { name: /^v2/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^v1/ })).not.toBeInTheDocument();
+    // Task B's own editor, still open, is untouched by task A's stale completion.
+    expect(screen.getByLabelText('Task title')).toHaveValue('Task Bravo');
+  });
+
+  it('overlapping same-task saves are tracked PER TASK: resolving one task\'s stale older save out of order never contaminates a different task\'s own overlapping saves (Finding A)', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task Alpha' });
+    const taskB = task({ id: 'task-b', project_id: 'project-a', title: 'Task Bravo' });
+    const taskC = task({ id: 'task-c', project_id: 'project-a', title: 'Task Charlie' });
+    const { services } = makeServices([projectA], {
+      tasksByProject: { 'project-a': [taskA, taskB, taskC] },
+    });
+    const resolvers: Array<{ id: string; resolve: (task: Task) => void }> = [];
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
+      (id: string) =>
+        new Promise<Task>((resolve) => {
+          resolvers.push({ id, resolve });
+        }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+
+    // Task A: v1 held, then v2 issued via guard-Save navigating to task B.
+    fireEvent.click(await screen.findByRole('button', { name: /^Task Alpha/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'A-v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await screen.findByRole('button', { name: 'Saving…' });
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'A-v2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Task Bravo/ }));
+    let dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
+
+    // Resolve task A's NEWER save (index 1) so the guard's Save succeeds and navigates to B —
+    // task A's OLDER save (index 0) is left unresolved, deliberately, until later.
+    resolvers[1].resolve({ ...taskA, title: 'A-v2' });
+    await waitFor(() => expect(screen.getByLabelText('Task title')).toHaveValue('Task Bravo'));
+
+    // Task B: w1 held, then w2 issued via guard-Save navigating to task C.
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'B-w1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await screen.findByRole('button', { name: 'Saving…' });
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'B-w2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Task Charlie/ }));
+    dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(4));
+
+    // Now resolve task A's long-stale OLDER save (index 0) — it must not resurrect "A-v1", and
+    // must not touch task B's still in-flight saves.
+    resolvers[0].resolve({ ...taskA, title: 'A-v1' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByRole('button', { name: /^A-v2/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^A-v1/ })).not.toBeInTheDocument();
+
+    // Resolve task B's NEWER save (index 3) so its own guard-Save succeeds and navigates to C.
+    resolvers[3].resolve({ ...taskB, title: 'B-w2' });
+    await waitFor(() => expect(screen.getByLabelText('Task title')).toHaveValue('Task Charlie'));
+
+    // Finally resolve task B's stale OLDER save (index 2) — must not resurrect "B-w1", and task
+    // A's row (already settled, above) must still read "A-v2".
+    resolvers[2].resolve({ ...taskB, title: 'B-w1' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByRole('button', { name: /^B-w2/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^B-w1/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^A-v2/ })).toBeInTheDocument();
+  });
+
+  it('the NEWER of two overlapping same-task saves REJECTS (its error is still the latest and must surface); an OLDER save\'s success then arrives late and must not silently clear that error or resurrect its own stale content; a subsequent guard-dialog Retry (a third, newest revision) that succeeds resolves cleanly and navigates on (Finding A: failure then retry among overlapping revisions)', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task Alpha' });
+    const taskB = task({ id: 'task-b', project_id: 'project-a', title: 'Task Bravo' });
+    const { services } = makeServices([projectA], {
+      tasksByProject: { 'project-a': [taskA, taskB] },
+    });
+    const resolvers: Array<{ resolve: (task: Task) => void; reject: (error: Error) => void }> = [];
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise<Task>((resolve, reject) => {
+          resolvers.push({ resolve, reject });
+        }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Task Alpha/ }));
+
+    // v1 (revision 1) — the form's own Save — held.
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await screen.findByRole('button', { name: 'Saving…' });
+
+    // v2 (revision 2, the newer of the two overlapping saves): the form's own Save button is now
+    // disabled/relabeled "Saving…" while v1 is held, so — exactly as the audited sequence
+    // describes — the SECOND save for this same task comes from the guard dialog instead: edit
+    // the draft further, then navigate away to fire it.
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Task Bravo/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
+
+    // v2 (the LATEST issued) rejects — this is the newest attempt, so its error must surface (it
+    // is shown twice, in the outliner's banner and the form's own error box — both are checked),
+    // and the dialog must stay put rather than navigating on a failure.
+    resolvers[1].reject(new Error('v2 rejected'));
+    await waitFor(() => expect(screen.getAllByText('v2 rejected').length).toBeGreaterThan(0));
+    expect(screen.getByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+
+    // v1 (the OLDER, superseded attempt) now succeeds, arriving after v2 already failed. It must
+    // NOT clear the v2 error, and must not resurrect "v1" in the collection.
+    resolvers[0].resolve({ ...taskA, title: 'v1' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getAllByText('v2 rejected').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: /^v1/ })).not.toBeInTheDocument();
+
+    // Retry (revision 3, the newest attempt yet) via the dialog's own "Save changes" again, still
+    // carrying the current draft ("v2"). Succeeding this time clears the failure and lets the
+    // originally-requested navigation to task B finally proceed.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(3));
+    resolvers[2].resolve({ ...taskA, title: 'v2' });
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /^v2/ })).toBeInTheDocument());
+    expect(screen.queryByText('v2 rejected')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText('Task title')).toHaveValue('Task Bravo'));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it("a REJECTED save's optimistic content never becomes confirmed: after Cancel abandons it, reopens the same task with a second draft, and that second draft is also Cancelled, the row reveals the ORIGINAL confirmed value — never either rejected/abandoned draft (Finding B, combined with the rejected-save protection)", async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Original title' });
+    const { services } = makeServices([projectA], {
+      tasksByProject: { 'project-a': [taskA] },
+    });
+    let rejectFirstSave!: (error: Error) => void;
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise<Task>((_resolve, reject) => {
+          rejectFirstSave = reject;
+        }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'first attempt' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await screen.findByRole('button', { name: 'Saving…' });
+
+    // Cancel while the save is still held — abandons this draft before it even fails.
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(await screen.findByRole('button', { name: /^Original title/ })).toBeInTheDocument();
+
+    // Reopen the SAME task (a fresh generation) and make a second, different unsaved edit.
+    fireEvent.click(screen.getByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'second attempt' } });
+
+    // The FIRST save now rejects — stale (abandoned generation). Its rejection must produce no
+    // visible error on this fresh editor and, critically, must NOT be recorded as confirmed.
+    rejectFirstSave(new Error('first attempt blew up'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByLabelText('Task title')).toHaveValue('second attempt');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    // Cancel the second draft too — with nothing ever having been confirmed beyond the original
+    // load, this must reveal "Original title", never "first attempt" (which never became
+    // confirmed — it was rejected) and never "second attempt" (never saved at all).
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(await screen.findByRole('button', { name: /^Original title/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^first attempt/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^second attempt/ })).not.toBeInTheDocument();
+  });
+
+  it('the SAME sequence resolved via the Unsaved-changes guard\'s Discard (not the editor\'s own Cancel button) also reveals the confirmed value from a stale completion, not the obsolete open-time baseline (Finding B)', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Original title' });
+    const otherTask = task({ id: 'other-task', project_id: 'project-a', title: 'Other task' });
+    const { services } = makeServices([projectA], {
+      tasksByProject: { 'project-a': [taskA, otherTask] },
+    });
+    let resolveFirstSave!: (task: Task) => void;
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise<Task>((resolve) => {
+          resolveFirstSave = resolve;
+        }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'first edit, saving now' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await screen.findByRole('button', { name: 'Saving…' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'second edit, from reopened editor' } });
+
+    // The first, now-abandoned save resolves successfully — durably, into the confirmed store.
+    resolveFirstSave({ ...taskA, title: 'first edit, saving now' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByLabelText('Task title')).toHaveValue('second edit, from reopened editor');
+
+    // Trigger the guard via a same-project task switch and Discard through the DIALOG rather than
+    // the editor's own Cancel button.
+    fireEvent.click(screen.getByRole('button', { name: /^Other task/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard changes' }));
+
+    expect(await screen.findByLabelText('Task title')).toHaveValue('Other task');
+    // Switching back confirms task-a's row itself reveals the confirmed "first edit, saving now"
+    // — never the obsolete "Original title" baseline this abandoned editor started from.
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(await screen.findByRole('button', { name: /^first edit, saving now/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Original title/ })).not.toBeInTheDocument();
   });
 });
 
