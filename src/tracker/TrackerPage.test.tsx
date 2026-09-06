@@ -6,6 +6,7 @@ import { AssignmentsService } from '../assignments/service';
 import { createFakeAssignmentRepository, seedProjectDefaults } from '../assignments/testFakes';
 import { HarnessInjectionService } from '../harness/service';
 import { createFakeHarnessAdapters, createFakeHarnessFilesystem } from '../harness/testFakes';
+import type { InjectionPreview } from '../harness/types';
 import { InstructionsService } from '../instructions/service';
 import { createFakeInstructionRepository } from '../instructions/testFakes';
 import type { DirectoryContextServices } from '../settings/contracts';
@@ -68,6 +69,12 @@ function task(overrides: Partial<Task> & Pick<Task, 'id' | 'project_id'>): Task 
     updated_at: '2026-08-13T08:00:00.000Z',
     ...overrides,
   };
+}
+
+/** A minimal, valid-enough `InjectionPreview` for F1's tests below — only `.classification.kind`
+ * is ever read by the component under test (`classificationBadge`), so the rest is unused filler. */
+function fakePreview(kind: 'Missing' | 'ManagedValid'): InjectionPreview {
+  return { classification: { kind } } as unknown as InjectionPreview;
 }
 
 interface MakeServicesOptions {
@@ -1278,8 +1285,12 @@ describe('Correction 3 — stale project/task data is cleared immediately and in
     });
     fireEvent.click(screen.getByRole('button', { name: 'Add comment' }));
 
-    // Navigate away to the second task before that save resolves.
+    // Navigate away to the second task before that save resolves — the unsent (still in-flight)
+    // draft is now guarded (Correction 2, F2): explicitly discard it to proceed, the same as
+    // abandoning any other unsaved tracker draft.
     fireEvent.click(screen.getByRole('button', { name: /^Second task/ }));
+    const guardDialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(guardDialog).getByRole('button', { name: 'Discard changes' }));
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByText('a note on the first task')).not.toBeInTheDocument();
     expect(screen.getByText('No comments yet. Leave the first useful note.')).toBeInTheDocument();
@@ -1459,5 +1470,417 @@ describe('Correction 5 — owner changes and known-path resolution use only curr
     expect(within(dialog).getByRole('button', { name: 'Create project' })).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Link to existing project' })).toBeInTheDocument();
     expect(screen.getAllByRole('heading', { name: 'Accessible Project' }).length).toBeGreaterThan(0);
+  });
+});
+
+describe('Independent-audit Correction 2 — F1: instruction-status retries are scoped to the full resolution context', () => {
+  const workerRow = () => screen.getByText('Worker').closest('li') as HTMLElement;
+
+  it('a stale retry issued against a previous directory root does not win after a same-project switch to a fresh root (A -> B)', async () => {
+    const rootA = '/home/owner/root-a';
+    const rootB = '/home/owner/root-b';
+    const filesystem = createFakeFilesystem();
+    filesystem.existingRoots.add(rootA);
+    filesystem.existingRoots.add(rootB);
+    const settings = createFakeLocalSettings();
+    const directoryContext: DirectoryContextServices = { filesystem, settings };
+    const seedManager = new DirectoryContextManager(directoryContext);
+    const seededState = await seedManager.loadState();
+    // Linked in this order so A (linked last) ends up the active context.
+    const afterB = (await seedManager.linkDirectory(seededState, project().id, rootB)).state;
+    await seedManager.linkDirectory(afterB, project().id, rootA);
+
+    const { services } = makeServices([project()], { directoryContext });
+    // Root A's classification read always fails until a retry is explicitly armed to be held
+    // open instead (`deferNextA`) — root B always resolves immediately to a real "Configured".
+    // Every non-worker role is answered immediately so it never affects this test.
+    let deferNextA = false;
+    let resolveARetry!: (value: InjectionPreview) => void;
+    services.harness.preview = vi.fn((params: { root: string; projectId: string; role: string }) => {
+      if (params.role !== 'worker') return Promise.resolve(fakePreview('Missing'));
+      if (params.root === rootB) return Promise.resolve(fakePreview('ManagedValid'));
+      if (deferNextA) {
+        deferNextA = false;
+        return new Promise<InjectionPreview>((resolve) => {
+          resolveARetry = resolve;
+        });
+      }
+      return Promise.reject(new Error('classification blew up'));
+    }) as typeof services.harness.preview;
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    await waitFor(() => expect(within(workerRow()).getByText('classification blew up')).toBeInTheDocument());
+
+    deferNextA = true;
+    fireEvent.click(within(workerRow()).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(within(workerRow()).getByText('Checking…')).toBeInTheDocument());
+
+    // Same project, different directory root — via DirectoryContextPanel's own "Open" action.
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Open root-b' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Home' }));
+    await waitFor(() => expect(within(workerRow()).getByText('Configured')).toBeInTheDocument());
+
+    // The stale A retry finally resolves — it must never overwrite B's already-current result.
+    resolveARetry(fakePreview('Missing'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(within(workerRow()).getByText('Configured')).toBeInTheDocument();
+    expect(within(workerRow()).queryByText('Not set up')).not.toBeInTheDocument();
+    expect(within(workerRow()).queryByText('classification blew up')).not.toBeInTheDocument();
+  });
+
+  it('a stale retry from before a Close does not win after the SAME directory is reopened (close/reopen)', async () => {
+    const rootA = '/home/owner/root-a';
+    const filesystem = createFakeFilesystem();
+    filesystem.existingRoots.add(rootA);
+    (filesystem.selectDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(rootA);
+    const settings = createFakeLocalSettings();
+    const directoryContext: DirectoryContextServices = { filesystem, settings };
+    const seedManager = new DirectoryContextManager(directoryContext);
+    const seededState = await seedManager.loadState();
+    await seedManager.linkDirectory(seededState, project().id, rootA);
+
+    const { services } = makeServices([project()], { directoryContext });
+    let mode: 'reject' | 'defer' | 'configured' = 'reject';
+    let resolveDeferred!: (value: InjectionPreview) => void;
+    services.harness.preview = vi.fn((params: { root: string; projectId: string; role: string }) => {
+      if (params.role !== 'worker') return Promise.resolve(fakePreview('Missing'));
+      if (mode === 'defer') {
+        mode = 'reject';
+        return new Promise<InjectionPreview>((resolve) => {
+          resolveDeferred = resolve;
+        });
+      }
+      if (mode === 'configured') return Promise.resolve(fakePreview('ManagedValid'));
+      return Promise.reject(new Error('classification blew up'));
+    }) as typeof services.harness.preview;
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    await waitFor(() => expect(within(workerRow()).getByText('classification blew up')).toBeInTheDocument());
+
+    mode = 'defer';
+    fireEvent.click(within(workerRow()).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(within(workerRow()).getByText('Checking…')).toBeInTheDocument());
+
+    // Close: no root at all, so nothing is even attempted for this role while it's closed.
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await waitFor(() =>
+      expect(within(workerRow()).getByText('Link a directory to check file status')).toBeInTheDocument(),
+    );
+
+    // Reopen the exact same path — this fresh resolution must win even though the root's path
+    // text is identical to the one the still-pending stale retry above was issued against.
+    mode = 'configured';
+    await clickOpenDirectory();
+    await waitFor(() => expect(within(workerRow()).getByText('Configured')).toBeInTheDocument());
+
+    resolveDeferred(fakePreview('Missing'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(within(workerRow()).getByText('Configured')).toBeInTheDocument();
+    expect(within(workerRow()).queryByText('classification blew up')).not.toBeInTheDocument();
+  });
+
+  it('a stale retry is superseded by a newer full refresh even when the directory root never changes (superseded request)', async () => {
+    const rootA = '/home/owner/root-a';
+    const filesystem = createFakeFilesystem();
+    filesystem.existingRoots.add(rootA);
+    const settings = createFakeLocalSettings();
+    const directoryContext: DirectoryContextServices = { filesystem, settings };
+    const seedManager = new DirectoryContextManager(directoryContext);
+    const seededState = await seedManager.loadState();
+    await seedManager.linkDirectory(seededState, project().id, rootA);
+
+    const { services } = makeServices([project()], { directoryContext });
+    let mode: 'reject' | 'defer' | 'configured' = 'reject';
+    let resolveDeferred!: (value: InjectionPreview) => void;
+    services.harness.preview = vi.fn((params: { root: string; projectId: string; role: string }) => {
+      if (params.role !== 'worker') return Promise.resolve(fakePreview('Missing'));
+      if (mode === 'defer') {
+        mode = 'reject';
+        return new Promise<InjectionPreview>((resolve) => {
+          resolveDeferred = resolve;
+        });
+      }
+      if (mode === 'configured') return Promise.resolve(fakePreview('ManagedValid'));
+      return Promise.reject(new Error('classification blew up'));
+    }) as typeof services.harness.preview;
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    await waitFor(() => expect(within(workerRow()).getByText('classification blew up')).toBeInTheDocument());
+
+    mode = 'defer';
+    fireEvent.click(within(workerRow()).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(within(workerRow()).getByText('Checking…')).toBeInTheDocument());
+
+    // A later full refresh (Home revisit, event-driven per Correction 4) — same root, same
+    // project — must supersede the still-pending retry above.
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }));
+    mode = 'configured';
+    fireEvent.click(screen.getByRole('button', { name: 'Home' }));
+    await waitFor(() => expect(within(workerRow()).getByText('Configured')).toBeInTheDocument());
+
+    resolveDeferred(fakePreview('Missing'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(within(workerRow()).getByText('Configured')).toBeInTheDocument();
+    expect(within(workerRow()).queryByText('classification blew up')).not.toBeInTheDocument();
+  });
+});
+
+describe('Independent-audit Correction 2 — F2: unsaved task edits and unsent comments are guarded, not silently discarded', () => {
+  it('an unsaved task edit blocks a sidebar project switch until Save/Discard/Cancel; Cancel retains the exact draft', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const existingTask = task({ id: 'existing-task', project_id: 'project-a', title: 'Original title' });
+    const { services } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [existingTask] },
+    });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'Edited title, not yet saved' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    expect(
+      within(dialog).getByText('You have an unsaved task edit. Save it, discard it, or stay here.'),
+    ).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.getByLabelText('Task title')).toHaveValue('Edited title, not yet saved');
+    expect(screen.getAllByRole('heading', { name: 'Project A' }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('heading', { name: 'Project B' })).not.toBeInTheDocument();
+  });
+
+  it('Save on a guarded unsaved task edit persists it to the originating task/project, then the project switch proceeds', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const existingTask = task({ id: 'existing-task', project_id: 'project-a', title: 'Original title' });
+    const { services } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [existingTask] },
+    });
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...existingTask,
+      title: 'Edited and saved',
+    });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'Edited and saved' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() =>
+      expect(services.repositories.tasks.update).toHaveBeenCalledWith(
+        'existing-task',
+        expect.objectContaining({ title: 'Edited and saved' }),
+      ),
+    );
+    await waitFor(() => expect(screen.getAllByRole('heading', { name: 'Project B' }).length).toBeGreaterThan(0));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('Discard on a guarded unsaved task edit abandons it (never saved) and the project switch proceeds', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const existingTask = task({ id: 'existing-task', project_id: 'project-a', title: 'Original title' });
+    const { services } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [existingTask] },
+    });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'Should never be saved' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard changes' }));
+
+    await waitFor(() => expect(screen.getAllByRole('heading', { name: 'Project B' }).length).toBeGreaterThan(0));
+    expect(services.repositories.tasks.update).not.toHaveBeenCalled();
+
+    // Switching back to A shows the original, unedited task — the discarded draft never landed.
+    fireEvent.click(screen.getByRole('button', { name: 'Project A' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    expect(screen.getByLabelText('Task title')).toHaveValue('Original title');
+  });
+
+  it('an unsent comment draft blocks selecting a different task; Cancel keeps it exactly as typed on the originating task', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const firstTask = task({ id: 'first-task', project_id: 'project-a', title: 'First task' });
+    const secondTask = task({ id: 'second-task', project_id: 'project-a', title: 'Second task' });
+    const { services } = makeServices([projectA], {
+      tasksByProject: { 'project-a': [firstTask, secondTask] },
+    });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^First task/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByRole('button', { name: 'Add comment' });
+    fireEvent.change(screen.getByLabelText('Add a comment'), { target: { value: 'not yet sent' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /^Second task/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    expect(
+      within(dialog).getByText('You have an unsent comment. Save it, discard it, or stay here.'),
+    ).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.getByLabelText('Add a comment')).toHaveValue('not yet sent');
+    const detailPanel = screen.getByRole('complementary', { name: 'Selected task detail' });
+    expect(within(detailPanel).getByRole('heading', { name: 'First task' })).toBeInTheDocument();
+  });
+
+  it('an unsaved task edit also blocks a directory-driven project switch (opening an already-linked directory for a different project)', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const existingTask = task({ id: 'existing-task', project_id: 'project-a', title: 'Original title' });
+    const filesystem = createFakeFilesystem();
+    filesystem.existingRoots.add('/home/owner/b-repo');
+    (filesystem.selectDirectory as ReturnType<typeof vi.fn>).mockResolvedValue('/home/owner/b-repo');
+    const settings = createFakeLocalSettings();
+    const directoryContext: DirectoryContextServices = { filesystem, settings };
+    const seedManager = new DirectoryContextManager(directoryContext);
+    let seededState = await seedManager.loadState();
+    seededState = (await seedManager.linkDirectory(seededState, projectB.id, '/home/owner/b-repo')).state;
+    await seedManager.updateResumeSelection(seededState, {
+      selectedProjectId: projectA.id,
+      selectedTaskId: null,
+      resumeScreen: 'workspace',
+    });
+    const { services } = makeServices([projectA, projectB], {
+      directoryContext,
+      tasksByProject: { 'project-a': [existingTask] },
+    });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Workspace' })).toHaveClass('nav-item-active'));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'dirty via directory switch' } });
+
+    await clickOpenDirectory();
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.getByLabelText('Task title')).toHaveValue('dirty via directory switch');
+    expect(screen.queryByRole('dialog', { name: 'Unlinked directory' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { name: 'Project A' }).length).toBeGreaterThan(0);
+  });
+
+  it('a failed Save on a guarded unsaved task edit shows the error and does not navigate away', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const existingTask = task({ id: 'existing-task', project_id: 'project-a', title: 'Original title' });
+    const { services } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [existingTask] },
+    });
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('save blew up'));
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'will fail to save' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+
+    await screen.findByText('Save failed — see the error above for details.');
+    expect(screen.getByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { name: 'Project A' }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('heading', { name: 'Project B' })).not.toBeInTheDocument();
+  });
+});
+
+describe('Independent-audit Correction 2 — F3: no competing state publisher regresses the mirrored directory context', () => {
+  it('a pending resume-selection write does not regress the mirrored directory context after a subsequent Close; durable settings still end up correct', async () => {
+    const rootA = '/home/owner/root-a';
+    const filesystem = createFakeFilesystem();
+    filesystem.existingRoots.add(rootA);
+    const settings = createFakeLocalSettings();
+    const directoryContext: DirectoryContextServices = { filesystem, settings };
+    const seedManager = new DirectoryContextManager(directoryContext);
+    const seededState = await seedManager.loadState();
+    await seedManager.linkDirectory(seededState, project().id, rootA);
+
+    const originalWriteImpl = (settings.write as ReturnType<typeof vi.fn>).getMockImplementation() as (
+      key: string,
+      value: unknown,
+    ) => Promise<void>;
+    let resolveHeldWrite!: () => void;
+    let heldCallSeen = false;
+    (settings.write as ReturnType<typeof vi.fn>).mockImplementation((key: string, value: unknown) => {
+      if (!heldCallSeen) {
+        heldCallSeen = true;
+        return new Promise<void>((resolve) => {
+          resolveHeldWrite = () => {
+            void originalWriteImpl(key, value).then(resolve);
+          };
+        });
+      }
+      return originalWriteImpl(key, value);
+    });
+
+    const { services } = makeServices([project()], { directoryContext });
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getByText(rootA, { selector: 'code' })).toBeInTheDocument());
+    // The resume-persistence effect's own write for this mount is now the one being held pending.
+    await waitFor(() => expect(heldCallSeen).toBe(true));
+
+    // Close, then resolve the stale held write immediately — deliberately no other navigation
+    // (each of which would itself re-run the resume-persistence effect and issue a further,
+    // NOT-stale write) in between, so a regression from the held write alone is never masked by
+    // a later write correcting it back before this check runs.
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.getByText('No directory is open for this project.')).toBeInTheDocument());
+
+    // Resolve the OLD, held resume write now — before Correction 2 (F3), its own
+    // `.then(directory.setState)` would regress the mirror back to "root A open" here, with
+    // nothing else queued yet to correct it back.
+    resolveHeldWrite();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(screen.getByText('No directory is open for this project.')).toBeInTheDocument();
+    expect(screen.queryByText(rootA, { selector: 'code' })).not.toBeInTheDocument();
+
+    // Now safe to navigate further — Home and Studio must still show no active directory.
+    fireEvent.click(screen.getByRole('button', { name: 'Instructions' }));
+    expect(await screen.findByText(/Link a local directory for/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Home' }));
+    expect(screen.getByText('No directory is open for this project.')).toBeInTheDocument();
+
+    await waitFor(async () => {
+      const stored = await settings.read<LocalSettingsStateV2>(LOCAL_SETTINGS_KEY);
+      expect(stored?.lastOpenContextId).toBeNull();
+    });
+  });
+
+  it('DirectoryContextPanel is never wired to a second, competing state publisher in production', async () => {
+    const rootA = '/home/owner/root-a';
+    const filesystem = createFakeFilesystem();
+    filesystem.existingRoots.add(rootA);
+    const settings = createFakeLocalSettings();
+    const directoryContext: DirectoryContextServices = { filesystem, settings };
+    const seedManager = new DirectoryContextManager(directoryContext);
+    const seededState = await seedManager.loadState();
+    await seedManager.linkDirectory(seededState, project().id, rootA);
+
+    const { services } = makeServices([project()], { directoryContext });
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    await waitFor(() => expect(screen.getByText(rootA, { selector: '.directory-context-path' })).toBeInTheDocument());
+
+    // The only correct way for TrackerPage to learn about a DirectoryContextPanel-driven mutation
+    // (Close, Forget, Open, Link, Locate replacement) is the manager's own `subscribe` — confirmed
+    // by exercising one such action (Close) here and by `directoryContextManager.test.ts` proving
+    // every mutating method (including `forget`) publishes synchronously ahead of its own write.
+    fireEvent.click(screen.getByRole('button', { name: 'Close root-a' }));
+    expect(screen.getByText('No directory is open for this project yet.')).toBeInTheDocument();
   });
 });

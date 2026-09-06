@@ -436,6 +436,51 @@ describe('DirectoryContextManager', () => {
       expect(seen).toEqual([loaded]);
     });
 
+    it('a late-settling forget() write never regresses a newer mutation already published via subscribe (Correction 2, F3)', async () => {
+      const services = createFakeDirectoryContextServices();
+      const manager = new DirectoryContextManager(services);
+      const loaded = await manager.loadState();
+      const { state: linkedA, context: contextA } = await manager.linkDirectory(
+        loaded,
+        projectId,
+        '/home/owner/a',
+      );
+      const { state: linkedB } = await manager.linkDirectory(linkedA, projectId, '/home/owner/b');
+
+      let resolveForgetWrite!: () => void;
+      (services.settings.write as ReturnType<typeof vi.fn>).mockImplementationOnce(
+        () => new Promise<void>((resolve) => (resolveForgetWrite = resolve)),
+      );
+
+      let latest: unknown = null;
+      manager.subscribe((next) => (latest = next));
+
+      // Forget the (inactive) first context — its own write is held pending, and (since writes
+      // are serialized) blocks every later write from even starting. Never awaited directly:
+      // its returned promise cannot settle until the write chain drains below.
+      const pendingForget = manager.forget(linkedB, contextA.id);
+      expect((latest as { directoryContexts: unknown[] }).directoryContexts).toHaveLength(1);
+
+      // A second, later mutation (Close) commits — and publishes — synchronously, ahead of BOTH
+      // its own and the still-pending forget's write ever settling. Also never awaited yet, for
+      // the same reason.
+      const pendingClose = manager.closeActive(linkedB);
+      expect((latest as { lastOpenContextId: unknown }).lastOpenContextId).toBeNull();
+      const publishedAfterClose = latest;
+
+      // Let the write chain actually invoke `settings.write` (assigning `resolveForgetWrite`)
+      // before resolving it, unblocking both the stale forget and the newer close.
+      await Promise.resolve();
+      resolveForgetWrite();
+      const closed = await pendingClose;
+      await pendingForget;
+
+      // The stale forget completion — same competing-callback shape as the resume-persistence
+      // effect's old `.then(setState)` — must never regress the mirror back to its own snapshot.
+      expect(latest).toBe(publishedAfterClose);
+      expect(latest).toBe(closed);
+    });
+
     it('findContextsForPath resolves against the latest state even when passed a stale snapshot', async () => {
       const services = createFakeDirectoryContextServices();
       const manager = new DirectoryContextManager(services);

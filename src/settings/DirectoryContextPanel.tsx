@@ -10,7 +10,17 @@ function errorMessage(error: unknown) {
 interface DirectoryContextPanelProps {
   manager: DirectoryContextManager;
   state: LocalSettingsStateV2;
-  onStateChange: (next: LocalSettingsStateV2) => void;
+  /**
+   * Notified with each mutation's own resolved state — for a caller that manages its own state
+   * independently of a `manager.subscribe` mirror (e.g. this component's standalone tests). A
+   * host that already mirrors `manager`'s canonical state via `subscribe` (e.g.
+   * `useDirectoryContextState`, as `TrackerPage` uses) must omit this: the subscription already
+   * publishes every commit synchronously and in the correct order, while this callback fires only
+   * once that SPECIFIC mutation's own (possibly slow, possibly out-of-order-resolving) write
+   * settles — wiring both up would give production two competing publishers of the same state,
+   * the exact regression Correction 2 (F3) fixed.
+   */
+  onStateChange?: (next: LocalSettingsStateV2) => void;
   projectId: string;
   /**
    * Wraps a state-changing action (Open/Change, Close) so a host screen can guard it against
@@ -78,7 +88,7 @@ export function DirectoryContextPanel({
         runGuarded(() => {
           void manager
             .linkDirectory(state, projectId, path)
-            .then(({ state: nextState }) => onStateChange(nextState))
+            .then(({ state: nextState }) => onStateChange?.(nextState))
             .catch((error: unknown) => setActionError(errorMessage(error)));
         });
       })
@@ -92,7 +102,7 @@ export function DirectoryContextPanel({
       setBusyContextId(contextId);
       void manager
         .setActive(state, contextId)
-        .then(onStateChange)
+        .then((next) => onStateChange?.(next))
         .catch((error: unknown) => setActionError(errorMessage(error)))
         .finally(() => setBusyContextId(null));
     });
@@ -104,7 +114,7 @@ export function DirectoryContextPanel({
       setBusyContextId(contextId);
       void manager
         .closeActive(state)
-        .then(onStateChange)
+        .then((next) => onStateChange?.(next))
         .catch((error: unknown) => setActionError(errorMessage(error)))
         .finally(() => setBusyContextId(null));
     });
@@ -114,7 +124,7 @@ export function DirectoryContextPanel({
     setActionError(null);
     setBusyContextId(contextId);
     try {
-      onStateChange(await manager.forget(state, contextId));
+      onStateChange?.(await manager.forget(state, contextId));
     } catch (error) {
       setActionError(errorMessage(error));
     } finally {
@@ -128,7 +138,7 @@ export function DirectoryContextPanel({
     try {
       const path = await manager.pickDirectory();
       if (path === null) return;
-      onStateChange(await manager.replacePath(state, contextId, path));
+      onStateChange?.(await manager.replacePath(state, contextId, path));
     } catch (error) {
       setActionError(errorMessage(error));
     } finally {

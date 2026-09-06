@@ -858,6 +858,19 @@ export function TrackerPage({
   // Bumped whenever the open-directory flow is dismissed/reset, so a stale async completion for a
   // flow the owner already cancelled/replaced can never apply itself late.
   const directoryFlowGenRef = useRef(0);
+  // Bumped once per run of the instruction-status resolving effect below — i.e. every time the
+  // project, directory root, or Home-visit trigger actually changes (including a directory
+  // close/reopen, which bumps it twice: once for `null`, once for the reopened root, even when
+  // that root's path is the one that was active before). A per-role retry captures this value at
+  // call time and refuses to apply its result once it no longer matches, so a stale retry issued
+  // against an old root can never win after a newer refresh — even an A -> B -> A sequence, where
+  // comparing the root path alone would wrongly treat the stale A retry as still current.
+  const instructionResolutionGenRef = useRef(0);
+  // Per-role: bumped every time THAT role's own Retry is invoked, so a second retry for the same
+  // role supersedes an in-flight first one without needing to wait for a full context refresh.
+  const instructionRetryGenRef = useRef<Record<InstructionRole, number>>(
+    Object.fromEntries(INSTRUCTION_ROLES.map((role) => [role, 0])) as Record<InstructionRole, number>,
+  );
   const [resumeReady, setResumeReady] = useState(false);
   // Mirrors `pendingTaskResumeRef` as real state (rather than only a ref) so the resume-persistence
   // effect below re-fires the instant a pending task lookup concludes, even when the concluding
@@ -936,8 +949,65 @@ export function TrackerPage({
     undefined,
   );
 
-  function guardedNav(action: () => void, onCancel?: () => void) {
-    if (primaryView === 'instructions' && studioRef.current?.isDirty()) {
+  function isStudioDirty(): boolean {
+    return primaryView === 'instructions' && Boolean(studioRef.current?.isDirty());
+  }
+
+  /**
+   * An open task edit is "dirty" when its draft differs from a saved baseline — an existing
+   * task's own fields in 'edit' mode, or any non-empty field in 'new' mode — never merely
+   * "an editor happens to be open," since a freshly opened, untouched editor has nothing to lose.
+   */
+  function isTaskEditorDirty(): boolean {
+    if (taskEditor === 'edit') {
+      return Boolean(
+        selectedTask &&
+          (taskDraft.title !== selectedTask.title ||
+            taskDraft.description !== selectedTask.description ||
+            taskDraft.status !== selectedTask.status ||
+            taskDraft.priority !== selectedTask.priority ||
+            taskDraft.parent_task_id !== selectedTask.parent_task_id),
+      );
+    }
+    if (taskEditor === 'new') {
+      return (
+        taskDraft.title.trim() !== '' ||
+        taskDraft.description.trim() !== '' ||
+        taskDraft.parent_task_id !== emptyTaskDraft.parent_task_id
+      );
+    }
+    return false;
+  }
+
+  function isCommentDraftDirty(): boolean {
+    return commentDraft.trim() !== '';
+  }
+
+  /**
+   * Either an open task edit or an unsent comment draft — the two tracker-owned pieces of state a
+   * project switch (`applyProjectSwitch`) or a task switch (`openEditTask`/`openNewTask`) would
+   * otherwise silently discard (Correction 2, F2). Unlike Studio's dirty check, this is never
+   * scoped to a particular `primaryView`: both pieces of state live on `TrackerPage` itself and
+   * persist across a plain screen switch (nothing clears them just by leaving 'workspace'), so
+   * only project/task switches — never a Home/Workspace/Instructions nav click on its own — are
+   * ever guarded because of this.
+   */
+  function isTrackerDirty(): boolean {
+    return isTaskEditorDirty() || isCommentDraftDirty();
+  }
+
+  /**
+   * `guardedNav`/`guardTransition` share this one check. `includeTracker` is opt-in per call site
+   * because it is only ever correct where the guarded action is actually a project or task switch
+   * (`applyProjectSwitch`, `openEditTask`, `openNewTask`) — a plain primary-nav screen switch never
+   * discards tracker state and must not prompt for it.
+   */
+  function isNavigationBlocked(includeTracker: boolean): boolean {
+    return isStudioDirty() || (includeTracker && isTrackerDirty());
+  }
+
+  function guardedNav(action: () => void, onCancel?: () => void, includeTracker = false) {
+    if (isNavigationBlocked(includeTracker)) {
       // Busy belongs to the dialog currently open, not to whatever a previous one left behind —
       // a stale Saving state (a prior success or a cancelled-but-still-in-flight save) must never
       // carry into this new dialog and disable its Save button forever.
@@ -959,9 +1029,10 @@ export function TrackerPage({
    * resume write, or filesystem target — until the guard has actually been accepted, rather than
    * guarding only a later sub-step after the mutation already happened. Never nest this with
    * `guardedNav`/`switchToProject` for the same transition — one guard checkpoint per transition.
+   * Every current caller leads to `applyProjectSwitch`, so tracker-dirty is included by default.
    */
-  function guardTransition(): Promise<boolean> {
-    if (primaryView === 'instructions' && studioRef.current?.isDirty()) {
+  function guardTransition(includeTracker = true): Promise<boolean> {
+    if (isNavigationBlocked(includeTracker)) {
       return new Promise<boolean>((resolve) => {
         setNavTransitionSaving(false);
         setNavTransitionError(null);
@@ -1358,6 +1429,10 @@ export function TrackerPage({
   // `mounted` flag (React runs this effect's cleanup before its own next run) is what keeps a
   // refresh request from a previous context from ever overwriting a newer one.
   useEffect(() => {
+    // A new resolution context — even one that will resolve to the same root/project as before
+    // (a close followed by a reopen of the same path) — supersedes every retry issued against the
+    // previous one; see `instructionResolutionGenRef`'s own declaration.
+    instructionResolutionGenRef.current += 1;
     if (!selectedProject) {
       setInstructionStatuses(null);
       return;
@@ -1391,11 +1466,20 @@ export function TrackerPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject, activeDirectoryRoot, services.assignments, services.instructions, services.harness, homeVisitToken]);
 
-  /** Home's per-role Retry action: re-resolves just that one role, leaving the others as-is. */
+  /**
+   * Home's per-role Retry action: re-resolves just that one role, leaving the others as-is.
+   * Scoped to the FULL context this retry was issued against — project, and (via
+   * `instructionResolutionGenRef`) the directory root/generation — not merely the project id: a
+   * same-project directory switch, a close/reopen, or any other trigger that reruns the main
+   * resolving effect above must always win over a slower, now-stale retry, and a second retry for
+   * this same role (`instructionRetryGenRef`) must always win over a slower first one.
+   */
   function retryInstructionStatus(role: InstructionRole) {
     if (!selectedProject) return;
     const projectId = selectedProject.id;
     const root = activeDirectoryRoot;
+    const resolutionGen = instructionResolutionGenRef.current;
+    const retryGen = (instructionRetryGenRef.current[role] += 1);
     setInstructionStatuses((current) => {
       const base =
         current ??
@@ -1411,6 +1495,13 @@ export function TrackerPage({
       // A retry for a project the owner has since left must never land under whichever
       // project's summary is showing now.
       if (selectedProjectIdRef.current !== projectId) return;
+      // A newer refresh (directory switch, close/reopen, Home revisit) has already resolved this
+      // role against the current context — this retry's result is for a superseded context and
+      // must never overwrite it, even if the root it targeted happens to match the current one.
+      if (instructionResolutionGenRef.current !== resolutionGen) return;
+      // A second, later retry for this same role has already been issued — only the newest retry
+      // may apply its result.
+      if (instructionRetryGenRef.current[role] !== retryGen) return;
       setInstructionStatuses((current) => (current ? { ...current, [role]: status } : current));
     });
   }
@@ -1439,14 +1530,18 @@ export function TrackerPage({
     const taskResumePending = taskResumePendingProjectId === selectedProjectId;
     const patch: ResumeSelectionPatch = { selectedProjectId, resumeScreen: primaryView };
     if (!taskResumePending) patch.selectedTaskId = selectedTaskId;
+    // Never mirrors this call's own resolved state back with `.then(directory.setState)` — the
+    // manager's `subscribe` (wired up in `useDirectoryContextState`) is the one and only publisher
+    // of canonical state; a second publisher fed by this specific write's own promise can resolve
+    // out of order relative to a NEWER mutation's synchronous publish (e.g. a Close issued while
+    // this write is still pending) and regress the UI back to this stale snapshot. See Correction
+    // 2, F3.
     void directory.manager
       .updateResumeSelection(state, patch)
-      .then(directory.setState)
       // Best-effort device-local convenience state: a failed write here (e.g. disk full) must
       // never surface as an unhandled rejection or block navigation — the owner simply resumes
       // to an older position next launch, the same graceful degradation `loadState` already uses.
       .catch(() => undefined);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     resumeReady,
     selectedProjectId,
@@ -1575,6 +1670,12 @@ export function TrackerPage({
     setTaskEditor('new');
   }
 
+  /** Guarded entry point for "New task"/"+ child" — a dirty task edit or unsent comment for
+   * whichever task is currently showing must never be silently replaced by a blank new-task draft. */
+  function requestNewTask(parentTaskId: string | null = null) {
+    guardedNav(() => openNewTask(parentTaskId), undefined, true);
+  }
+
   function toggleTask(taskId: string) {
     setExpandedTaskIds((current) => {
       const next = new Set(current);
@@ -1607,14 +1708,26 @@ export function TrackerPage({
     setTaskEditor('edit');
   }
 
-  async function saveTask(event?: React.FormEvent<HTMLFormElement>) {
+  /** Guarded entry point for selecting a task to edit (outliner rows, "Edit task") — a dirty edit
+   * or unsent comment for whichever task/draft is currently showing must never be silently
+   * replaced by the newly clicked task's own fields. */
+  function requestEditTask(task: Task) {
+    guardedNav(() => openEditTask(task), undefined, true);
+  }
+
+  /**
+   * Returns `true` once the save has actually succeeded (so a caller — the tracker-dirty branch of
+   * the unsaved-changes guard dialog below — knows whether it may proceed with the navigation that
+   * triggered the guard), `false` on validation failure or a rejected write.
+   */
+  async function saveTask(event?: React.FormEvent<HTMLFormElement>): Promise<boolean> {
     event?.preventDefault();
     const draft = { ...taskDraft, title: taskDraft.title.trim(), description: taskDraft.description.trim() };
     if (!draft.title) {
       setTaskSaveError('Task title is required.');
-      return;
+      return false;
     }
-    if (!selectedProject) return;
+    if (!selectedProject) return false;
     // Captured now, checked again once the write resolves: a completion for a project the owner
     // has since navigated away from must never select a task under whichever project is current.
     const projectIdAtStart = selectedProject.id;
@@ -1624,7 +1737,7 @@ export function TrackerPage({
         assertNoParentCycle(tasks, editingTask.id, draft.parent_task_id);
       } catch (error) {
         setTaskSaveError(errorMessage(error));
-        return;
+        return false;
       }
     }
     setTaskSaving(true);
@@ -1668,8 +1781,10 @@ export function TrackerPage({
         setSelectedTaskId(saved.id);
         setTaskEditor(null);
       }
+      return true;
     } catch (error) {
       if (selectedProjectIdRef.current === projectIdAtStart) setTaskSaveError(errorMessage(error));
+      return false;
     } finally {
       setTaskSaving(false);
     }
@@ -1742,9 +1857,14 @@ export function TrackerPage({
     }
   }
 
-  async function addComment(event?: React.FormEvent<HTMLFormElement>) {
+  /**
+   * Returns `true` once the comment has actually been saved (so the tracker-dirty branch of the
+   * unsaved-changes guard dialog below knows whether it may proceed), `false` when there is
+   * nothing to save or the write is rejected.
+   */
+  async function addComment(event?: React.FormEvent<HTMLFormElement>): Promise<boolean> {
     event?.preventDefault();
-    if (!selectedTask || !selectedProject || !commentDraft.trim()) return;
+    if (!selectedTask || !selectedProject || !commentDraft.trim()) return false;
     const body = commentDraft.trim();
     // Captured now, checked again once the write resolves: a completion for a thread the owner
     // has since navigated away from (a different task, or the same task reloaded elsewhere) must
@@ -1773,8 +1893,10 @@ export function TrackerPage({
         setCommentDraft('');
         setRetryCommentDraft(null);
       }
+      return true;
     } catch (error) {
       if (gen === commentsGenRef.current) setCommentSaveError(errorMessage(error));
+      return false;
     } finally {
       // Unconditional: this is a simple in-flight flag for whichever thread is showing right now,
       // not content tied to the stale thread — leaving it stuck at `true` after navigating away
@@ -1802,7 +1924,7 @@ export function TrackerPage({
   }
 
   function switchToProject(projectId: string) {
-    guardedNav(() => applyProjectSwitch(projectId));
+    guardedNav(() => applyProjectSwitch(projectId), undefined, true);
   }
 
   /** Every explicit screen pick goes through here, so device resume never flips it back out. */
@@ -2033,6 +2155,20 @@ export function TrackerPage({
   }
 
   const initializing = loading || !resumeReady;
+  // Which kind of unsaved work the currently showing guard dialog is protecting — computed fresh
+  // on every render (nothing else can change this state while the modal is up) so both its copy
+  // and its Save/Discard handlers below always agree on what they are acting on. `null` only where
+  // `pendingNav` itself is `null` (dialog not shown) — the dialog exists only because one of these
+  // was true when the guard fired.
+  const pendingNavDirtyKind: 'studio' | 'task' | 'comment' | null = !pendingNav
+    ? null
+    : isStudioDirty()
+      ? 'studio'
+      : isTaskEditorDirty()
+        ? 'task'
+        : isCommentDraftDirty()
+          ? 'comment'
+          : null;
 
   return (
     <main className="app-shell">
@@ -2216,7 +2352,12 @@ export function TrackerPage({
                 <DirectoryContextPanel
                   manager={directory.manager}
                   state={directory.state}
-                  onStateChange={directory.setState}
+                  // No `onStateChange`: `directory.state` already mirrors the manager's canonical
+                  // state via its own `subscribe` (see `useDirectoryContextState`), which publishes
+                  // synchronously and in the correct order for every commit. Wiring this panel's
+                  // own per-call `onStateChange` to the same setter would add a second, competing
+                  // publisher that can resolve out of order relative to the subscription — the
+                  // exact regression Correction 2 (F3) removed from the resume-persistence effect.
                   projectId={selectedProject.id}
                   beforeChange={guardedNav}
                 />
@@ -2227,7 +2368,7 @@ export function TrackerPage({
                     <p className="eyebrow">Task hierarchy</p>
                     <h2 id="outliner-heading">See the work in context.</h2>
                   </div>
-                  <button className="button button-secondary" type="button" onClick={() => openNewTask()}>
+                  <button className="button button-secondary" type="button" onClick={() => requestNewTask()}>
                     New task
                   </button>
                 </div>
@@ -2254,9 +2395,9 @@ export function TrackerPage({
                     selectedTaskId={selectedTaskId}
                     expandedTaskIds={expandedTaskIds}
                     onToggle={toggleTask}
-                    onEdit={openEditTask}
+                    onEdit={requestEditTask}
                     onFocus={focusTask}
-                    onNewChild={openNewTask}
+                    onNewChild={requestNewTask}
                     onMove={(task, status) => void moveTask(task, status)}
                     onArchive={(task) => void archiveTask(task)}
                   />
@@ -2277,7 +2418,7 @@ export function TrackerPage({
             </div>
             <aside className="detail-panel" aria-label="Selected task detail">
               {taskEditor ? <TaskForm draft={taskDraft} tasks={visibleTasks} taskId={taskEditor === 'edit' ? selectedTask?.id : undefined} saving={taskSaving} error={taskSaveError} isNew={taskEditor === 'new'} onChange={setTaskDraft} onSubmit={(event) => void saveTask(event)} onCancel={() => setTaskEditor(null)} onRetry={() => void saveTask()} /> : selectedTask ? <>
-                <div className="task-summary"><p className="eyebrow">Selected task</p><h2>{selectedTask.title}</h2><p>{selectedTask.description || 'No task description yet.'}</p><button className="button button-secondary" type="button" onClick={() => openEditTask(selectedTask)}>Edit task</button></div>
+                <div className="task-summary"><p className="eyebrow">Selected task</p><h2>{selectedTask.title}</h2><p>{selectedTask.description || 'No task description yet.'}</p><button className="button button-secondary" type="button" onClick={() => requestEditTask(selectedTask)}>Edit task</button></div>
                 <CommentPanel task={selectedTask} comments={comments} draft={commentDraft} saving={commentSaving} loading={commentsLoading} error={commentSaveError} onDraftChange={setCommentDraft} onSubmit={(event) => void addComment(event)} onRetry={retryComment} />
               </> : <div className="detail-placeholder"><span className="placeholder-mark">✦</span><h2>Task detail</h2><p>Select a task to inspect its context, hierarchy, and comments.</p></div>}
             </aside>
@@ -2509,7 +2650,11 @@ export function TrackerPage({
           >
             <h2>Unsaved changes</h2>
             <p className="muted-copy">
-              You have unsaved instruction edits. Save them, discard them, or stay here.
+              {pendingNavDirtyKind === 'task'
+                ? 'You have an unsaved task edit. Save it, discard it, or stay here.'
+                : pendingNavDirtyKind === 'comment'
+                  ? 'You have an unsent comment. Save it, discard it, or stay here.'
+                  : 'You have unsaved instruction edits. Save them, discard them, or stay here.'}
             </p>
             {navTransitionError && (
               <div className="save-error" role="alert">
@@ -2525,7 +2670,14 @@ export function TrackerPage({
                   setNavTransitionSaving(true);
                   setNavTransitionError(null);
                   const token = navTransitionTokenRef.current;
-                  void (studioRef.current?.save() ?? Promise.resolve(true))
+                  const dirtyKind = pendingNavDirtyKind;
+                  const savePromise: Promise<boolean> =
+                    dirtyKind === 'task'
+                      ? saveTask()
+                      : dirtyKind === 'comment'
+                        ? addComment()
+                        : (studioRef.current?.save() ?? Promise.resolve(true));
+                  void savePromise
                     .then((ok) => {
                       // Cancelled or discarded past while this save was in flight: never let a
                       // late success execute a nav the owner already backed away from.
@@ -2535,7 +2687,11 @@ export function TrackerPage({
                         dismissPendingNav();
                         run?.();
                       } else {
-                        setNavTransitionError('Save failed — see the error in Instruction Studio for details.');
+                        setNavTransitionError(
+                          dirtyKind === 'studio'
+                            ? 'Save failed — see the error in Instruction Studio for details.'
+                            : 'Save failed — see the error above for details.',
+                        );
                       }
                     })
                     .finally(() => {
@@ -2549,7 +2705,17 @@ export function TrackerPage({
                 className="button button-danger"
                 type="button"
                 onClick={() => {
-                  studioRef.current?.discard();
+                  if (pendingNavDirtyKind === 'task') {
+                    setTaskEditor(null);
+                    setTaskSaveError(null);
+                    setTaskRetry(null);
+                  } else if (pendingNavDirtyKind === 'comment') {
+                    setCommentDraft('');
+                    setCommentSaveError(null);
+                    setRetryCommentDraft(null);
+                  } else {
+                    studioRef.current?.discard();
+                  }
                   const run = pendingNav;
                   dismissPendingNav();
                   run?.();
