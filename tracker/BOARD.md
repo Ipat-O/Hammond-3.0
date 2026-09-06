@@ -17,12 +17,12 @@ None.
 
 ## in_development
 
-- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
-  PR #10 at `39ae643`; Luna CHANGES, Correction 5 for F2b and stale owner navigation.
+None.
 
 ## in_review
 
-None.
+- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
+  PR #10 at `80708e9`; Luna round-4 audit routed after Correction 5.
 
 ## testing
 
