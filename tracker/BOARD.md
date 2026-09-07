@@ -17,12 +17,12 @@ None.
 
 ## in_development
 
-None.
+- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
+  PR #10 at `4946a6a`; Sonnet Correction 9: queue identity and cancellation after round-7 CHANGES.
 
 ## in_review
 
-- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
-  PR #10 at `4946a6a`; DeepSeek round-7 audit routed after Correction 8.
+None.
 
 ## testing
 
