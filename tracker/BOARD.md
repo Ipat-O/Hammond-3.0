@@ -17,12 +17,12 @@ None.
 
 ## in_development
 
-- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
-  PR #10 at `4bffa92`; Sonnet Correction 8: per-task save coordination after round-6 CHANGES.
+None.
 
 ## in_review
 
-None.
+- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
+  PR #10 at `4946a6a`; DeepSeek round-7 audit routed after Correction 8.
 
 ## testing
 
