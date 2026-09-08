@@ -985,7 +985,10 @@ export function TrackerPage({
    */
   function cancelTaskEditor() {
     if (taskEditor && selectedTaskId) {
-      taskSaveCoordinatorRef.current.cancelQueued(selectedTaskId);
+      // Scoped to 'editor' (HAM3-008 Correction 9, Finding 2): drops only this editor's own
+      // not-yet-dispatched form/guard-save drafts, never an independently queued outliner move or
+      // archive for the same task waiting behind them — that survives to dispatch in its own turn.
+      taskSaveCoordinatorRef.current.cancelQueued(selectedTaskId, 'editor');
     }
     if (taskEditor === 'edit' && selectedTaskId) {
       const taskId = selectedTaskId;
@@ -1991,6 +1994,7 @@ export function TrackerPage({
         return targetId ? repositories.tasks.update(targetId, input) : repositories.tasks.create(input);
       },
       dedupeToken,
+      'editor',
     );
     if (taskEditorGenRef.current === editorGenAtStart) setTaskSaving(false);
     if (outcome.status === 'cancelled') {
@@ -2053,12 +2057,28 @@ export function TrackerPage({
     return true;
   }
 
+  /** `task.id` for an already-durable task; `null` for one that still carries its synthetic
+   * `draft-task-…` local id and has not (yet, as of `durableId`) been durably created — the
+   * caller must never send that synthetic id to a durable repository call (HAM3-008 Correction 9).
+   * `durableId` is the coordinator's own dispatch-time knowledge of this exact logical task's real
+   * id, current as of the moment this specific request actually runs (never stale: FIFO ordering
+   * under the shared canonical queue guarantees any create for this same task has already settled
+   * by then, one way or the other). */
+  function resolveDurableTaskId(task: Task, durableId: string | null): string | null {
+    return task.id.startsWith('draft-task-') ? durableId : task.id;
+  }
+
   /**
    * A status move is routed through the SAME per-task coordinator queue as a form Save/Retry
-   * (HAM3-008 Correction 8) — keyed by `task.id`, never a distinct path with its own ordering —
-   * so an edit-form save for this exact task and an outliner status move can never race each
-   * other's confirmed result: whichever was actually requested first is applied first, and the
-   * other only dispatches once it settles.
+   * (HAM3-008 Correction 8) — keyed by `task.id` and resolved through its current draft/real alias
+   * like every other submission (HAM3-008 Correction 9) — so an edit-form save for this exact task
+   * and an outliner status move can never race each other's confirmed result: whichever was
+   * actually requested first is applied first, and the other only dispatches once it settles. A
+   * move requested while the task is STILL synthetic (its create not yet settled) queues behind
+   * that create and, once the create succeeds, updates the real id it produced rather than the
+   * synthetic one — never a bogus request against an id nothing durable was ever assigned. If the
+   * create instead fails, there is no durable id to move, and the attempt fails truthfully rather
+   * than silently doing nothing or reporting success.
    */
   async function moveTask(task: Task, status: TaskStatus) {
     const projectIdAtStart = selectedProjectIdRef.current;
@@ -2066,8 +2086,17 @@ export function TrackerPage({
     setTasks((current) => current.map((item) => item.id === task.id ? optimistic : item));
     setTaskSaveError(null);
     setTaskRetry({ kind: 'move', taskId: task.id, status });
-    const outcome = await taskSaveCoordinatorRef.current.submit(task.id, () =>
-      repositories.tasks.update(task.id, { status }),
+    const outcome = await taskSaveCoordinatorRef.current.submit(
+      task.id,
+      ({ durableId }) => {
+        const targetId = resolveDurableTaskId(task, durableId);
+        if (!targetId) {
+          return Promise.reject(new Error('This task was never created, so its status cannot be saved.'));
+        }
+        return repositories.tasks.update(targetId, { status });
+      },
+      null,
+      'outliner',
     );
     // A completion for a project the owner has since left must never touch whichever project's
     // retry banner/task list is showing now — the moved task no longer even exists in `tasks`
@@ -2085,10 +2114,13 @@ export function TrackerPage({
     }
   }
 
-  /** Same per-task coordinator queue as `moveTask`/`saveTask`, keyed by the archived task's own
-   * (root) id — an edit-form save or status move for this exact task already in flight settles
-   * first, so a stale save response can never resurrect a row this archive already durably
-   * removed, and vice versa (HAM3-008 Correction 8). */
+  /** Same per-task coordinator queue as `moveTask`/`saveTask`, resolved through the archived
+   * task's current draft/real alias like every other submission (HAM3-008 Correction 9) — an
+   * edit-form save or status move for this exact task already in flight or queued settles first,
+   * so a stale save response can never resurrect a row this archive already durably removed, and
+   * vice versa (HAM3-008 Correction 8). Archiving a still-synthetic row (its create not yet
+   * settled) queues behind that create the same way `moveTask` does, and targets the real id the
+   * create produces rather than the synthetic one — see `resolveDurableTaskId`. */
   async function archiveTask(task: Task) {
     // Captured now, checked again once the archive resolves: a completion for a project the
     // owner has since navigated away from must never clear/overwrite whichever project's own
@@ -2110,8 +2142,17 @@ export function TrackerPage({
         setFocusedTaskId(null);
       }
     }
-    const outcome = await taskSaveCoordinatorRef.current.submit(task.id, () =>
-      repositories.tasks.archive(task.id),
+    const outcome = await taskSaveCoordinatorRef.current.submit(
+      task.id,
+      ({ durableId }) => {
+        const targetId = resolveDurableTaskId(task, durableId);
+        if (!targetId) {
+          return Promise.reject(new Error('This task was never created, so it cannot be archived.'));
+        }
+        return repositories.tasks.archive(targetId);
+      },
+      null,
+      'outliner',
     );
     if (selectedProjectIdRef.current !== projectIdAtStart) return;
     if (outcome.status === 'success') {

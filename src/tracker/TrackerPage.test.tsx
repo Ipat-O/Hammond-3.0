@@ -3779,3 +3779,349 @@ describe('Correction 8 — remaining per-task save coordinator matrix rows', () 
     await waitFor(() => expect(within(outlinerRow).getByText('Archived')).toBeInTheDocument());
   });
 });
+
+/**
+ * HAM3-008 Correction 9 — DeepSeek's round-7 independent audit (PR #10) confirmed the round-6
+ * residual CLOSED but found two new, narrower residuals in Correction 8's own coordinator:
+ *
+ * Finding 1 (Medium): `durableIds` (draft key -> real id, learned from a create's own response)
+ * was consulted only for the dispatch context and `getConfirmedForKey` — never by `submit`,
+ * `hasPending`, or `cancelQueued`. A caller who only ever learns of a just-created task's REAL id
+ * (the outliner, once `saveTask`'s continuation rewrites the row's `id`) could open a SECOND,
+ * independent queue under that real id while the FIRST queue — still holding a genuinely queued
+ * update issued against the original draft id before the create resolved — was still draining. Two
+ * requests for one logical task could then be in flight/queued at once.
+ *
+ * Finding 2 (Low): `cancelTaskEditor`'s `cancelQueued(selectedTaskId)` dropped EVERY queued entry
+ * for that key, including an independently requested outliner move/archive queued behind an
+ * in-flight form save — not just the discarded draft the doc comment describes.
+ *
+ * Fixed in `src/tracker/taskSaveCoordinator.ts`: every `queues`/`inFlight` operation now resolves
+ * its key through a real-id/draft-id alias map before touching state (Finding 1), and each queued
+ * entry is tagged with who submitted it (`'editor'` vs `'outliner'`) so `cancelQueued` can scope
+ * its drop to one owner (Finding 2). `moveTask`/`archiveTask` (`src/tracker/TrackerPage.tsx`) also
+ * now resolve their target id through the coordinator's `durableId` dispatch context rather than a
+ * closed-over `task.id`, so an action requested on a still-synthetic row defers correctly behind
+ * its pending create instead of sending a `draft-task-…` id to a durable repository call.
+ */
+describe('Correction 9 — canonical queue identity (F1) and scoped cancellation (F2)', () => {
+  it('F1 exact repro (archive): a second edit queued under the draft key while Create is in flight, then Cancelling the guard and Archiving the now-real-id row from the outliner — the archive queues behind the still-in-flight draft-keyed update rather than opening a second, independent queue, and the final state is correctly archived (never left looking un-archived by a later stale response)', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const otherTask = task({ id: 'other-task', project_id: 'project-a', title: 'Other task' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [otherTask] } });
+    let resolveCreate!: (task: Task) => void;
+    (services.repositories.tasks.create as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise<Task>((resolve) => { resolveCreate = resolve; }),
+    );
+    let resolveV2!: (task: Task) => void;
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise<Task>((resolve) => { resolveV2 = resolve; }),
+    );
+    let archiveCalled = false;
+    (services.repositories.tasks.archive as ReturnType<typeof vi.fn>).mockImplementation((id: string) => {
+      archiveCalled = true;
+      return Promise.resolve([{ ...otherTask, id, title: 'v2', archived_at: '2026-09-07T00:00:00.000Z' }]);
+    });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show archived' }));
+
+    // 1. New task; Create stays in flight.
+    fireEvent.click(await screen.findByRole('button', { name: 'New task' }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    await waitFor(() => expect(services.repositories.tasks.create).toHaveBeenCalledTimes(1));
+
+    // 2. Edit v2, click another task, choose guard Save changes — v2 queues under the draft key.
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Other task/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(services.repositories.tasks.update).not.toHaveBeenCalled();
+
+    // 3. Create succeeds, maps to the real id, starts the queued v2 update; hold v2's own response.
+    resolveCreate({ ...otherTask, id: 'new-task-real-id', title: 'v1', parent_task_id: null });
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
+    expect(services.repositories.tasks.update).toHaveBeenCalledWith(
+      'new-task-real-id',
+      expect.objectContaining({ title: 'v2' }),
+    );
+
+    // 4. Cancel the navigation guard; the outliner now displays the real-id row.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    const outlinerRow = screen.getByRole('button', { name: /^v1/ }).closest('li')!;
+
+    // 5. Archive that row. It must NOT dispatch immediately under the real id — v2 (sharing the
+    // same canonical queue via the coordinator's alias) is still in flight.
+    fireEvent.click(within(outlinerRow).getByRole('button', { name: 'Archive' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(archiveCalled).toBe(false);
+
+    // Settling v2 lets the archive dispatch next, against the real id it produced.
+    resolveV2({ ...otherTask, id: 'new-task-real-id', title: 'v2', parent_task_id: null });
+    await waitFor(() => expect(archiveCalled).toBe(true));
+    expect(services.repositories.tasks.archive).toHaveBeenCalledWith('new-task-real-id');
+    await waitFor(() => {
+      const row = screen.getByRole('button', { name: /^v2/ }).closest('li')!;
+      expect(within(row).getByText('Archived')).toBeInTheDocument();
+    });
+  });
+
+  it('F1 exact repro (move): the same sequence, but the outliner action is a status Move instead of Archive — it also queues behind the still-in-flight draft-keyed v2 update rather than opening a second, independent queue', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const otherTask = task({ id: 'other-task', project_id: 'project-a', title: 'Other task' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [otherTask] } });
+    let resolveCreate!: (task: Task) => void;
+    (services.repositories.tasks.create as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise<Task>((resolve) => { resolveCreate = resolve; }),
+    );
+    const updateResolvers: Array<(task: Task) => void> = [];
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise<Task>((resolve) => { updateResolvers.push(resolve); }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New task' }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    await waitFor(() => expect(services.repositories.tasks.create).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Other task/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(services.repositories.tasks.update).not.toHaveBeenCalled();
+
+    resolveCreate({ ...otherTask, id: 'new-task-real-id', title: 'v1', parent_task_id: null });
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Move v1'), { target: { value: 'done' } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Still exactly ONE update call — the queued v2 save. The move must not have opened an
+    // independent second queue under the real id and dispatched immediately.
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1);
+
+    updateResolvers[0]({ ...otherTask, id: 'new-task-real-id', title: 'v2', parent_task_id: null });
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
+    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(2, 'new-task-real-id', { status: 'done' });
+
+    updateResolvers[1]({ ...otherTask, id: 'new-task-real-id', title: 'v2', status: 'done', parent_task_id: null });
+    await waitFor(() => {
+      const row = screen.getByRole('button', { name: /^v2/ }).closest('li')!;
+      expect(row.textContent).toContain('Done');
+    });
+  });
+
+  it('F1 (pending create, synthetic-row Archive, successful create): archiving a brand-new task before its create ever settles defers behind the create and targets the REAL id the create produces — never the synthetic draft id', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [] } });
+    let resolveCreate!: (task: Task) => void;
+    (services.repositories.tasks.create as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise<Task>((resolve) => { resolveCreate = resolve; }),
+    );
+    let archiveCalled = false;
+    (services.repositories.tasks.archive as ReturnType<typeof vi.fn>).mockImplementation((id: string) => {
+      archiveCalled = true;
+      return Promise.resolve([{ owner_id: ownerId, id, project_id: 'project-a', title: 'v1', description: '', status: 'backlog' as const, priority: 0, parent_task_id: null, due_at: null, archived_at: '2026-09-07T00:00:00.000Z', created_at: '2026-08-13T08:00:00.000Z', updated_at: '2026-08-13T08:00:00.000Z' }]);
+    });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show archived' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New task' }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    await waitFor(() => expect(services.repositories.tasks.create).toHaveBeenCalledTimes(1));
+
+    // Archive the still-synthetic row immediately — before the create has ever settled.
+    const outlinerRow = screen.getByRole('button', { name: /^v1/ }).closest('li')!;
+    fireEvent.click(within(outlinerRow).getByRole('button', { name: 'Archive' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(archiveCalled).toBe(false);
+    expect(services.repositories.tasks.archive).not.toHaveBeenCalledWith(expect.stringMatching(/^draft-task-/));
+
+    resolveCreate({ owner_id: ownerId, id: 'new-task-real-id', project_id: 'project-a', title: 'v1', description: '', status: 'backlog', priority: 0, parent_task_id: null, due_at: null, archived_at: null, created_at: '2026-08-13T08:00:00.000Z', updated_at: '2026-08-13T08:00:00.000Z' });
+    await waitFor(() => expect(archiveCalled).toBe(true));
+    expect(services.repositories.tasks.archive).toHaveBeenCalledWith('new-task-real-id');
+    expect(services.repositories.tasks.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('F1 (pending create, synthetic-row Archive, FAILED create): with no durable id ever assigned, the queued archive fails truthfully once the create rejects — it never sends the synthetic draft id to the repository, and never triggers a second create', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [] } });
+    let rejectCreate!: (error: Error) => void;
+    (services.repositories.tasks.create as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise<Task>((_resolve, reject) => { rejectCreate = reject; }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show archived' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New task' }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    await waitFor(() => expect(services.repositories.tasks.create).toHaveBeenCalledTimes(1));
+
+    const outlinerRow = screen.getByRole('button', { name: /^v1/ }).closest('li')!;
+    fireEvent.click(within(outlinerRow).getByRole('button', { name: 'Archive' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(services.repositories.tasks.archive).not.toHaveBeenCalled();
+
+    rejectCreate(new Error('create blew up'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // The queued archive now dispatches — but no durable id was ever assigned, so it must fail
+    // truthfully instead of sending the synthetic `draft-task-…` id to the repository, and it must
+    // never itself retry the create (no duplicate, no second `create` call).
+    expect(services.repositories.tasks.archive).not.toHaveBeenCalled();
+    expect(services.repositories.tasks.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("F2 (move): the editor's own explicit Cancel drops only its own unsent form draft — an independently queued outliner Move for the SAME task survives, and dispatches once the in-flight save ahead of it settles", async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task Alpha', status: 'backlog' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [taskA] } });
+    const resolvers: Array<(task: Task) => void> = [];
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise<Task>((resolve) => { resolvers.push(resolve); }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Task Alpha/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
+
+    // An independent outliner status Move on the SAME task, requested while the form's own Save is
+    // still held — it queues (owner 'outliner') behind the in-flight save (owner 'editor').
+    fireEvent.change(screen.getByLabelText('Move v1'), { target: { value: 'done' } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1);
+
+    // The editor's own explicit Cancel (HAM3-008 Correction 9): must drop only its OWN unsent
+    // work, never the independently queued move.
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    resolvers[0]({ ...taskA, title: 'v1' });
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
+    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(2, 'task-a', { status: 'done' });
+
+    resolvers[1]({ ...taskA, title: 'v1', status: 'done' });
+    await waitFor(() => {
+      const row = screen.getByRole('button', { name: /^v1/ }).closest('li')!;
+      expect(row.textContent).toContain('Done');
+    });
+  });
+
+  it("F2 (archive): the editor's own explicit Cancel drops only its own unsent form draft — an independently queued outliner Archive for the SAME task survives, and dispatches once the in-flight save ahead of it settles", async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task Alpha' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [taskA] } });
+    let resolveSave!: (task: Task) => void;
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise<Task>((resolve) => { resolveSave = resolve; }),
+    );
+    let archiveCalled = false;
+    (services.repositories.tasks.archive as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      archiveCalled = true;
+      return Promise.resolve([{ ...taskA, title: 'v1', archived_at: '2026-09-07T00:00:00.000Z' }]);
+    });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show archived' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Task Alpha/ }));
+    const outlinerRow = screen.getByRole('button', { name: /^Task Alpha/ }).closest('li')!;
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save task' }));
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
+
+    // An independent outliner Archive on the SAME task, requested while the form's own Save is
+    // still held — it queues (owner 'outliner') behind the in-flight save (owner 'editor').
+    fireEvent.click(within(outlinerRow).getByRole('button', { name: 'Archive' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(archiveCalled).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    resolveSave({ ...taskA, title: 'v1' });
+    await waitFor(() => expect(archiveCalled).toBe(true));
+    await waitFor(() => expect(within(outlinerRow).getByText('Archived')).toBeInTheDocument());
+  });
+
+  it('F2 combined with a create-to-real transition: Discard drops the queued SECOND editor draft (v2) but the independently queued outliner Archive requested on the same still-synthetic row survives, and eventually dispatches against the REAL id once the create settles — the discarded v2 snapshot never reaches the repository', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const otherTask = task({ id: 'other-task', project_id: 'project-a', title: 'Other task' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [otherTask] } });
+    let resolveCreate!: (task: Task) => void;
+    (services.repositories.tasks.create as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise<Task>((resolve) => { resolveCreate = resolve; }),
+    );
+    (services.repositories.tasks.archive as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
+      Promise.resolve([{ ...otherTask, id, title: 'v1', archived_at: '2026-09-07T00:00:00.000Z' }]),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show archived' }));
+
+    // New task; Create stays in flight.
+    fireEvent.click(await screen.findByRole('button', { name: 'New task' }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    await waitFor(() => expect(services.repositories.tasks.create).toHaveBeenCalledTimes(1));
+
+    // A second explicit save (v2), requested via the guard while the create is still held, queues
+    // (owner 'editor') behind it under the SAME draft key.
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Other task/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(services.repositories.tasks.update).not.toHaveBeenCalled();
+
+    // Dismiss the guard without deciding ("stay here") — the editor and its queued v2 draft are
+    // untouched by this; the navigation-decision Cancel is distinct from an explicit draft discard.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    // An independent outliner Archive on this SAME (still-synthetic) row queues a THIRD entry
+    // (owner 'outliner') behind v2 — the very same logical task's one canonical queue.
+    const outlinerRow = screen.getByRole('button', { name: /^v2/ }).closest('li')!;
+    fireEvent.click(within(outlinerRow).getByRole('button', { name: 'Archive' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(services.repositories.tasks.archive).not.toHaveBeenCalled();
+
+    // The editor's own explicit Cancel/Discard must drop only ITS unsent v2 draft — never the
+    // independently queued archive behind it (HAM3-008 Correction 9, Finding 2).
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    // The create itself finally settles, establishing the real id and letting the queue drain.
+    resolveCreate({ ...otherTask, id: 'new-task-real-id', title: 'v1', parent_task_id: null });
+
+    // v2 was cancelled while still queued: it never reaches the repository.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(services.repositories.tasks.update).not.toHaveBeenCalled();
+
+    // The independently queued archive survives, dispatches against the REAL id the create
+    // produced (never the synthetic draft id), and its result is what ends up rendered.
+    await waitFor(() => expect(services.repositories.tasks.archive).toHaveBeenCalledTimes(1));
+    expect(services.repositories.tasks.archive).toHaveBeenCalledWith('new-task-real-id');
+    await waitFor(() => {
+      const row = screen.getByRole('button', { name: /^v1/ }).closest('li')!;
+      expect(within(row).getByText('Archived')).toBeInTheDocument();
+    });
+  });
+});

@@ -342,3 +342,178 @@ describe('TaskSaveCoordinator — per-task FIFO serialization', () => {
     expect(coordinator.getConfirmed('task-2')?.title).toBe('from list load');
   });
 });
+
+describe('TaskSaveCoordinator — HAM3-008 Correction 9: canonical queue identity across draft/real aliases (Finding 1)', () => {
+  it('a submission naming the REAL id, made after a create resolved under the ORIGINAL draft key, lands in the SAME queue — it does not dispatch until an already-queued draft-keyed entry settles first', async () => {
+    const store = backend();
+    const coordinator = new TaskSaveCoordinator<Row>();
+    const heldCreate = deferred<Row>();
+    const heldUpdate = deferred<Row>();
+    let archiveRan = false;
+
+    // v1: the create itself, dispatched immediately under the draft key, held.
+    const p1 = coordinator.submit('draft-task-1', () => heldCreate.promise, null, 'editor');
+    // v2: a second explicit save, still under the SAME draft key (the UI reuses it until a real id
+    // is known) — queues behind v1.
+    const p2 = coordinator.submit(
+      'draft-task-1',
+      ({ durableId }) => {
+        expect(durableId).toBe('real-1');
+        return heldUpdate.promise;
+      },
+      null,
+      'editor',
+    );
+
+    heldCreate.resolve(store.create({ title: 'v1', status: 'backlog' }));
+    await p1;
+    expect(coordinator.getDurableId('draft-task-1')).toBe('real-1');
+
+    // An outliner action submitted under the REAL id — exactly what `archiveTask` does once the
+    // outliner row has been rewritten to the real id — must resolve to the SAME physical queue as
+    // the still-queued v2, not open an independent one that dispatches immediately.
+    const p3 = coordinator.submit(
+      'real-1',
+      () => {
+        archiveRan = true;
+        return Promise.resolve<Row>({ id: 'real-1', title: 'v2', status: 'archived' });
+      },
+      null,
+      'outliner',
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
+    // v2 is dispatched (it was already queued when the create settled); the real-id submission is
+    // NOT — it must wait behind v2, proving both aliases share the one canonical queue.
+    expect(archiveRan).toBe(false);
+    expect(coordinator.hasPending('draft-task-1')).toBe(true);
+    expect(coordinator.hasPending('real-1')).toBe(true);
+
+    heldUpdate.resolve(store.update('real-1', { title: 'v2' }));
+    await p2;
+    await p3;
+    expect(archiveRan).toBe(true);
+    expect(coordinator.hasPending('draft-task-1')).toBe(false);
+    expect(coordinator.hasPending('real-1')).toBe(false);
+  });
+
+  it('cancelQueued reaches an entry queued under the DRAFT key when called with the REAL id (and vice versa) — scoped cancellation works through either alias', async () => {
+    const store = backend();
+    const coordinator = new TaskSaveCoordinator<Row>();
+    const heldCreate = deferred<Row>();
+    const heldHead = deferred<Row>();
+    const p1 = coordinator.submit('draft-task-1', () => heldCreate.promise, null, 'editor');
+    heldCreate.resolve(store.create({ title: 'v1', status: 'backlog' }));
+    await p1;
+    expect(coordinator.getDurableId('real-1')).toBe('real-1');
+
+    // A new head, in flight, so the next submission genuinely queues rather than dispatching.
+    const pHead = coordinator.submit('draft-task-1', () => heldHead.promise, null, 'editor');
+    let queuedRan = false;
+    const pQueued = coordinator.submit(
+      'draft-task-1',
+      () => {
+        queuedRan = true;
+        return Promise.resolve<Row>({ id: 'real-1', title: 'never sent', status: 'backlog' });
+      },
+      null,
+      'outliner',
+    );
+
+    // Cancel by the REAL id — an entry physically queued under the ORIGINAL draft key must still
+    // be reachable and dropped (HAM3-008 Correction 9: scoped cancellation through both aliases).
+    coordinator.cancelQueued('real-1', 'outliner');
+    expect(await pQueued).toEqual({ status: 'cancelled' });
+    expect(queuedRan).toBe(false);
+
+    heldHead.resolve(store.update('real-1', { title: 'v-head' }));
+    await pHead;
+    expect(coordinator.hasPending('draft-task-1')).toBe(false);
+  });
+});
+
+describe('TaskSaveCoordinator — HAM3-008 Correction 9: owner-scoped cancellation (Finding 2)', () => {
+  it("cancelQueued(key, 'editor') drops only 'editor'-owned queued entries, leaving an independently queued 'outliner' entry to dispatch normally in its turn", async () => {
+    const coordinator = new TaskSaveCoordinator<Row>();
+    const held = deferred<Row>();
+    let outlinerRan = false;
+    const pHead = coordinator.submit('task-1', () => held.promise, null, 'editor');
+    const pEditorQueued = coordinator.submit(
+      'task-1',
+      () => Promise.resolve<Row>({ id: 'task-1', title: 'never sent', status: 'backlog' }),
+      null,
+      'editor',
+    );
+    const pOutlinerQueued = coordinator.submit(
+      'task-1',
+      () => {
+        outlinerRan = true;
+        return Promise.resolve<Row>({ id: 'task-1', title: 'archived', status: 'done' });
+      },
+      null,
+      'outliner',
+    );
+
+    coordinator.cancelQueued('task-1', 'editor');
+    expect(await pEditorQueued).toEqual({ status: 'cancelled' });
+    expect(outlinerRan).toBe(false);
+
+    // The in-flight head (owner 'editor') is left alone regardless of the filter — Invariant 5.
+    held.resolve({ id: 'task-1', title: 'already sent', status: 'backlog' });
+    await pHead;
+
+    // The surviving 'outliner' entry dispatches in its own turn once the head settles.
+    expect(await pOutlinerQueued).toEqual({
+      status: 'success',
+      result: { id: 'task-1', title: 'archived', status: 'done' },
+    });
+    expect(outlinerRan).toBe(true);
+    expect(coordinator.getConfirmed('task-1')?.title).toBe('archived');
+  });
+
+  it('an unscoped cancelQueued(key) (no owner argument) keeps dropping every queued entry regardless of owner — the previous, owner-change behavior', async () => {
+    const coordinator = new TaskSaveCoordinator<Row>();
+    const held = deferred<Row>();
+    coordinator.submit('task-1', () => held.promise, null, 'editor');
+    const pEditorQueued = coordinator.submit('task-1', () => Promise.resolve<Row>({ id: 'task-1', title: 'e', status: 'backlog' }), null, 'editor');
+    const pOutlinerQueued = coordinator.submit('task-1', () => Promise.resolve<Row>({ id: 'task-1', title: 'o', status: 'backlog' }), null, 'outliner');
+
+    coordinator.cancelQueued('task-1');
+    expect(await pEditorQueued).toEqual({ status: 'cancelled' });
+    expect(await pOutlinerQueued).toEqual({ status: 'cancelled' });
+  });
+
+  it('cancelAllQueued drops every queued entry of every owner across every key — an owner change abandons ALL old-owner work, not just form drafts', async () => {
+    const coordinator = new TaskSaveCoordinator<Row>();
+    const heldA = deferred<Row>();
+    coordinator.submit('task-a', () => heldA.promise, null, 'editor');
+    const pEditor = coordinator.submit('task-a', () => Promise.resolve<Row>({ id: 'task-a', title: 'e', status: 'backlog' }), null, 'editor');
+    const pOutliner = coordinator.submit('task-a', () => Promise.resolve<Row>({ id: 'task-a', title: 'o', status: 'backlog' }), null, 'outliner');
+
+    coordinator.cancelAllQueued();
+    expect(await pEditor).toEqual({ status: 'cancelled' });
+    expect(await pOutliner).toEqual({ status: 'cancelled' });
+  });
+
+  it('preserves the pre-Correction-9 default: submit/cancelQueued used exactly as before (no owner argument) still cancels every queued entry, in-flight head untouched', async () => {
+    const coordinator = new TaskSaveCoordinator<Row>();
+    const held = deferred<Row>();
+    let queuedRan = false;
+    const p1 = coordinator.submit('task-1', () => held.promise);
+    const p2 = coordinator.submit('task-1', () => {
+      queuedRan = true;
+      return Promise.resolve<Row>({ id: 'task-1', title: 'never sent', status: 'backlog' });
+    });
+
+    coordinator.cancelQueued('task-1');
+    expect(await p2).toEqual({ status: 'cancelled' });
+    expect(queuedRan).toBe(false);
+
+    held.resolve({ id: 'task-1', title: 'already sent', status: 'backlog' });
+    expect(await p1).toEqual({
+      status: 'success',
+      result: { id: 'task-1', title: 'already sent', status: 'backlog' },
+    });
+  });
+});
