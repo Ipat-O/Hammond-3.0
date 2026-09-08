@@ -22,10 +22,11 @@ import type { TrackerServices } from './contracts';
 import type { TaskStatus } from '../data';
 import { TaskSaveCoordinator } from './taskSaveCoordinator';
 import { createTauriWindowLifecycle, type WindowLifecycle } from './windowLifecycle';
+import { WorkOrdersPanel } from '../workOrders/WorkOrdersPanel';
 
 const defaultWindowLifecycle = createTauriWindowLifecycle();
 
-type PrimaryView = 'home' | 'workspace' | 'instructions';
+type PrimaryView = 'home' | 'workspace' | 'instructions' | 'workOrders';
 
 type Project = Database['public']['Tables']['projects']['Row'];
 type ProjectInsert = Database['public']['Tables']['projects']['Insert'];
@@ -2538,6 +2539,13 @@ export function TrackerPage({
           >
             <span className="nav-icon" aria-hidden="true">▤</span>Instructions
           </button>
+          <button
+            type="button"
+            className={`nav-item ${primaryView === 'workOrders' ? 'nav-item-active' : ''}`}
+            onClick={() => guardedNav(() => navigateToScreen('workOrders'))}
+          >
+            <span className="nav-icon" aria-hidden="true">⇪</span>Work orders
+          </button>
           <span className="nav-item nav-item-muted"><span className="nav-icon" aria-hidden="true">⚙</span>Settings</span>
         </nav>
         <button
@@ -2794,6 +2802,32 @@ export function TrackerPage({
           />
         ) : (
           <p className="sidebar-empty">Select a project to manage its instructions.</p>
+        )}
+        </>
+      )}
+
+      {primaryView === 'workOrders' && (
+        <>
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">Work orders</p>
+            <h1>Prepare, copy, and record dispatch packets.</h1>
+          </div>
+        </header>
+        {selectedProject && selectedTask ? (
+          <WorkOrdersPanel
+            service={services.workOrders}
+            ownerId={ownerId}
+            ownerEmail={ownerEmail}
+            projectId={selectedProject.id}
+            taskId={selectedTask.id}
+            taskTitle={selectedTask.title}
+            directoryRoot={activeDirectoryRoot}
+          />
+        ) : selectedProject ? (
+          <p className="sidebar-empty">Select a task to prepare a work order.</p>
+        ) : (
+          <p className="sidebar-empty">Select a project and task to prepare a work order.</p>
         )}
         </>
       )}

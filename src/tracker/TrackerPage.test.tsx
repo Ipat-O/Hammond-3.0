@@ -16,6 +16,10 @@ import { createFakeDirectoryContextServices, createFakeFilesystem, createFakeLoc
 import type { TrackerRepositories, TrackerServices } from './contracts';
 import { TrackerPage } from './TrackerPage';
 import { createFakeWindowLifecycle } from './windowLifecycle';
+import { WorkOrderInjectionService } from '../workOrders/injection';
+import { WorkOrderLocalStore } from '../workOrders/localStore';
+import { WorkOrdersService } from '../workOrders/service';
+import { createFakeWorkOrderFilesystem } from '../workOrders/testFakes';
 
 type Project = Database['public']['Tables']['projects']['Row'];
 type Task = Database['public']['Tables']['tasks']['Row'];
@@ -125,6 +129,12 @@ function makeServices(projects: Project[] = [project()], options: MakeServicesOp
       instructions,
       adapters: createFakeHarnessAdapters(harnessFs, '/fake/root'),
       filesystem: { readTextFile: vi.fn().mockRejectedValue(new Error('unused in these tests')) },
+    }),
+    workOrders: new WorkOrdersService({
+      localStore: new WorkOrderLocalStore(createFakeLocalSettings()),
+      injection: new WorkOrderInjectionService({ filesystem: createFakeWorkOrderFilesystem() }),
+      assignments,
+      instructions,
     }),
   };
   return { services, instructions, assignments };
@@ -4329,5 +4339,73 @@ describe('Correction 10 — synthetic-row Move display reconciles by real id; Re
     expect(screen.getByRole('alert').textContent).toContain('bravo blew up');
     expect(screen.getByRole('button', { name: /^Task Bravo/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Task Alpha/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('TrackerPage Work orders integration', () => {
+  it('shows an empty-state prompt until a task is selected, then records a real immutable dispatch through the wired WorkOrdersService', async () => {
+    const existingTask = task({ id: 'task-1', project_id: project().id, title: 'Ship the feature' });
+    const { services } = makeServices([project()], { tasksByProject: { [project().id]: [existingTask] } });
+
+    render(<TrackerPage services={services} ownerId={ownerId} ownerEmail="owner@example.test" onSignOut={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Work orders' }));
+    expect(screen.getByText('Select a task to prepare a work order.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Ship the feature/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Work orders' }));
+
+    await screen.findByRole('region', { name: 'Work orders for Ship the feature' });
+    expect(screen.getByLabelText('Human owner')).toHaveValue('owner@example.test');
+
+    fireEvent.change(screen.getByLabelText('Repository path'), { target: { value: '/scratch/project' } });
+    fireEvent.change(screen.getByLabelText('Work branch'), { target: { value: 'claude/task-1' } });
+    fireEvent.change(screen.getByLabelText('Start SHA (exact, full)'), { target: { value: 'a'.repeat(40) } });
+    fireEvent.change(screen.getByLabelText('Scope'), { target: { value: 'Scope.' } });
+    fireEvent.change(screen.getByLabelText('Non-scope'), { target: { value: 'Non-scope.' } });
+    fireEvent.change(screen.getByLabelText('Acceptance criteria'), { target: { value: 'Acceptance.' } });
+    fireEvent.change(screen.getByLabelText('Verification'), { target: { value: 'Verification.' } });
+    fireEvent.change(screen.getByLabelText('Required return evidence'), { target: { value: 'Evidence.' } });
+    fireEvent.change(screen.getByLabelText('Stop rules'), { target: { value: 'Stop rules.' } });
+    for (const legend of ['Active orchestrator', 'Assigned worker', 'Assigned auditor (after delivery)']) {
+      const group = screen.getByRole('group', { name: legend });
+      fireEvent.change(within(group).getByLabelText('Model'), { target: { value: 'some-model' } });
+    }
+    const auditorGroup = screen.getByRole('group', { name: 'Assigned auditor (after delivery)' });
+    fireEvent.change(within(auditorGroup).getByLabelText('Provider'), { target: { value: 'DeepSeek' } });
+    for (const input of screen.getAllByPlaceholderText('Reason it is not available')) {
+      fireEvent.change(input, { target: { value: 'not tracked by Hammond' } });
+    }
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Record dispatch' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Record dispatch' }));
+    await waitFor(() => expect(screen.getByText('History (1)')).toBeInTheDocument());
+
+    // Prove the dispatch actually went through the real, App-wired WorkOrdersService/local store —
+    // not a test-local mock — by reading it back directly off the service.
+    const [recorded] = await services.workOrders.listHistory(ownerId, 'task-1');
+    expect(recorded.content).toContain('Scope.');
+    expect(recorded.projectId).toBe(project().id);
+  });
+
+  it('an in-progress draft survives navigating away to Workspace and back', async () => {
+    const existingTask = task({ id: 'task-1', project_id: project().id, title: 'Ship the feature' });
+    const { services } = makeServices([project()], { tasksByProject: { [project().id]: [existingTask] } });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Ship the feature/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Work orders' }));
+    await screen.findByRole('region', { name: 'Work orders for Ship the feature' });
+
+    fireEvent.change(screen.getByLabelText('Scope'), { target: { value: 'Draft in progress.' } });
+    await waitFor(() =>
+      expect(services.workOrders.readDraft({ ownerId, projectId: project().id, taskId: 'task-1', stage: 'worker' })).resolves.not.toBeNull(),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Work orders' }));
+    await waitFor(() => expect(screen.getByLabelText('Scope')).toHaveValue('Draft in progress.'));
   });
 });

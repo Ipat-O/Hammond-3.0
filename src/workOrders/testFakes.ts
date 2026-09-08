@@ -1,0 +1,86 @@
+import { vi } from 'vitest';
+
+import type { FilesystemCommands, LocalSettingsStore } from '../api/contracts';
+import { AssignmentsService } from '../assignments/service';
+import { createFakeAssignmentRepository, seedProjectDefaults } from '../assignments/testFakes';
+import { InstructionsService } from '../instructions/service';
+import { createFakeInstructionRepository } from '../instructions/testFakes';
+import { createFakeLocalSettings } from '../settings/testFakes';
+import { WorkOrderInjectionService } from './injection';
+import { WorkOrderLocalStore } from './localStore';
+import { WorkOrdersService } from './service';
+
+function fileKey(root: string, relativePath: string): string {
+  return `${root} ${relativePath}`;
+}
+
+/** In-memory `FilesystemCommands` fake that actually tracks per-(root, relativePath) file
+ * content — unlike `settings/testFakes.ts`'s `createFakeFilesystem`, which only tracks whether a
+ * *root* is known (built for directory-reachability checks, not file-level read/write). Work
+ * order injection needs real file-content semantics to exercise classify/inject/remove. */
+export function createFakeWorkOrderFilesystem(): FilesystemCommands & {
+  files: Map<string, string>;
+} {
+  const files = new Map<string, string>();
+  return {
+    files,
+    selectDirectory: vi.fn().mockResolvedValue(null),
+    readTextFile: vi.fn(async (root: string, relativePath: string) => {
+      const value = files.get(fileKey(root, relativePath));
+      if (value === undefined)
+        throw new Error(`ENOENT: no such file ${relativePath} under ${root}`);
+      return value;
+    }),
+    writeTextFile: vi.fn(async (root: string, relativePath: string, contents: string) => {
+      files.set(fileKey(root, relativePath), contents);
+    }),
+    removePath: vi.fn(async (root: string, relativePath: string) => {
+      files.delete(fileKey(root, relativePath));
+    }),
+    pathExists: vi.fn(async (root: string, relativePath: string) =>
+      files.has(fileKey(root, relativePath)),
+    ),
+    revealDirectory: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+/** Wires a full `WorkOrdersService` over real service classes and in-memory fakes for every
+ * downstream port (local settings, filesystem, assignments, instructions) — the same "real
+ * service wiring, fake persistence boundary" level `App.test.tsx` uses for other domains. */
+export interface WorkOrdersTestHarness {
+  ownerId: string;
+  localSettings: LocalSettingsStore;
+  filesystem: FilesystemCommands & { files: Map<string, string> };
+  assignments: AssignmentsService;
+  instructions: InstructionsService;
+  localStore: WorkOrderLocalStore;
+  injection: WorkOrderInjectionService;
+  service: WorkOrdersService;
+  /** Seeds the D-014 default role assignments for a project, mirroring the real project-create trigger. */
+  seedProject(projectId: string): void;
+}
+
+export function createWorkOrdersTestHarness(ownerId = 'owner-1'): WorkOrdersTestHarness {
+  const localSettings = createFakeLocalSettings();
+  const filesystem = createFakeWorkOrderFilesystem();
+  const assignmentRepo = createFakeAssignmentRepository(undefined, ownerId);
+  const assignments = new AssignmentsService(assignmentRepo);
+  const instructions = new InstructionsService(createFakeInstructionRepository(undefined, ownerId));
+  const localStore = new WorkOrderLocalStore(localSettings);
+  const injection = new WorkOrderInjectionService({ filesystem });
+  const service = new WorkOrdersService({ localStore, injection, assignments, instructions });
+
+  return {
+    ownerId,
+    localSettings,
+    filesystem,
+    assignments,
+    instructions,
+    localStore,
+    injection,
+    service,
+    seedProject(projectId: string) {
+      seedProjectDefaults(assignmentRepo.store, projectId, ownerId);
+    },
+  };
+}

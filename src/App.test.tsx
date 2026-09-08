@@ -19,6 +19,10 @@ import {
 import type { DirectoryContextServices } from './settings/contracts';
 import type { TrackerRepositories, TrackerServices } from './tracker/contracts';
 import type { TaskStatus } from './data';
+import { WorkOrderInjectionService } from './workOrders/injection';
+import { WorkOrderLocalStore } from './workOrders/localStore';
+import { WorkOrdersService } from './workOrders/service';
+import { createFakeWorkOrderFilesystem } from './workOrders/testFakes';
 
 type Project = Database['public']['Tables']['projects']['Row'];
 type Task = Database['public']['Tables']['tasks']['Row'];
@@ -95,6 +99,12 @@ function makeServices(projects: Project[] = [], tasks: Task[] = []): TrackerServ
       instructions,
       adapters: createFakeHarnessAdapters(harnessFs, '/fake/root'),
       filesystem: { readTextFile: vi.fn().mockRejectedValue(new Error('unused in these tests')) },
+    }),
+    workOrders: new WorkOrdersService({
+      localStore: new WorkOrderLocalStore(createFakeLocalSettings()),
+      injection: new WorkOrderInjectionService({ filesystem: createFakeWorkOrderFilesystem() }),
+      assignments,
+      instructions,
     }),
   };
 }

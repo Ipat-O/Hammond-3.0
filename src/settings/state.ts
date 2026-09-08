@@ -16,7 +16,7 @@ export interface DirectoryContextRecord {
 }
 
 /** The primary screen the owner was last looking at. `home` is the default landing screen. */
-export type ResumeScreen = 'home' | 'workspace' | 'instructions';
+export type ResumeScreen = 'home' | 'workspace' | 'instructions' | 'workOrders';
 
 /** The persisted v1 shape (HAM3-004): directory bindings plus a single `workspace` resume marker. */
 export interface LocalSettingsStateV1 {
@@ -66,7 +66,9 @@ function isDirectoryContextRecord(value: unknown): value is DirectoryContextReco
 }
 
 function isResumeScreen(value: unknown): value is ResumeScreen {
-  return value === 'home' || value === 'workspace' || value === 'instructions';
+  return (
+    value === 'home' || value === 'workspace' || value === 'instructions' || value === 'workOrders'
+  );
 }
 
 function readDirectoryContexts(value: Record<string, unknown>): DirectoryContextRecord[] {

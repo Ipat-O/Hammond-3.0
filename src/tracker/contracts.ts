@@ -9,6 +9,7 @@ import type { AssignmentsService } from '../assignments/service';
 import type { HarnessInjectionService } from '../harness/service';
 import type { InstructionsService } from '../instructions/service';
 import type { DirectoryContextServices } from '../settings/contracts';
+import type { WorkOrdersService } from '../workOrders/service';
 
 export type TrackerSession = Pick<Session, 'user'>;
 
@@ -36,4 +37,5 @@ export interface TrackerServices {
   instructions: InstructionsService;
   assignments: AssignmentsService;
   harness: HarnessInjectionService;
+  workOrders: WorkOrdersService;
 }

@@ -98,6 +98,18 @@ describe('migrateLocalSettingsState', () => {
     expect(migrated.lastOpenContextId).toBeNull();
   });
 
+  it('accepts workOrders as a valid resume screen', () => {
+    const migrated = migrateLocalSettingsState({
+      version: LOCAL_SETTINGS_VERSION,
+      directoryContexts: [],
+      lastOpenContextId: null,
+      selectedProjectId: null,
+      selectedTaskId: null,
+      resumeScreen: 'workOrders',
+    });
+    expect(migrated.resumeScreen).toBe('workOrders');
+  });
+
   it('ignores an unrecognized resume screen value', () => {
     const migrated = migrateLocalSettingsState({
       version: LOCAL_SETTINGS_VERSION,

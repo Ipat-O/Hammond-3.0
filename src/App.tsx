@@ -16,6 +16,9 @@ import { HarnessInjectionService } from './harness/service';
 import { InstructionsService } from './instructions/service';
 import { TrackerPage } from './tracker/TrackerPage';
 import type { TrackerServices } from './tracker/contracts';
+import { WorkOrderInjectionService } from './workOrders/injection';
+import { WorkOrderLocalStore } from './workOrders/localStore';
+import { WorkOrdersService } from './workOrders/service';
 
 function createDefaultServices(): TrackerServices {
   const assignments = new AssignmentsService(new SupabaseAssignmentRepository());
@@ -38,6 +41,12 @@ function createDefaultServices(): TrackerServices {
       instructions,
       adapters: createNativeHarnessAdapters(nativeHarness),
       filesystem: nativeFilesystem,
+    }),
+    workOrders: new WorkOrdersService({
+      localStore: new WorkOrderLocalStore(nativeLocalSettings),
+      injection: new WorkOrderInjectionService({ filesystem: nativeFilesystem }),
+      assignments,
+      instructions,
     }),
   };
 }
