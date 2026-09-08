@@ -877,3 +877,9 @@
 - Verified live open/draft PR #11 at 8fb2a994d01a3dc9b075d7555334d60ca183afec, direct parent 1444ab7079e8e33fd0c4e69dff2c9214b75c56de, same branch. Public correction report verified: https://github.com/Ipat-O/Hammond-3.0/pull/11#issuecomment-5586820074. Eight workOrders files changed; full diff whitespace clean.
 - Worker reports durable scoped pending metadata, original-before-edit repair and cleanup replay replacing pending refs; 123/136/521 tests, static/build/touched format and restored mutations. Legacy unknown-orphan limitation and original-worker timestamp tie disclosed; neither independently assessed yet. No new native/schema/runtime evidence or orchestrator feature tests.
 - HAM3-009 moved to in_review. Device-local tracker/work-orders/HAM3-009-AUDIT-3.md routes DeepSeek to complete lifecycle including mounted report/restart recovery, regenerated fields, all persistence boundaries and timestamp ties, with prior deferrals retained. No independent verdict, ready or merge action.
+
+## 2026-09-08 — HAM3-009 round-3 CHANGES; narrowly scoped Correction 3
+
+- Verified published audit https://github.com/Ipat-O/Hammond-3.0/pull/11#issuecomment-5587601945 and unchanged live draft head 8fb2a994d01a3dc9b075d7555334d60ca183afec. Replay/edit recovery closed; report UI restoration retained. Original-worker tie non-material; legacy limitation accepted; 521 full and restored mutations attributed audit evidence.
+- Owner requested ONLY the minimal pending-report form restoration after declining cloud and forced-modal alternatives. Prepared tracker/work-orders/HAM3-009-CORRECTION-3.md for Sonnet: load exact pending fields, visible Retry via existing durable service, mounted navigation/restart proof and late-result guards. No storage redesign/general draft-guard expansion.
+- HAM3-009 returns to in_development; DeepSeek re-audits. No feature edits/tests, deployment, ready or merge by orchestrator.
