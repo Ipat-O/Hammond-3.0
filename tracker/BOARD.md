@@ -12,11 +12,12 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## ready_for_development
 
-- [HAM3-009](./tasks/HAM3-009.md) — Work-order generation and dispatch records
+None.
 
 ## in_development
 
-None.
+- [HAM3-009](./tasks/HAM3-009.md) — Work-order generation and dispatch records
+  Sonnet work order prepared at `b391b81`; DeepSeek assigned independent auditor.
 
 ## in_review
 

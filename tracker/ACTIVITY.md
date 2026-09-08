@@ -841,3 +841,9 @@
 - Owner explicitly accepted previous Windows smoke PASS at 727c2e1 as sufficient and waived final-head native recheck, then authorized merge. Independent DeepSeek APPROVE remains pinned to 92e08721f78350f5026e36ab3c8164be59f3303b; no new-head Windows test is claimed.
 - Verified live PR #10 exact approved head, marked ready and merged with head-match protection. GitHub confirms merge commit 379c2cfefb894a5cb94aadc4a9a78e9bde2024ed at 2026-09-08T09:50:22Z. Owner dev fast-forwarded to merged state. F3/F4 remain recorded nonblocking follow-ups; no packaged shipped claim.
 - HAM3-008 moved to merged. Next sequential task HAM3-009 moved to ready_for_development with dependencies already merged; no worker dispatch yet. No redundant feature test run after exact-head independent verification.
+
+## 2026-09-08 — HAM3-009 Sonnet work order prepared
+
+- Owner requested proceeding to HAM3-009 after HAM3-008 merge. Verified clean synced dev at b391b811f6b07674466acb7c69ecd89ab015de05, merged dependencies and no matching issue. Bound Anthropic / Claude Code / claude-sonnet-5 worker and independent DeepSeek / Kilo Code / deepseek-v4-pro auditor; requested branch claude/ham3-009-work-orders.
+- Prepared complete device-local tracker/work-orders/HAM3-009-WO.md for owner transfer. Scope covers three packet stages, explicit identities and missing evidence, immutable dispatch/report history, and safe optional injection. Absolute-path-bearing exact text remains locally durable; cloud metadata must be path-free. No provider runtime or HAM3-010 approval automation.
+- HAM3-009 moved to in_development. Packet specifies meaningful integration/mutation tests, one justified full suite, conditional native/schema checks and later owner smoke. No feature code, hosted deployment or external worker message sent by orchestrator; work order ready for manual transfer.
