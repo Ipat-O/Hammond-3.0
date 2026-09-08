@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { WorkOrderDomainError } from './errors';
 import { createWorkOrderId } from './service';
-import { createWorkOrdersTestHarness, type WorkOrdersTestHarness } from './testFakes';
+import {
+  createControlledLocalSettings,
+  createWorkOrdersTestHarness,
+  type WorkOrdersTestHarness,
+} from './testFakes';
 import type { CorrectionPacketFields, WorkerPacketFields, WorkOrderFields } from './types';
 
 const PROJECT_ID = 'project-1';
@@ -28,6 +32,21 @@ function validWorkerPacket(
   fields.coordinates.pullRequestUrl = { kind: 'not_available', reason: 'not created yet' };
   void harness;
   return { stage: 'worker', fields };
+}
+
+async function buildRecordableWorkerPacket(
+  harness: WorkOrdersTestHarness,
+): Promise<Extract<WorkOrderFields, { stage: 'worker' }>> {
+  const fields = await harness.service.defaultWorkerFields({
+    projectId: PROJECT_ID,
+    taskId: TASK_ID,
+    humanOwner: 'Owner',
+  });
+  fields.activeOrchestrator = { provider: 'OpenAI', tool: 'Codex', model: 'gpt-5.6' };
+  fields.assignedWorker = { provider: 'Anthropic', tool: 'Claude Code', model: 'claude-sonnet-5' };
+  const packet = validWorkerPacket(harness, fields);
+  packet.fields.coordinates.repositoryPath = '/scratch';
+  return packet;
 }
 
 describe('WorkOrdersService prefill', () => {
@@ -437,5 +456,139 @@ describe('WorkOrdersService injection passthrough', () => {
     expect(outcome.kind).toBe('Written');
     const written = Array.from(harness.filesystem.files.values())[0];
     expect(written).toContain(dispatch.content);
+  });
+});
+
+describe('WorkOrdersService partial-write recovery (HAM3-009 Correction 1)', () => {
+  const OWNER_ID = 'owner-1';
+
+  it('recordDispatch: index write fails then an identical retry recovers — original-worker identity is discoverable and the correction identity gate still enforces it against the recovered history', async () => {
+    const settings = createControlledLocalSettings();
+    settings.failWritesMatching((key) => key === `hammond.workOrders.index.${OWNER_ID}`, {
+      count: 1,
+    });
+    const harness = createWorkOrdersTestHarness(OWNER_ID, { localSettings: settings });
+    harness.seedProject(PROJECT_ID);
+    const packet = await buildRecordableWorkerPacket(harness);
+    const id = createWorkOrderId();
+
+    await expect(
+      harness.service.recordDispatch({
+        id,
+        ownerId: harness.ownerId,
+        projectId: PROJECT_ID,
+        taskId: TASK_ID,
+        packet,
+      }),
+    ).rejects.toThrow(WorkOrderDomainError);
+    // Before recovery: the document is saved but genuinely undiscoverable — not a false success.
+    expect(await harness.service.listHistory(harness.ownerId, TASK_ID)).toEqual([]);
+    expect(await harness.service.getOriginalWorkerIdentity(harness.ownerId, TASK_ID)).toBeNull();
+
+    const recovered = await harness.service.recordDispatch({
+      id,
+      ownerId: harness.ownerId,
+      projectId: PROJECT_ID,
+      taskId: TASK_ID,
+      packet,
+    });
+    const history = await harness.service.listHistory(harness.ownerId, TASK_ID);
+    expect(history).toEqual([recovered]);
+
+    const originalWorker = await harness.service.getOriginalWorkerIdentity(
+      harness.ownerId,
+      TASK_ID,
+    );
+    expect(originalWorker).toEqual({
+      provider: 'Anthropic',
+      tool: 'Claude Code',
+      model: 'claude-sonnet-5',
+    });
+
+    // The correction identity gate must still block a mismatched recipient now that the recovered
+    // dispatch is on record — recovery must never bypass this gate.
+    const correctionFields = await harness.service.defaultCorrectionFields({
+      ownerId: harness.ownerId,
+      projectId: PROJECT_ID,
+      taskId: TASK_ID,
+      humanOwner: 'Owner',
+    });
+    expect(correctionFields.assignedWorker).toEqual(originalWorker);
+    correctionFields.assignedWorker = { provider: 'OpenAI', tool: 'Codex', model: 'gpt-5.6' };
+    correctionFields.assignedReauditor = {
+      provider: 'DeepSeek',
+      tool: 'Kilo Code',
+      model: 'deepseek-v4-pro',
+    };
+    correctionFields.previousHeadSha = FULL_SHA_B;
+    correctionFields.auditReportReference = {
+      kind: 'url',
+      url: 'https://github.com/org/repo/pull/1#issuecomment-1',
+      provenance: 'verified',
+    };
+    correctionFields.requiredCorrections = 'Fix it.';
+    correctionFields.expectedReturnEvidence = 'New head.';
+    correctionFields.coordinates.workBranch = 'claude/task-1';
+    correctionFields.coordinates.startSha = FULL_SHA_A;
+
+    await expect(
+      harness.service.recordDispatch({
+        id: createWorkOrderId(),
+        ownerId: harness.ownerId,
+        projectId: PROJECT_ID,
+        taskId: TASK_ID,
+        packet: { stage: 'correction', fields: correctionFields as CorrectionPacketFields },
+        expectedWorker: originalWorker,
+      }),
+    ).rejects.toThrow(WorkOrderDomainError);
+  });
+
+  it('attachReport: index write fails then an identical retry recovers — the report shows up exactly once under its dispatch with exact raw text/identity/provenance', async () => {
+    const settings = createControlledLocalSettings();
+    settings.failWritesMatching((key) => key === `hammond.workOrders.reportIndex.${OWNER_ID}`, {
+      count: 1,
+    });
+    const harness = createWorkOrdersTestHarness(OWNER_ID, { localSettings: settings });
+    harness.seedProject(PROJECT_ID);
+    const packet = await buildRecordableWorkerPacket(harness);
+    const dispatch = await harness.service.recordDispatch({
+      id: createWorkOrderId(),
+      ownerId: harness.ownerId,
+      projectId: PROJECT_ID,
+      taskId: TASK_ID,
+      packet,
+    });
+
+    const reportParams = {
+      id: createWorkOrderId(),
+      ownerId: harness.ownerId,
+      projectId: PROJECT_ID,
+      taskId: TASK_ID,
+      dispatchId: dispatch.id,
+      rawText: 'Worker report text',
+      url: 'https://github.com/org/repo/pull/1#issuecomment-1',
+      returnedIdentity: { provider: 'Anthropic', tool: 'Claude Code', model: 'claude-sonnet-5' },
+      headSha: FULL_SHA_A,
+      verificationNotes: 'All green.',
+      limitations: 'None disclosed.',
+      provenance: 'Pasted from PR comment',
+    };
+
+    await expect(harness.service.attachReport(reportParams)).rejects.toThrow(WorkOrderDomainError);
+    expect(await harness.service.getReportsForDispatch(harness.ownerId, dispatch.id)).toEqual([]);
+
+    const recovered = await harness.service.attachReport(reportParams);
+    const reports = await harness.service.getReportsForDispatch(harness.ownerId, dispatch.id);
+    expect(reports).toEqual([recovered]);
+    expect(reports[0].rawText).toBe('Worker report text');
+    expect(reports[0].provenance).toBe('Pasted from PR comment');
+    expect(reports[0].returnedIdentity).toEqual({
+      provider: 'Anthropic',
+      tool: 'Claude Code',
+      model: 'claude-sonnet-5',
+    });
+
+    const taskReports = await harness.service.getReportsForTask(harness.ownerId, TASK_ID);
+    expect(taskReports).toEqual([recovered]);
   });
 });

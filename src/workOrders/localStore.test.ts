@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createFakeLocalSettings } from '../settings/testFakes';
 import { WorkOrderDomainError } from './errors';
 import { WorkOrderLocalStore } from './localStore';
+import { createControlledLocalSettings } from './testFakes';
 import {
   emptyWorkerFields,
   type WorkOrderDispatchSnapshot,
@@ -195,5 +196,130 @@ describe('WorkOrderLocalStore report immutability', () => {
       'first report',
       'second report',
     ]);
+  });
+});
+
+describe('WorkOrderLocalStore partial-write recovery (HAM3-009 Correction 1)', () => {
+  const DISPATCH_INDEX_KEY = 'hammond.workOrders.index.owner-1';
+  const REPORT_INDEX_KEY = 'hammond.workOrders.reportIndex.owner-1';
+
+  it('dispatch: document write succeeds, index write fails, then an identical retry repairs the index without duplicating or losing the original', async () => {
+    const settings = createControlledLocalSettings();
+    settings.failWritesMatching((key) => key === DISPATCH_INDEX_KEY, { count: 1 });
+    const store = new WorkOrderLocalStore(settings);
+    const snapshot = makeSnapshot();
+
+    await expect(store.appendDispatch(snapshot)).rejects.toThrow();
+    // The document itself is durably saved even though the attempt as a whole failed.
+    expect(await store.getDispatch('owner-1', 'dispatch-1')).toEqual(snapshot);
+    // But it is not yet discoverable through history — the whole point of the bug.
+    expect(await store.listDispatchIndex('owner-1')).toEqual([]);
+    expect(await store.listDispatchesForTask('owner-1', 'task-1')).toEqual([]);
+
+    const retryResult = await store.appendDispatch(snapshot);
+    expect(retryResult).toEqual(snapshot);
+    const index = await store.listDispatchIndex('owner-1');
+    expect(index).toHaveLength(1);
+    expect(index[0]).toMatchObject({ id: 'dispatch-1', taskId: 'task-1', stage: 'worker' });
+    expect(await store.listDispatchesForTask('owner-1', 'task-1')).toEqual([snapshot]);
+    // The original createdAt/content survive untouched — this is a repair, not a re-write.
+    const recovered = await store.getDispatch('owner-1', 'dispatch-1');
+    expect(recovered).toEqual(snapshot);
+  });
+
+  it('report: document write succeeds, index write fails, then an identical retry repairs the index and the report appears once under its dispatch', async () => {
+    const settings = createControlledLocalSettings();
+    settings.failWritesMatching((key) => key === REPORT_INDEX_KEY, { count: 1 });
+    const store = new WorkOrderLocalStore(settings);
+    const report = makeReport();
+
+    await expect(store.appendReport(report)).rejects.toThrow();
+    expect(await store.getReport('owner-1', 'report-1')).toEqual(report);
+    expect(await store.listReportIndex('owner-1')).toEqual([]);
+    expect(await store.listReportsForDispatch('owner-1', 'dispatch-1')).toEqual([]);
+
+    const retryResult = await store.appendReport(report);
+    expect(retryResult).toEqual(report);
+    expect(await store.listReportIndex('owner-1')).toHaveLength(1);
+    const reports = await store.listReportsForDispatch('owner-1', 'dispatch-1');
+    expect(reports).toEqual([report]);
+    expect(reports[0].rawText).toBe(report.rawText);
+    expect(reports[0].provenance).toBe(report.provenance);
+  });
+
+  it('MUTATION PROOF (recovery path): a repeated index failure never fabricates success and never duplicates the index entry, recovering only once the underlying write actually succeeds — proved across fresh store instances so recovery cannot be relying on in-memory cache', async () => {
+    const settings = createControlledLocalSettings();
+    settings.failWritesMatching((key) => key === DISPATCH_INDEX_KEY, { count: 2 });
+    const snapshot = makeSnapshot();
+
+    // Attempt 1: document write succeeds, index write fails (1st failure). A brand-new store
+    // instance each time, wrapping the same underlying settings — recovery must come from the
+    // persisted state, not from anything cached on the store object.
+    await expect(new WorkOrderLocalStore(settings).appendDispatch(snapshot)).rejects.toThrow(
+      WorkOrderDomainError,
+    );
+    expect(await new WorkOrderLocalStore(settings).listDispatchIndex('owner-1')).toEqual([]);
+
+    // Attempt 2: document already exists (unchanged), index write fails again (2nd failure) — a
+    // truthful error again, not a false success.
+    await expect(new WorkOrderLocalStore(settings).appendDispatch(snapshot)).rejects.toThrow(
+      WorkOrderDomainError,
+    );
+    expect(await new WorkOrderLocalStore(settings).listDispatchIndex('owner-1')).toEqual([]);
+
+    // Attempt 3: the index write is allowed through — recovers cleanly, exactly one entry.
+    const recovered = await new WorkOrderLocalStore(settings).appendDispatch(snapshot);
+    expect(recovered).toEqual(snapshot);
+    const index = await new WorkOrderLocalStore(settings).listDispatchIndex('owner-1');
+    expect(index).toHaveLength(1);
+
+    // A further identical retry after recovery is a true no-op: no extra index write is issued.
+    const writeCallsBefore = (settings.write as unknown as { mock: { calls: unknown[] } }).mock
+      .calls.length;
+    await new WorkOrderLocalStore(settings).appendDispatch(snapshot);
+    const writeCallsAfter = (settings.write as unknown as { mock: { calls: unknown[] } }).mock.calls
+      .length;
+    expect(writeCallsAfter).toBe(writeCallsBefore);
+  });
+
+  it('an already-correct index is left alone (no redundant write) and conflicting content under the same id is still rejected without touching the index or other entries', async () => {
+    const settings = createControlledLocalSettings();
+    const store = new WorkOrderLocalStore(settings);
+    await store.appendDispatch(makeSnapshot({ id: 'other-owner-2-dispatch', ownerId: 'owner-2' }));
+    await store.appendDispatch(makeSnapshot({ id: 'sibling-dispatch', taskId: 'task-2' }));
+    const original = makeSnapshot({ content: 'original content' });
+    await store.appendDispatch(original);
+
+    const writeCallsBefore = (settings.write as unknown as { mock: { calls: unknown[] } }).mock
+      .calls.length;
+    await store.appendDispatch(original);
+    const writeCallsAfter = (settings.write as unknown as { mock: { calls: unknown[] } }).mock.calls
+      .length;
+    expect(writeCallsAfter).toBe(writeCallsBefore);
+
+    const mutated = makeSnapshot({ content: 'MUTATED — this must never be stored' });
+    await expect(store.appendDispatch(mutated)).rejects.toThrow(WorkOrderDomainError);
+    expect((await store.getDispatch('owner-1', 'dispatch-1'))?.content).toBe('original content');
+
+    // Sibling entries for the same owner and the isolated other owner both survive untouched.
+    expect(await store.listDispatchIndex('owner-1')).toHaveLength(2);
+    expect(await store.listDispatchIndex('owner-2')).toHaveLength(1);
+  });
+
+  it('a document write failure (before the index is ever touched) leaves no phantom document, index entry, or history record', async () => {
+    const settings = createControlledLocalSettings();
+    const key = 'hammond.workOrders.dispatch.owner-1.dispatch-1';
+    settings.failWritesMatching((k) => k === key, { count: 1 });
+    const store = new WorkOrderLocalStore(settings);
+    const snapshot = makeSnapshot();
+
+    await expect(store.appendDispatch(snapshot)).rejects.toThrow();
+    expect(await store.getDispatch('owner-1', 'dispatch-1')).toBeNull();
+    expect(await store.listDispatchIndex('owner-1')).toEqual([]);
+    expect(await store.listDispatchesForTask('owner-1', 'task-1')).toEqual([]);
+
+    const recovered = await store.appendDispatch(snapshot);
+    expect(recovered).toEqual(snapshot);
+    expect(await store.listDispatchIndex('owner-1')).toHaveLength(1);
   });
 });

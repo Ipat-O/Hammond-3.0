@@ -2,7 +2,11 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { WorkOrdersPanel } from './WorkOrdersPanel';
-import { createWorkOrdersTestHarness, type WorkOrdersTestHarness } from './testFakes';
+import {
+  createControlledLocalSettings,
+  createWorkOrdersTestHarness,
+  type WorkOrdersTestHarness,
+} from './testFakes';
 
 const PROJECT_ID = 'project-1';
 const TASK_ID = 'task-1';
@@ -370,5 +374,121 @@ describe('WorkOrdersPanel', () => {
     await waitFor(() =>
       expect(screen.getByLabelText('Scope')).toHaveValue('Draft scope, not yet recorded.'),
     );
+  });
+});
+
+describe('WorkOrdersPanel partial-write recovery (HAM3-009 Correction 1)', () => {
+  const originalClipboard = navigator.clipboard;
+
+  afterEach(() => {
+    Object.defineProperty(navigator, 'clipboard', { value: originalClipboard, configurable: true });
+  });
+
+  it('MUTATION PROOF (recovery, dispatch): Record fails when the index write fails after the document is saved, and an identical re-click repairs it into exactly one history entry', async () => {
+    const settings = createControlledLocalSettings();
+    settings.failWritesMatching((key) => key === 'hammond.workOrders.index.owner-1', { count: 1 });
+    const harness = createWorkOrdersTestHarness('owner-1', { localSettings: settings });
+    harness.seedProject(PROJECT_ID);
+
+    renderPanel(harness);
+    await waitFor(() =>
+      expect(screen.getByLabelText('Human owner')).toHaveValue('owner@example.com'),
+    );
+    await fillMinimalWorkerForm();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Record dispatch' }));
+    await waitFor(() =>
+      expect(
+        screen.getByText(/was saved but could not be recorded in the history index/),
+      ).toBeInTheDocument(),
+    );
+    // The failure is truthful: the panel never claims a record it can't yet find in history, even
+    // though the document itself was durably saved underneath.
+    expect(screen.getByText('History (0)')).toBeInTheDocument();
+
+    // Click again with the exact same (unedited) content — this must repair the index rather than
+    // stay stuck, and must not create a second entry.
+    fireEvent.click(screen.getByRole('button', { name: 'Record dispatch' }));
+    await waitFor(() => expect(screen.getByText(/Recorded as dispatch/)).toBeInTheDocument());
+    expect(screen.getByText('History (1)')).toBeInTheDocument();
+  });
+
+  it('MUTATION PROOF (recovery, dispatch): editing the packet after a partial failure records the new content as a new dispatch instead of getting stuck on immutable_conflict against the orphaned attempt', async () => {
+    const settings = createControlledLocalSettings();
+    settings.failWritesMatching((key) => key === 'hammond.workOrders.index.owner-1', { count: 1 });
+    const harness = createWorkOrdersTestHarness('owner-1', { localSettings: settings });
+    harness.seedProject(PROJECT_ID);
+
+    renderPanel(harness);
+    await waitFor(() =>
+      expect(screen.getByLabelText('Human owner')).toHaveValue('owner@example.com'),
+    );
+    await fillMinimalWorkerForm();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Record dispatch' }));
+    await waitFor(() => expect(screen.getByText('History (0)')).toBeInTheDocument());
+
+    // The owner edits the packet rather than resubmitting unchanged — under the old, unfixed
+    // behavior this would hit `immutable_conflict` against the orphaned document forever.
+    fireEvent.change(screen.getByLabelText('Scope'), {
+      target: { value: 'A revised scope after the partial failure.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Record dispatch' }));
+
+    await waitFor(() => expect(screen.getByText(/Recorded as dispatch/)).toBeInTheDocument());
+    expect(screen.getByText('History (1)')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Worker · / }));
+    const historyList = screen
+      .getByText('History (1)')
+      .closest('.work-order-history') as HTMLElement;
+    // The single visible history entry carries the new content, not the orphaned original.
+    expect(
+      within(historyList).getByText('A revised scope after the partial failure.', {
+        exact: false,
+      }),
+    ).toBeInTheDocument();
+    expect(within(historyList).queryByText('Do the thing.', { exact: false })).toBeNull();
+  });
+
+  it('MUTATION PROOF (recovery, report): editing the returned-report text after a partial failure attaches it as a new report instead of getting stuck against the orphaned attempt', async () => {
+    const settings = createControlledLocalSettings();
+    settings.failWritesMatching((key) => key === 'hammond.workOrders.reportIndex.owner-1', {
+      count: 1,
+    });
+    const harness = createWorkOrdersTestHarness('owner-1', { localSettings: settings });
+    harness.seedProject(PROJECT_ID);
+
+    renderPanel(harness);
+    await waitFor(() =>
+      expect(screen.getByLabelText('Human owner')).toHaveValue('owner@example.com'),
+    );
+    await fillMinimalWorkerForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Record dispatch' }));
+    await waitFor(() => expect(screen.getByText('History (1)')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /Worker · / }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Attach returned report' }));
+    fireEvent.change(screen.getByLabelText('Raw returned text'), {
+      target: { value: 'First attempt at the returned report text.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Attach report' }));
+    await waitFor(() =>
+      expect(
+        screen.getByText(/was saved but could not be recorded in the report index/),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByText('Returned reports (0)')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Raw returned text'), {
+      target: { value: 'Edited returned report text after the partial failure.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Attach report' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Edited returned report text after the partial failure.'),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByText('Returned reports (1)')).toBeInTheDocument();
   });
 });

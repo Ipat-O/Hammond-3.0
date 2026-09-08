@@ -14,6 +14,51 @@ function fileKey(root: string, relativePath: string): string {
   return `${root} ${relativePath}`;
 }
 
+/** A `LocalSettingsStore` fake that can be told to fail specific writes on demand — used to
+ * reproduce a partial write (the document key succeeds, the index key fails, or vice versa) and
+ * to prove recovery on a later call without depending on anything but the persisted store state
+ * itself (a fresh `WorkOrderLocalStore` wrapping the same `store` sees the exact same data). */
+export interface ControlledLocalSettings extends LocalSettingsStore {
+  store: Map<string, unknown>;
+  /** The next `count` (default: unlimited) `write()` calls whose key matches `match` throw
+   * `error` instead of persisting. Call again to layer additional rules; the first matching rule
+   * with attempts remaining wins. */
+  failWritesMatching(
+    match: (key: string) => boolean,
+    options?: { count?: number; error?: Error },
+  ): void;
+}
+
+export function createControlledLocalSettings(): ControlledLocalSettings {
+  const store = new Map<string, unknown>();
+  const rules: { match: (key: string) => boolean; remaining: number; error: Error }[] = [];
+
+  return {
+    store,
+    read: vi.fn(async (key: string) =>
+      store.has(key) ? store.get(key) : null,
+    ) as LocalSettingsStore['read'],
+    write: vi.fn(async (key: string, value: unknown) => {
+      const rule = rules.find((candidate) => candidate.remaining > 0 && candidate.match(key));
+      if (rule) {
+        rule.remaining -= 1;
+        throw rule.error;
+      }
+      store.set(key, value);
+    }) as LocalSettingsStore['write'],
+    remove: vi.fn(async (key: string) => {
+      store.delete(key);
+    }),
+    failWritesMatching(match, options = {}) {
+      rules.push({
+        match,
+        remaining: options.count ?? Infinity,
+        error: options.error ?? new Error('write failed'),
+      });
+    },
+  };
+}
+
 /** In-memory `FilesystemCommands` fake that actually tracks per-(root, relativePath) file
  * content — unlike `settings/testFakes.ts`'s `createFakeFilesystem`, which only tracks whether a
  * *root* is known (built for directory-reachability checks, not file-level read/write). Work
@@ -60,8 +105,11 @@ export interface WorkOrdersTestHarness {
   seedProject(projectId: string): void;
 }
 
-export function createWorkOrdersTestHarness(ownerId = 'owner-1'): WorkOrdersTestHarness {
-  const localSettings = createFakeLocalSettings();
+export function createWorkOrdersTestHarness(
+  ownerId = 'owner-1',
+  overrides: { localSettings?: LocalSettingsStore } = {},
+): WorkOrdersTestHarness {
+  const localSettings = overrides.localSettings ?? createFakeLocalSettings();
   const filesystem = createFakeWorkOrderFilesystem();
   const assignmentRepo = createFakeAssignmentRepository(undefined, ownerId);
   const assignments = new AssignmentsService(assignmentRepo);

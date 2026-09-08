@@ -475,12 +475,11 @@ export function WorkOrdersPanel(props: WorkOrdersPanelProps) {
     if (!packet || !validation?.isValid) return;
     setRecording(true);
     setRecordError(null);
-    const id = pendingIdRef.current ?? createWorkOrderId();
-    pendingIdRef.current = id;
-    const createdAt = pendingCreatedAtRef.current ?? new Date().toISOString();
-    pendingCreatedAtRef.current = createdAt;
-    try {
-      const snapshot = await service.recordDispatch({
+
+    const attemptRecord = (id: string, createdAt: string) => {
+      pendingIdRef.current = id;
+      pendingCreatedAtRef.current = createdAt;
+      return service.recordDispatch({
         id,
         ownerId,
         projectId,
@@ -489,6 +488,25 @@ export function WorkOrdersPanel(props: WorkOrdersPanelProps) {
         createdAt,
         expectedWorker,
       });
+    };
+
+    try {
+      let snapshot: WorkOrderDispatchSnapshot;
+      try {
+        snapshot = await attemptRecord(
+          pendingIdRef.current ?? createWorkOrderId(),
+          pendingCreatedAtRef.current ?? new Date().toISOString(),
+        );
+      } catch (error) {
+        // A pending id from an earlier partial failure (document saved, index write failed) can no
+        // longer be reused once the packet content has changed since that attempt — resubmitting it
+        // would hit `immutable_conflict` against the orphaned document forever. That orphan is left
+        // exactly as it is (never deleted, never silently reused for the new content); this edit is
+        // recorded as a fresh dispatch under a new id instead of getting stuck against the old one.
+        if (!(error instanceof WorkOrderDomainError) || error.code !== 'immutable_conflict')
+          throw error;
+        snapshot = await attemptRecord(createWorkOrderId(), new Date().toISOString());
+      }
       pendingIdRef.current = null;
       pendingCreatedAtRef.current = null;
       await service.clearDraft({ ownerId, projectId, taskId, stage });
@@ -554,14 +572,14 @@ export function WorkOrdersPanel(props: WorkOrdersPanelProps) {
     if (!reportForm) return;
     setAttaching(true);
     setAttachError(null);
-    const id = pendingReportIdRef.current ?? createWorkOrderId();
-    pendingReportIdRef.current = id;
     const returnedIdentity: ReturnedIdentity | null =
       reportForm.provider.trim() || reportForm.tool.trim() || reportForm.model.trim()
         ? { provider: reportForm.provider, tool: reportForm.tool, model: reportForm.model }
         : null;
-    try {
-      const report = await service.attachReport({
+
+    const attemptAttach = (id: string) => {
+      pendingReportIdRef.current = id;
+      return service.attachReport({
         id,
         ownerId,
         projectId,
@@ -575,6 +593,20 @@ export function WorkOrdersPanel(props: WorkOrdersPanelProps) {
         limitations: reportForm.limitations,
         provenance: reportForm.provenance,
       });
+    };
+
+    try {
+      let report: WorkOrderReportRecord;
+      try {
+        report = await attemptAttach(pendingReportIdRef.current ?? createWorkOrderId());
+      } catch (error) {
+        // Same recovery as dispatch recording: a pending report id whose earlier attempt saved the
+        // record but failed the index write can't be resubmitted once the form text has changed —
+        // this edit is recorded as a new report rather than getting stuck against the orphaned one.
+        if (!(error instanceof WorkOrderDomainError) || error.code !== 'immutable_conflict')
+          throw error;
+        report = await attemptAttach(createWorkOrderId());
+      }
       pendingReportIdRef.current = null;
       setReportsByDispatch((current) => ({
         ...current,

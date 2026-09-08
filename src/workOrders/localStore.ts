@@ -76,6 +76,19 @@ export class WorkOrderLocalStore {
     return run;
   }
 
+  /** Runs a document/index write for `appendDispatch`/`appendReport`, converting a raw storage
+   * failure into a typed `persistence_failed` domain error so callers (and the UI's pending-id
+   * recovery, which keys off `WorkOrderDomainError.code`) can tell a truthful storage failure
+   * apart from an `immutable_conflict`, instead of a bare driver/adapter error leaking through. */
+  private async persist<T>(action: () => Promise<T>, message: string): Promise<T> {
+    try {
+      return await action();
+    } catch (error) {
+      if (error instanceof WorkOrderDomainError) throw error;
+      throw new WorkOrderDomainError('persistence_failed', message, { cause: error });
+    }
+  }
+
   async readDraft<T>(params: {
     ownerId: string;
     projectId: string;
@@ -133,27 +146,55 @@ export class WorkOrderLocalStore {
     return snapshots.filter((snapshot): snapshot is WorkOrderDispatchSnapshot => snapshot !== null);
   }
 
-  /** Appends an immutable dispatch snapshot. Idempotent for an exact retry of the same id+content; throws `immutable_conflict` if the same id is ever submitted with different content. */
+  /** Writes the dispatch index entry for `snapshot` if one is not already present — repairs a
+   * prior attempt that saved the document but failed the index write, without ever duplicating an
+   * entry. Never called for a rejected (different-content) write, so a genuine conflict never
+   * touches the index. */
+  private async ensureDispatchIndexEntry(snapshot: WorkOrderDispatchSnapshot): Promise<void> {
+    const index = await this.listDispatchIndex(snapshot.ownerId);
+    if (index.some((entry) => entry.id === snapshot.id)) return;
+    const entry: WorkOrderIndexEntry = {
+      id: snapshot.id,
+      projectId: snapshot.projectId,
+      taskId: snapshot.taskId,
+      stage: snapshot.stage,
+      createdAt: snapshot.createdAt,
+    };
+    await this.persist(
+      () => this.settings.write(indexKey(snapshot.ownerId), [...index, entry]),
+      `Dispatch ${snapshot.id} was saved but could not be recorded in the history index. Retry to repair it.`,
+    );
+  }
+
+  /**
+   * Appends an immutable dispatch snapshot. Idempotent for an exact retry of the same id+content;
+   * throws `immutable_conflict` if the same id is ever submitted with different content.
+   *
+   * The document write and the index write are two separate `settings.write` calls, so a failure
+   * between them (document saved, index not) is possible. Rather than leaving that a permanent
+   * orphan — discoverable by `getDispatch` but invisible to history/originalWorker lookups — every
+   * call (including the idempotent same-content retry) ensures the index entry exists before
+   * reporting success. A retry that fails only the index write again still throws, so the caller
+   * never sees a false success; a retry that reaches the index write cleanly repairs it in place.
+   */
   async appendDispatch(snapshot: WorkOrderDispatchSnapshot): Promise<WorkOrderDispatchSnapshot> {
     return this.enqueue(snapshot.ownerId, async () => {
       const existing = await this.getDispatch(snapshot.ownerId, snapshot.id);
       if (existing) {
-        if (dispatchContentEqual(existing, snapshot)) return existing;
-        throw new WorkOrderDomainError(
-          'immutable_conflict',
-          `Dispatch ${snapshot.id} is already recorded with different content and cannot be overwritten.`,
-        );
+        if (!dispatchContentEqual(existing, snapshot)) {
+          throw new WorkOrderDomainError(
+            'immutable_conflict',
+            `Dispatch ${snapshot.id} is already recorded with different content and cannot be overwritten.`,
+          );
+        }
+        await this.ensureDispatchIndexEntry(existing);
+        return existing;
       }
-      await this.settings.write(dispatchKey(snapshot.ownerId, snapshot.id), snapshot);
-      const index = await this.listDispatchIndex(snapshot.ownerId);
-      const entry: WorkOrderIndexEntry = {
-        id: snapshot.id,
-        projectId: snapshot.projectId,
-        taskId: snapshot.taskId,
-        stage: snapshot.stage,
-        createdAt: snapshot.createdAt,
-      };
-      await this.settings.write(indexKey(snapshot.ownerId), [...index, entry]);
+      await this.persist(
+        () => this.settings.write(dispatchKey(snapshot.ownerId, snapshot.id), snapshot),
+        `Failed to save dispatch ${snapshot.id}.`,
+      );
+      await this.ensureDispatchIndexEntry(snapshot);
       return snapshot;
     });
   }
@@ -187,27 +228,47 @@ export class WorkOrderLocalStore {
     return reports.filter((report): report is WorkOrderReportRecord => report !== null);
   }
 
-  /** Appends an immutable report record. Idempotent for an exact retry of the same id+content; throws `immutable_conflict` if the same id is ever submitted with different content. */
+  /** Writes the report index entry for `report` if one is not already present — repairs a prior
+   * attempt that saved the record but failed the index write, without ever duplicating an entry. */
+  private async ensureReportIndexEntry(report: WorkOrderReportRecord): Promise<void> {
+    const index = await this.listReportIndex(report.ownerId);
+    if (index.some((entry) => entry.id === report.id)) return;
+    const entry: WorkOrderReportIndexEntry = {
+      id: report.id,
+      dispatchId: report.dispatchId,
+      projectId: report.projectId,
+      taskId: report.taskId,
+      recordedAt: report.recordedAt,
+    };
+    await this.persist(
+      () => this.settings.write(reportIndexKey(report.ownerId), [...index, entry]),
+      `Report ${report.id} was saved but could not be recorded in the report index. Retry to repair it.`,
+    );
+  }
+
+  /**
+   * Appends an immutable report record. Idempotent for an exact retry of the same id+content;
+   * throws `immutable_conflict` if the same id is ever submitted with different content. Same
+   * document-then-index repair as `appendDispatch` — see there for why.
+   */
   async appendReport(report: WorkOrderReportRecord): Promise<WorkOrderReportRecord> {
     return this.enqueue(report.ownerId, async () => {
       const existing = await this.getReport(report.ownerId, report.id);
       if (existing) {
-        if (reportContentEqual(existing, report)) return existing;
-        throw new WorkOrderDomainError(
-          'immutable_conflict',
-          `Report ${report.id} is already recorded with different content and cannot be overwritten.`,
-        );
+        if (!reportContentEqual(existing, report)) {
+          throw new WorkOrderDomainError(
+            'immutable_conflict',
+            `Report ${report.id} is already recorded with different content and cannot be overwritten.`,
+          );
+        }
+        await this.ensureReportIndexEntry(existing);
+        return existing;
       }
-      await this.settings.write(reportKey(report.ownerId, report.id), report);
-      const index = await this.listReportIndex(report.ownerId);
-      const entry: WorkOrderReportIndexEntry = {
-        id: report.id,
-        dispatchId: report.dispatchId,
-        projectId: report.projectId,
-        taskId: report.taskId,
-        recordedAt: report.recordedAt,
-      };
-      await this.settings.write(reportIndexKey(report.ownerId), [...index, entry]);
+      await this.persist(
+        () => this.settings.write(reportKey(report.ownerId, report.id), report),
+        `Failed to save report ${report.id}.`,
+      );
+      await this.ensureReportIndexEntry(report);
       return report;
     });
   }
