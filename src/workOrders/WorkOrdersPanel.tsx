@@ -375,12 +375,12 @@ export function WorkOrdersPanel(props: WorkOrdersPanelProps) {
    * dispatch's form. */
   const reportPendingTokenRef = useRef(0);
   const isMountedRef = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
       isMountedRef.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
 
   const computeDefaults = useCallback(
     async (nextStage: WorkOrderStage): Promise<WorkOrderFields> => {
