@@ -382,22 +382,56 @@ export class WorkOrdersService {
     return this.localStore.appendDispatch(snapshot);
   }
 
-  /** Attaches an append-only report record to an existing dispatch. Never mutates the dispatch or any prior report; a correction's returned report is simply a new record. */
-  async attachReport(params: {
-    id: string;
+  /**
+   * The durable-recovery entry point for recording a dispatch (HAM3-009 Correction 2): unlike
+   * `recordDispatch`, the caller never supplies an id — `WorkOrderLocalStore.appendDispatchDurable`
+   * derives and durably persists the attempt's own identity from `ownerId`/`projectId`/`taskId`/
+   * `stage` alone, so this call recovers the same in-flight attempt no matter how the caller was
+   * recreated (stage switch, task switch, panel remount, or a full process restart) — see
+   * `appendDispatchDurable`'s own doc comment for the full recovery model. `recoveredOriginal` is
+   * non-null exactly when an earlier partial attempt's content differed from this submission and
+   * was recovered (index-repaired or fully saved) as a distinct, separate history entry before
+   * this submission's content was recorded.
+   */
+  async recordDispatchDurable(params: {
     ownerId: string;
     projectId: string;
     taskId: string;
+    packet: WorkOrderFields;
+    createdAt?: string;
+    expectedWorker?: ParticipantIdentity | null;
+  }): Promise<{
+    snapshot: WorkOrderDispatchSnapshot;
+    recoveredOriginal: WorkOrderDispatchSnapshot | null;
+  }> {
+    const validation = this.validatePacket(params.packet, {
+      expectedWorker: params.expectedWorker,
+    });
+    if (!validation.isValid) {
+      throw new WorkOrderDomainError(
+        'invalid_fields',
+        `Cannot record dispatch: ${validation.errors.map((issue) => issue.message).join(' ')}`,
+      );
+    }
+    return this.localStore.appendDispatchDurable({
+      ownerId: params.ownerId,
+      projectId: params.projectId,
+      taskId: params.taskId,
+      stage: params.packet.stage,
+      packet: params.packet,
+      content: this.generateContent(params.packet),
+      createdAt: params.createdAt ?? this.now(),
+      newId: createWorkOrderId,
+    });
+  }
+
+  private async validateReportParams(params: {
+    ownerId: string;
     dispatchId: string;
     rawText: string;
     url: string | null;
-    returnedIdentity: ReturnedIdentity | null;
     headSha: string | null;
-    verificationNotes: string;
-    limitations: string;
-    provenance: string;
-    recordedAt?: string;
-  }): Promise<WorkOrderReportRecord> {
+  }): Promise<void> {
     const dispatch = await this.localStore.getDispatch(params.ownerId, params.dispatchId);
     if (!dispatch) {
       throw new WorkOrderDomainError(
@@ -417,6 +451,25 @@ export class WorkOrdersService {
         'A supplied head SHA must be the exact full 40-character SHA.',
       );
     }
+  }
+
+  /** Attaches an append-only report record to an existing dispatch. Never mutates the dispatch or any prior report; a correction's returned report is simply a new record. */
+  async attachReport(params: {
+    id: string;
+    ownerId: string;
+    projectId: string;
+    taskId: string;
+    dispatchId: string;
+    rawText: string;
+    url: string | null;
+    returnedIdentity: ReturnedIdentity | null;
+    headSha: string | null;
+    verificationNotes: string;
+    limitations: string;
+    provenance: string;
+    recordedAt?: string;
+  }): Promise<WorkOrderReportRecord> {
+    await this.validateReportParams(params);
     const report: WorkOrderReportRecord = {
       id: params.id,
       ownerId: params.ownerId,
@@ -433,6 +486,45 @@ export class WorkOrdersService {
       recordedAt: params.recordedAt ?? this.now(),
     };
     return this.localStore.appendReport(report);
+  }
+
+  /**
+   * The durable-recovery entry point for attaching a report (HAM3-009 Correction 2) — the report
+   * equivalent of `recordDispatchDurable`. The caller never supplies an id; recovery is scoped by
+   * the report's fixed `dispatchId` target, so it is never mixed up with whichever dispatch the
+   * caller currently has selected. See `WorkOrderLocalStore.appendReportDurable` for the full
+   * recovery model.
+   */
+  async attachReportDurable(params: {
+    ownerId: string;
+    projectId: string;
+    taskId: string;
+    dispatchId: string;
+    rawText: string;
+    url: string | null;
+    returnedIdentity: ReturnedIdentity | null;
+    headSha: string | null;
+    verificationNotes: string;
+    limitations: string;
+    provenance: string;
+    recordedAt?: string;
+  }): Promise<{ report: WorkOrderReportRecord; recoveredOriginal: WorkOrderReportRecord | null }> {
+    await this.validateReportParams(params);
+    return this.localStore.appendReportDurable({
+      ownerId: params.ownerId,
+      projectId: params.projectId,
+      taskId: params.taskId,
+      dispatchId: params.dispatchId,
+      rawText: params.rawText,
+      url: params.url,
+      returnedIdentity: params.returnedIdentity,
+      headSha: params.headSha,
+      verificationNotes: params.verificationNotes,
+      limitations: params.limitations,
+      provenance: params.provenance,
+      recordedAt: params.recordedAt ?? this.now(),
+      newId: createWorkOrderId,
+    });
   }
 
   // ---- Optional local injection ----

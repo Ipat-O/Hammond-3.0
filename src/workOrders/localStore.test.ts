@@ -323,3 +323,464 @@ describe('WorkOrderLocalStore partial-write recovery (HAM3-009 Correction 1)', (
     expect(await store.listDispatchIndex('owner-1')).toHaveLength(1);
   });
 });
+
+describe('WorkOrderLocalStore durable pending-attempt recovery (HAM3-009 Correction 2)', () => {
+  const OWNER = 'owner-1';
+  const PROJECT = 'project-1';
+  const TASK = 'task-1';
+
+  function dispatchParams(overrides: Partial<{ content: string; createdAt: string }> = {}) {
+    const fields = emptyWorkerFields();
+    fields.taskId = TASK;
+    return {
+      ownerId: OWNER,
+      projectId: PROJECT,
+      taskId: TASK,
+      stage: 'worker' as const,
+      packet: { stage: 'worker' as const, fields },
+      content: overrides.content ?? 'generated packet text A',
+      createdAt: overrides.createdAt ?? '2026-09-08T00:00:00.000Z',
+    };
+  }
+
+  it('metadata failure BEFORE any document exists: fails truthfully, writes no document and no pending record — a retry then succeeds cleanly', async () => {
+    const settings = createControlledLocalSettings();
+    settings.failWritesMatching((key) => key.startsWith('hammond.workOrders.pendingDispatch.'), {
+      count: 1,
+    });
+    const store = new WorkOrderLocalStore(settings);
+
+    await expect(
+      store.appendDispatchDurable({ ...dispatchParams(), newId: () => 'fresh-id-1' }),
+    ).rejects.toThrow(WorkOrderDomainError);
+    expect(await store.getDispatch(OWNER, 'fresh-id-1')).toBeNull();
+    expect(await store.getPendingDispatchAttempt(OWNER, PROJECT, TASK, 'worker')).toBeNull();
+    expect(await store.listDispatchIndex(OWNER)).toEqual([]);
+
+    const { snapshot, recoveredOriginal } = await store.appendDispatchDurable({
+      ...dispatchParams(),
+      newId: () => 'fresh-id-1',
+    });
+    expect(snapshot.id).toBe('fresh-id-1');
+    expect(recoveredOriginal).toBeNull();
+    expect(await store.listDispatchIndex(OWNER)).toHaveLength(1);
+    expect(await store.getPendingDispatchAttempt(OWNER, PROJECT, TASK, 'worker')).toBeNull();
+  });
+
+  it('document-write failure (pending metadata already durable): the pending record survives the failure, and a retry recovers with a fresh document write', async () => {
+    const settings = createControlledLocalSettings();
+    const store = new WorkOrderLocalStore(settings);
+    settings.failWritesMatching((key) => key === 'hammond.workOrders.dispatch.owner-1.fresh-id-1', {
+      count: 1,
+    });
+
+    await expect(
+      store.appendDispatchDurable({ ...dispatchParams(), newId: () => 'fresh-id-1' }),
+    ).rejects.toThrow(WorkOrderDomainError);
+    expect(await store.getDispatch(OWNER, 'fresh-id-1')).toBeNull();
+    const pendingAfterFailure = await store.getPendingDispatchAttempt(
+      OWNER,
+      PROJECT,
+      TASK,
+      'worker',
+    );
+    expect(pendingAfterFailure).toMatchObject({
+      id: 'fresh-id-1',
+      content: 'generated packet text A',
+    });
+
+    const { snapshot } = await store.appendDispatchDurable({
+      ...dispatchParams(),
+      newId: () => 'fresh-id-1',
+    });
+    expect(snapshot.id).toBe('fresh-id-1');
+    expect(await store.listDispatchIndex(OWNER)).toHaveLength(1);
+    expect(await store.getPendingDispatchAttempt(OWNER, PROJECT, TASK, 'worker')).toBeNull();
+  });
+
+  it('MUTATION PROOF (navigation/restart): index write fails, then an identical resubmission from a brand-new store instance (simulated remount/restart) repairs the index — one document, one history entry, byte-identical original', async () => {
+    const settings = createControlledLocalSettings();
+    settings.failWritesMatching((key) => key === `hammond.workOrders.index.${OWNER}`, {
+      count: 1,
+    });
+
+    await expect(
+      new WorkOrderLocalStore(settings).appendDispatchDurable({
+        ...dispatchParams(),
+        newId: () => 'fresh-id-1',
+      }),
+    ).rejects.toThrow(WorkOrderDomainError);
+    expect(await new WorkOrderLocalStore(settings).listDispatchIndex(OWNER)).toEqual([]);
+
+    // A brand-new store instance — nothing cached in memory — recovers purely from durable state,
+    // scoped only by owner/project/task/stage. No id is supplied by the caller here.
+    const restarted = new WorkOrderLocalStore(settings);
+    const { snapshot, recoveredOriginal } = await restarted.appendDispatchDurable({
+      ...dispatchParams(),
+      newId: () => 'should-not-be-used',
+    });
+    expect(snapshot.id).toBe('fresh-id-1');
+    expect(recoveredOriginal).toBeNull();
+    expect(snapshot.createdAt).toBe('2026-09-08T00:00:00.000Z');
+    const index = await restarted.listDispatchIndex(OWNER);
+    expect(index).toHaveLength(1);
+    expect(await restarted.getPendingDispatchAttempt(OWNER, PROJECT, TASK, 'worker')).toBeNull();
+  });
+
+  it('repeated index failures across fresh store instances (simulated repeated restarts) never fabricate success and never duplicate — recovery lands exactly once the write finally succeeds', async () => {
+    const settings = createControlledLocalSettings();
+    settings.failWritesMatching((key) => key === `hammond.workOrders.index.${OWNER}`, {
+      count: 2,
+    });
+    const params = () => ({ ...dispatchParams(), newId: () => 'fresh-id-1' });
+
+    await expect(new WorkOrderLocalStore(settings).appendDispatchDurable(params())).rejects.toThrow(
+      WorkOrderDomainError,
+    );
+    await expect(new WorkOrderLocalStore(settings).appendDispatchDurable(params())).rejects.toThrow(
+      WorkOrderDomainError,
+    );
+    expect(await new WorkOrderLocalStore(settings).listDispatchIndex(OWNER)).toEqual([]);
+
+    const recovered = await new WorkOrderLocalStore(settings).appendDispatchDurable(params());
+    expect(recovered.snapshot.id).toBe('fresh-id-1');
+    expect(await new WorkOrderLocalStore(settings).listDispatchIndex(OWNER)).toHaveLength(1);
+  });
+
+  it('MUTATION PROOF (edited-content recovery): editing the content after a partial failure — from a fresh store instance — first recovers the original as its own history entry, then records the edit as a second, distinct entry; original bytes/timestamp untouched', async () => {
+    const settings = createControlledLocalSettings();
+    settings.failWritesMatching((key) => key === `hammond.workOrders.index.${OWNER}`, {
+      count: 1,
+    });
+
+    await expect(
+      new WorkOrderLocalStore(settings).appendDispatchDurable({
+        ...dispatchParams({ content: 'original content' }),
+        newId: () => 'original-id',
+      }),
+    ).rejects.toThrow(WorkOrderDomainError);
+
+    // Restart, then submit *edited* content instead of resubmitting the original.
+    const restarted = new WorkOrderLocalStore(settings);
+    const { snapshot, recoveredOriginal } = await restarted.appendDispatchDurable({
+      ...dispatchParams({
+        content: 'edited content after failure',
+        createdAt: '2026-09-08T00:05:00.000Z',
+      }),
+      newId: () => 'edited-id',
+    });
+
+    expect(recoveredOriginal).toMatchObject({
+      id: 'original-id',
+      content: 'original content',
+      createdAt: '2026-09-08T00:00:00.000Z',
+    });
+    expect(snapshot).toMatchObject({ id: 'edited-id', content: 'edited content after failure' });
+
+    const history = await restarted.listDispatchesForTask(OWNER, TASK);
+    expect(history).toHaveLength(2);
+    expect(history.map((h) => h.content).sort()).toEqual([
+      'edited content after failure',
+      'original content',
+    ]);
+    expect(await restarted.getPendingDispatchAttempt(OWNER, PROJECT, TASK, 'worker')).toBeNull();
+  });
+
+  it('if recovering the original fails again during an edited-content submission, the edit is never attempted — no orphan for the edit, the original pending record survives untouched for a later retry', async () => {
+    const settings = createControlledLocalSettings();
+    settings.failWritesMatching((key) => key === `hammond.workOrders.index.${OWNER}`, {
+      count: 2,
+    });
+
+    await expect(
+      new WorkOrderLocalStore(settings).appendDispatchDurable({
+        ...dispatchParams({ content: 'original content' }),
+        newId: () => 'original-id',
+      }),
+    ).rejects.toThrow(WorkOrderDomainError);
+
+    // Edited content submitted while the original is still unrecovered — recovering the original
+    // hits the second scripted index failure, so the edit must never be attempted.
+    await expect(
+      new WorkOrderLocalStore(settings).appendDispatchDurable({
+        ...dispatchParams({ content: 'edited content', createdAt: '2026-09-08T00:05:00.000Z' }),
+        newId: () => 'edited-id',
+      }),
+    ).rejects.toThrow(WorkOrderDomainError);
+
+    // No orphan for the edit was ever created, and the original pending record is untouched.
+    expect(await new WorkOrderLocalStore(settings).getDispatch(OWNER, 'edited-id')).toBeNull();
+    expect(await new WorkOrderLocalStore(settings).listDispatchIndex(OWNER)).toEqual([]);
+    const pending = await new WorkOrderLocalStore(settings).getPendingDispatchAttempt(
+      OWNER,
+      PROJECT,
+      TASK,
+      'worker',
+    );
+    expect(pending).toMatchObject({ id: 'original-id', content: 'original content' });
+
+    // A later retry (index writes now succeed) recovers the original, then records the edit.
+    const { snapshot, recoveredOriginal } = await new WorkOrderLocalStore(
+      settings,
+    ).appendDispatchDurable({
+      ...dispatchParams({ content: 'edited content', createdAt: '2026-09-08T00:05:00.000Z' }),
+      newId: () => 'edited-id',
+    });
+    expect(recoveredOriginal).toMatchObject({ id: 'original-id', content: 'original content' });
+    expect(snapshot).toMatchObject({ id: 'edited-id', content: 'edited content' });
+    expect(await new WorkOrderLocalStore(settings).listDispatchIndex(OWNER)).toHaveLength(2);
+  });
+
+  it('a cleanup (pending-record-clear) failure after the document and index are already consistent surfaces an error, but a retry is fully idempotent — no duplicate, pending eventually cleared', async () => {
+    const settings = createControlledLocalSettings();
+    settings.failRemovesMatching(
+      (key) => key === `hammond.workOrders.pendingDispatch.${OWNER}.${PROJECT}.${TASK}.worker`,
+      { count: 1 },
+    );
+    const store = new WorkOrderLocalStore(settings);
+
+    await expect(
+      store.appendDispatchDurable({ ...dispatchParams(), newId: () => 'fresh-id-1' }),
+    ).rejects.toThrow();
+    // The underlying data is already fully consistent even though the call itself reported an
+    // error — the failure is scoped to "could not confirm cleanup," not to the record itself.
+    expect(await store.listDispatchIndex(OWNER)).toHaveLength(1);
+    expect((await store.getDispatch(OWNER, 'fresh-id-1'))?.content).toBe('generated packet text A');
+
+    const writeCallsBefore = (settings.write as unknown as { mock: { calls: unknown[] } }).mock
+      .calls.length;
+    const { snapshot } = await store.appendDispatchDurable({
+      ...dispatchParams(),
+      newId: () => 'fresh-id-1',
+    });
+    const writeCallsAfter = (settings.write as unknown as { mock: { calls: unknown[] } }).mock.calls
+      .length;
+    expect(snapshot.id).toBe('fresh-id-1');
+    expect(await store.listDispatchIndex(OWNER)).toHaveLength(1); // still exactly one — no duplicate
+    expect(writeCallsAfter).toBe(writeCallsBefore); // the retry was a pure repair, no redundant write
+    expect(await store.getPendingDispatchAttempt(OWNER, PROJECT, TASK, 'worker')).toBeNull();
+  });
+
+  it('scope isolation: two distinct tasks, two stages of the same task, and two owners each keep independent pending attempts — none interferes with another', async () => {
+    const settings = createControlledLocalSettings();
+    settings.failWritesMatching((key) => key === `hammond.workOrders.index.${OWNER}`, {
+      count: 1,
+    });
+    settings.failWritesMatching((key) => key === 'hammond.workOrders.index.owner-2', { count: 1 });
+
+    // Task 1 / worker stage: partial failure leaves a pending attempt.
+    await expect(
+      new WorkOrderLocalStore(settings).appendDispatchDurable({
+        ...dispatchParams({ content: 'task-1 worker content' }),
+        newId: () => 'task-1-worker-id',
+      }),
+    ).rejects.toThrow();
+
+    // Task 2 (different task, same owner/stage) is unaffected — no pending record there, and a
+    // fresh attempt succeeds outright without touching task 1's pending attempt.
+    const task2Store = new WorkOrderLocalStore(settings);
+    const task2Result = await task2Store.appendDispatchDurable({
+      ...dispatchParams({ content: 'task-2 worker content' }),
+      taskId: 'task-2',
+      newId: () => 'task-2-worker-id',
+    });
+    expect(task2Result.recoveredOriginal).toBeNull();
+    expect(
+      await task2Store.getPendingDispatchAttempt(OWNER, PROJECT, TASK, 'worker'),
+    ).toMatchObject({ id: 'task-1-worker-id' });
+
+    // Correction stage of task 1 (different stage, same task) is also unaffected.
+    const correctionFields = emptyWorkerFields();
+    correctionFields.taskId = TASK;
+    const correctionResult = await task2Store.appendDispatchDurable({
+      ownerId: OWNER,
+      projectId: PROJECT,
+      taskId: TASK,
+      stage: 'correction',
+      packet: { stage: 'worker', fields: correctionFields },
+      content: 'task-1 correction content',
+      createdAt: '2026-09-08T01:00:00.000Z',
+      newId: () => 'task-1-correction-id',
+    });
+    expect(correctionResult.recoveredOriginal).toBeNull();
+    expect(
+      await task2Store.getPendingDispatchAttempt(OWNER, PROJECT, TASK, 'worker'),
+    ).toMatchObject({ id: 'task-1-worker-id' });
+
+    // A different owner entirely, hitting its own scripted failure, never touches owner-1's state.
+    await expect(
+      new WorkOrderLocalStore(settings).appendDispatchDurable({
+        ...dispatchParams({ content: 'owner-2 content' }),
+        ownerId: 'owner-2',
+        newId: () => 'owner-2-id',
+      }),
+    ).rejects.toThrow();
+    expect(
+      await task2Store.getPendingDispatchAttempt(OWNER, PROJECT, TASK, 'worker'),
+    ).toMatchObject({ id: 'task-1-worker-id' });
+    expect(await task2Store.listDispatchIndex(OWNER)).toHaveLength(2); // task-2 + task-1 correction
+    expect(await task2Store.listDispatchIndex('owner-2')).toEqual([]);
+  });
+
+  it('a fresh dispatch submitted with identical content AFTER the previous identical-content attempt already fully completed is recorded as a genuinely new, distinct attempt — not silently merged with the completed one', async () => {
+    const store = new WorkOrderLocalStore(createFakeLocalSettings());
+    const first = await store.appendDispatchDurable({
+      ...dispatchParams(),
+      newId: () => 'first-id',
+    });
+    expect(first.snapshot.id).toBe('first-id');
+    expect(await store.getPendingDispatchAttempt(OWNER, PROJECT, TASK, 'worker')).toBeNull();
+
+    // Nothing is "pending" any more — this is a deliberate new attempt, not a retry, even though
+    // the content happens to be identical.
+    const second = await store.appendDispatchDurable({
+      ...dispatchParams(),
+      newId: () => 'second-id',
+    });
+    expect(second.snapshot.id).toBe('second-id');
+    expect(second.recoveredOriginal).toBeNull();
+    expect(await store.listDispatchIndex(OWNER)).toHaveLength(2);
+  });
+
+  it('report: MUTATION PROOF (navigation/restart) — index write fails, then an identical resubmission from a fresh store instance repairs it under its original dispatch, no hidden duplicate', async () => {
+    const settings = createControlledLocalSettings();
+    const store = new WorkOrderLocalStore(settings);
+    await store.appendDispatch(makeSnapshot());
+    settings.failWritesMatching((key) => key === `hammond.workOrders.reportIndex.${OWNER}`, {
+      count: 1,
+    });
+
+    const reportParams = () => ({
+      ownerId: OWNER,
+      projectId: PROJECT,
+      taskId: TASK,
+      dispatchId: 'dispatch-1',
+      rawText: 'raw report text',
+      url: null,
+      returnedIdentity: null,
+      headSha: null,
+      verificationNotes: '',
+      limitations: '',
+      provenance: 'owner-pasted',
+      recordedAt: '2026-09-08T01:00:00.000Z',
+      newId: () => 'report-fresh-id',
+    });
+
+    await expect(
+      new WorkOrderLocalStore(settings).appendReportDurable(reportParams()),
+    ).rejects.toThrow(WorkOrderDomainError);
+    const restarted = new WorkOrderLocalStore(settings);
+    const { report, recoveredOriginal } = await restarted.appendReportDurable(reportParams());
+    expect(report.id).toBe('report-fresh-id');
+    expect(recoveredOriginal).toBeNull();
+    expect(await restarted.listReportsForDispatch(OWNER, 'dispatch-1')).toHaveLength(1);
+    expect(await restarted.getPendingReportAttempt(OWNER, 'dispatch-1')).toBeNull();
+  });
+
+  it('report: editing the returned text after a partial failure recovers the original report, then attaches the edit as a second, distinct report under the same dispatch', async () => {
+    const settings = createControlledLocalSettings();
+    const store = new WorkOrderLocalStore(settings);
+    await store.appendDispatch(makeSnapshot());
+    settings.failWritesMatching((key) => key === `hammond.workOrders.reportIndex.${OWNER}`, {
+      count: 1,
+    });
+
+    await expect(
+      store.appendReportDurable({
+        ownerId: OWNER,
+        projectId: PROJECT,
+        taskId: TASK,
+        dispatchId: 'dispatch-1',
+        rawText: 'first attempt text',
+        url: null,
+        returnedIdentity: null,
+        headSha: null,
+        verificationNotes: '',
+        limitations: '',
+        provenance: 'owner-pasted',
+        recordedAt: '2026-09-08T01:00:00.000Z',
+        newId: () => 'report-original-id',
+      }),
+    ).rejects.toThrow(WorkOrderDomainError);
+
+    const { report, recoveredOriginal } = await store.appendReportDurable({
+      ownerId: OWNER,
+      projectId: PROJECT,
+      taskId: TASK,
+      dispatchId: 'dispatch-1',
+      rawText: 'edited text after failure',
+      url: null,
+      returnedIdentity: null,
+      headSha: null,
+      verificationNotes: '',
+      limitations: '',
+      provenance: 'owner-pasted',
+      recordedAt: '2026-09-08T01:05:00.000Z',
+      newId: () => 'report-edited-id',
+    });
+
+    expect(recoveredOriginal).toMatchObject({
+      id: 'report-original-id',
+      rawText: 'first attempt text',
+    });
+    expect(report).toMatchObject({ id: 'report-edited-id', rawText: 'edited text after failure' });
+    const reports = await store.listReportsForDispatch(OWNER, 'dispatch-1');
+    expect(reports).toHaveLength(2);
+    expect(reports.map((r) => r.rawText).sort()).toEqual([
+      'edited text after failure',
+      'first attempt text',
+    ]);
+  });
+
+  it('report: two different dispatches under the same task keep independent pending report attempts — a report attempt for one dispatch never attaches to the other', async () => {
+    const settings = createControlledLocalSettings();
+    const store = new WorkOrderLocalStore(settings);
+    await store.appendDispatch(makeSnapshot({ id: 'dispatch-a' }));
+    await store.appendDispatch(makeSnapshot({ id: 'dispatch-b' }));
+    settings.failWritesMatching((key) => key === `hammond.workOrders.reportIndex.${OWNER}`, {
+      count: 1,
+    });
+
+    await expect(
+      store.appendReportDurable({
+        ownerId: OWNER,
+        projectId: PROJECT,
+        taskId: TASK,
+        dispatchId: 'dispatch-a',
+        rawText: 'report for dispatch A',
+        url: null,
+        returnedIdentity: null,
+        headSha: null,
+        verificationNotes: '',
+        limitations: '',
+        provenance: 'owner-pasted',
+        recordedAt: '2026-09-08T01:00:00.000Z',
+        newId: () => 'report-a-id',
+      }),
+    ).rejects.toThrow(WorkOrderDomainError);
+
+    // A fresh report attempt for the OTHER dispatch succeeds outright and never touches dispatch
+    // A's still-pending attempt.
+    const resultB = await store.appendReportDurable({
+      ownerId: OWNER,
+      projectId: PROJECT,
+      taskId: TASK,
+      dispatchId: 'dispatch-b',
+      rawText: 'report for dispatch B',
+      url: null,
+      returnedIdentity: null,
+      headSha: null,
+      verificationNotes: '',
+      limitations: '',
+      provenance: 'owner-pasted',
+      recordedAt: '2026-09-08T01:00:00.000Z',
+      newId: () => 'report-b-id',
+    });
+    expect(resultB.recoveredOriginal).toBeNull();
+    expect(await store.getPendingReportAttempt(OWNER, 'dispatch-a')).toMatchObject({
+      id: 'report-a-id',
+    });
+    expect(await store.listReportsForDispatch(OWNER, 'dispatch-a')).toEqual([]);
+    expect(await store.listReportsForDispatch(OWNER, 'dispatch-b')).toHaveLength(1);
+  });
+});

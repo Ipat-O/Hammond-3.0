@@ -210,6 +210,44 @@ export interface WorkOrderReportRecord {
   recordedAt: string;
 }
 
+/**
+ * A durably-persisted, in-flight dispatch attempt: the stable id plus the exact submitted packet
+ * and generated content for an operation that has not yet been confirmed document+index
+ * consistent. Recorded *before* the document write is attempted, so a freshly mounted panel or a
+ * freshly constructed service — after a stage switch, task switch, remount, or process restart —
+ * can recover the attempt from `ownerId`/`projectId`/`taskId`/`stage` alone. In-memory refs may
+ * mirror this, but this record is the sole durable recovery handle; no hidden UUID needs to be
+ * shown to or supplied by the owner.
+ */
+export interface WorkOrderPendingDispatchAttempt {
+  id: string;
+  ownerId: string;
+  projectId: string;
+  taskId: string;
+  stage: WorkOrderStage;
+  packet: WorkOrderFields;
+  content: string;
+  createdAt: string;
+}
+
+/** The report-record equivalent of `WorkOrderPendingDispatchAttempt`. Scoped by the report's fixed
+ * `dispatchId` target, never by whichever dispatch happens to be selected in the UI right now. */
+export interface WorkOrderPendingReportAttempt {
+  id: string;
+  ownerId: string;
+  projectId: string;
+  taskId: string;
+  dispatchId: string;
+  rawText: string;
+  url: string | null;
+  returnedIdentity: ReturnedIdentity | null;
+  headSha: string | null;
+  verificationNotes: string;
+  limitations: string;
+  provenance: string;
+  recordedAt: string;
+}
+
 export interface WorkOrderIndexEntry {
   id: string;
   projectId: string;

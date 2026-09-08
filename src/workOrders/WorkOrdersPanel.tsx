@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { formatIdentity, identitiesEqual, isIndependentFamily } from './identity';
 import { WorkOrderDomainError } from './errors';
 import type { WorkOrderInjectOutcome } from './injection';
-import { createWorkOrderId, type WorkOrdersService } from './service';
+import type { WorkOrdersService } from './service';
 import type {
   AuditPacketFields,
   CorrectionPacketFields,
@@ -328,13 +328,15 @@ export function WorkOrdersPanel(props: WorkOrdersPanelProps) {
   const [recording, setRecording] = useState(false);
   const [recordError, setRecordError] = useState<string | null>(null);
   const [lastRecordedId, setLastRecordedId] = useState<string | null>(null);
-  const pendingIdRef = useRef<string | null>(null);
-  const pendingCreatedAtRef = useRef<string | null>(null);
+  const [recoveredDispatchNotice, setRecoveredDispatchNotice] = useState<string | null>(null);
 
   const [reportForm, setReportForm] = useState<ReportFormState | null>(null);
   const [attaching, setAttaching] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
-  const pendingReportIdRef = useRef<string | null>(null);
+  const [recoveredReportNotice, setRecoveredReportNotice] = useState<{
+    dispatchId: string;
+    message: string;
+  } | null>(null);
 
   const [injectionBusy, setInjectionBusy] = useState(false);
   const [injectionError, setInjectionError] = useState<string | null>(null);
@@ -403,8 +405,8 @@ export function WorkOrdersPanel(props: WorkOrdersPanelProps) {
     setReportForm(null);
     setRecordError(null);
     setCopyStatus('idle');
-    pendingIdRef.current = null;
-    pendingCreatedAtRef.current = null;
+    setRecoveredDispatchNotice(null);
+    setRecoveredReportNotice(null);
 
     void (async () => {
       const draft = await service.readDraft({ ownerId, projectId, taskId, stage });
@@ -475,42 +477,27 @@ export function WorkOrdersPanel(props: WorkOrdersPanelProps) {
     if (!packet || !validation?.isValid) return;
     setRecording(true);
     setRecordError(null);
+    setRecoveredDispatchNotice(null);
 
-    const attemptRecord = (id: string, createdAt: string) => {
-      pendingIdRef.current = id;
-      pendingCreatedAtRef.current = createdAt;
-      return service.recordDispatch({
-        id,
+    try {
+      // No id is generated or held here: `recordDispatchDurable` derives and durably persists the
+      // attempt's own identity from owner/project/task/stage, so it discovers and repairs an
+      // earlier partial attempt (an unindexed document from a prior click, a stage switch, a
+      // remount, or a full app restart) on its own — nothing but this call is needed to recover it.
+      const { snapshot, recoveredOriginal } = await service.recordDispatchDurable({
         ownerId,
         projectId,
         taskId,
         packet,
-        createdAt,
         expectedWorker,
       });
-    };
-
-    try {
-      let snapshot: WorkOrderDispatchSnapshot;
-      try {
-        snapshot = await attemptRecord(
-          pendingIdRef.current ?? createWorkOrderId(),
-          pendingCreatedAtRef.current ?? new Date().toISOString(),
-        );
-      } catch (error) {
-        // A pending id from an earlier partial failure (document saved, index write failed) can no
-        // longer be reused once the packet content has changed since that attempt — resubmitting it
-        // would hit `immutable_conflict` against the orphaned document forever. That orphan is left
-        // exactly as it is (never deleted, never silently reused for the new content); this edit is
-        // recorded as a fresh dispatch under a new id instead of getting stuck against the old one.
-        if (!(error instanceof WorkOrderDomainError) || error.code !== 'immutable_conflict')
-          throw error;
-        snapshot = await attemptRecord(createWorkOrderId(), new Date().toISOString());
-      }
-      pendingIdRef.current = null;
-      pendingCreatedAtRef.current = null;
       await service.clearDraft({ ownerId, projectId, taskId, stage });
       setLastRecordedId(snapshot.id);
+      setRecoveredDispatchNotice(
+        recoveredOriginal
+          ? `Also recovered an earlier partial attempt as dispatch ${recoveredOriginal.id} — it is preserved in history below, unedited.`
+          : null,
+      );
       await refreshHistory();
       const original = await service.getOriginalWorkerIdentity(ownerId, taskId);
       setExpectedWorker(original);
@@ -565,22 +552,23 @@ export function WorkOrdersPanel(props: WorkOrdersPanelProps) {
   function beginReportForm(dispatchId: string) {
     setReportForm(emptyReportForm(dispatchId));
     setAttachError(null);
-    pendingReportIdRef.current = null;
+    setRecoveredReportNotice(null);
   }
 
   async function submitReportForm() {
     if (!reportForm) return;
     setAttaching(true);
     setAttachError(null);
+    setRecoveredReportNotice(null);
     const returnedIdentity: ReturnedIdentity | null =
       reportForm.provider.trim() || reportForm.tool.trim() || reportForm.model.trim()
         ? { provider: reportForm.provider, tool: reportForm.tool, model: reportForm.model }
         : null;
 
-    const attemptAttach = (id: string) => {
-      pendingReportIdRef.current = id;
-      return service.attachReport({
-        id,
+    try {
+      // No id is generated or held here — see `handleRecord`'s comment: `attachReportDurable`
+      // recovers an earlier partial attempt on its own, scoped by this report's fixed dispatchId.
+      const { report, recoveredOriginal } = await service.attachReportDurable({
         ownerId,
         projectId,
         taskId,
@@ -593,28 +581,24 @@ export function WorkOrdersPanel(props: WorkOrdersPanelProps) {
         limitations: reportForm.limitations,
         provenance: reportForm.provenance,
       });
-    };
-
-    try {
-      let report: WorkOrderReportRecord;
-      try {
-        report = await attemptAttach(pendingReportIdRef.current ?? createWorkOrderId());
-      } catch (error) {
-        // Same recovery as dispatch recording: a pending report id whose earlier attempt saved the
-        // record but failed the index write can't be resubmitted once the form text has changed —
-        // this edit is recorded as a new report rather than getting stuck against the orphaned one.
-        if (!(error instanceof WorkOrderDomainError) || error.code !== 'immutable_conflict')
-          throw error;
-        report = await attemptAttach(createWorkOrderId());
-      }
-      pendingReportIdRef.current = null;
-      setReportsByDispatch((current) => ({
-        ...current,
-        [report.dispatchId]: [
-          report,
-          ...(current[report.dispatchId] ?? []).filter((r) => r.id !== report.id),
-        ],
-      }));
+      setReportsByDispatch((current) => {
+        const existing = current[report.dispatchId] ?? [];
+        const withRecoveredOriginal = recoveredOriginal
+          ? [recoveredOriginal, ...existing.filter((r) => r.id !== recoveredOriginal.id)]
+          : existing;
+        return {
+          ...current,
+          [report.dispatchId]: [report, ...withRecoveredOriginal.filter((r) => r.id !== report.id)],
+        };
+      });
+      setRecoveredReportNotice(
+        recoveredOriginal
+          ? {
+              dispatchId: report.dispatchId,
+              message: `Also recovered an earlier partial attempt as report ${recoveredOriginal.id} — it is preserved above, unedited.`,
+            }
+          : null,
+      );
       setReportForm(null);
     } catch (error) {
       setAttachError(errorMessage(error));
@@ -913,6 +897,9 @@ export function WorkOrdersPanel(props: WorkOrdersPanelProps) {
         {lastRecordedId && !recording && !recordError && (
           <p className="muted-copy">Recorded as dispatch {lastRecordedId}.</p>
         )}
+        {recoveredDispatchNotice && !recording && !recordError && (
+          <p className="muted-copy">{recoveredDispatchNotice}</p>
+        )}
       </div>
 
       <div className="work-order-history">
@@ -994,6 +981,9 @@ export function WorkOrdersPanel(props: WorkOrdersPanelProps) {
                     {injectionMessage && <p className="muted-copy">{injectionMessage}</p>}
 
                     <p className="card-kicker">Returned reports ({reports.length})</p>
+                    {recoveredReportNotice?.dispatchId === dispatch.id && (
+                      <p className="muted-copy">{recoveredReportNotice.message}</p>
+                    )}
                     {reports.map((report) => {
                       const mismatched =
                         report.returnedIdentity !== null &&

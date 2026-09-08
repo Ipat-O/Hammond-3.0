@@ -413,7 +413,7 @@ describe('WorkOrdersPanel partial-write recovery (HAM3-009 Correction 1)', () =>
     expect(screen.getByText('History (1)')).toBeInTheDocument();
   });
 
-  it('MUTATION PROOF (recovery, dispatch): editing the packet after a partial failure records the new content as a new dispatch instead of getting stuck on immutable_conflict against the orphaned attempt', async () => {
+  it('MUTATION PROOF (recovery, dispatch): editing the packet after a partial failure first recovers the original attempt into history, then records the edited content as a second, distinct entry — no lost history, no duplicate', async () => {
     const settings = createControlledLocalSettings();
     settings.failWritesMatching((key) => key === 'hammond.workOrders.index.owner-1', { count: 1 });
     const harness = createWorkOrdersTestHarness('owner-1', { localSettings: settings });
@@ -428,29 +428,39 @@ describe('WorkOrdersPanel partial-write recovery (HAM3-009 Correction 1)', () =>
     fireEvent.click(screen.getByRole('button', { name: 'Record dispatch' }));
     await waitFor(() => expect(screen.getByText('History (0)')).toBeInTheDocument());
 
-    // The owner edits the packet rather than resubmitting unchanged — under the old, unfixed
-    // behavior this would hit `immutable_conflict` against the orphaned document forever.
+    // The owner edits the packet rather than resubmitting unchanged. Under the residual defect
+    // this correction closes, the original accepted document stayed invisible forever; now it is
+    // recovered as its own history entry before the edited content is recorded separately.
     fireEvent.change(screen.getByLabelText('Scope'), {
       target: { value: 'A revised scope after the partial failure.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Record dispatch' }));
 
     await waitFor(() => expect(screen.getByText(/Recorded as dispatch/)).toBeInTheDocument());
-    expect(screen.getByText('History (1)')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /Worker · / }));
+    await waitFor(() => expect(screen.getByText(/Also recovered an earlier/)).toBeInTheDocument());
+    expect(screen.getByText('History (2)')).toBeInTheDocument();
+
     const historyList = screen
-      .getByText('History (1)')
+      .getByText('History (2)')
       .closest('.work-order-history') as HTMLElement;
-    // The single visible history entry carries the new content, not the orphaned original.
+    const entries = within(historyList).getAllByRole('button', { name: /Worker · / });
+    expect(entries).toHaveLength(2);
+
+    // Only one entry's detail is expanded at a time — check each in turn. Newest first: index 0 is
+    // the just-recorded edited content, index 1 is the recovered original.
+    fireEvent.click(entries[0]);
     expect(
       within(historyList).getByText('A revised scope after the partial failure.', {
         exact: false,
       }),
     ).toBeInTheDocument();
-    expect(within(historyList).queryByText('Do the thing.', { exact: false })).toBeNull();
+
+    fireEvent.click(entries[0]); // collapse
+    fireEvent.click(entries[1]); // expand the recovered original
+    expect(within(historyList).getByText('Do the thing.', { exact: false })).toBeInTheDocument();
   });
 
-  it('MUTATION PROOF (recovery, report): editing the returned-report text after a partial failure attaches it as a new report instead of getting stuck against the orphaned attempt', async () => {
+  it('MUTATION PROOF (recovery, report): editing the returned-report text after a partial failure first recovers the original report, then attaches the edited text as a second, distinct report — no lost report, no duplicate', async () => {
     const settings = createControlledLocalSettings();
     settings.failWritesMatching((key) => key === 'hammond.workOrders.reportIndex.owner-1', {
       count: 1,
@@ -489,6 +499,92 @@ describe('WorkOrdersPanel partial-write recovery (HAM3-009 Correction 1)', () =>
         screen.getByText('Edited returned report text after the partial failure.'),
       ).toBeInTheDocument(),
     );
-    expect(screen.getByText('Returned reports (1)')).toBeInTheDocument();
+    // Both the recovered original attempt and the edited text are present under the same
+    // dispatch — the residual defect this correction closes left the original permanently
+    // invisible instead.
+    expect(screen.getByText('First attempt at the returned report text.')).toBeInTheDocument();
+    expect(screen.getByText(/Also recovered an earlier/)).toBeInTheDocument();
+    expect(screen.getByText('Returned reports (2)')).toBeInTheDocument();
+  });
+});
+
+describe('WorkOrdersPanel durable partial-write recovery across navigation and remount (HAM3-009 Correction 2)', () => {
+  const originalClipboard = navigator.clipboard;
+
+  afterEach(() => {
+    Object.defineProperty(navigator, 'clipboard', { value: originalClipboard, configurable: true });
+  });
+
+  /** Counts raw dispatch documents ever written for an owner, straight from the backing store —
+   * not the visible history count. A recovery that silently orphans the original and writes an
+   * identical-content duplicate under a fresh id would still show "History (1)" (the orphan stays
+   * invisible either way), so this is the assertion that actually proves *id reuse* happened. */
+  function dispatchDocumentCount(settings: ReturnType<typeof createControlledLocalSettings>) {
+    return Array.from(settings.store.keys()).filter((key) =>
+      key.startsWith('hammond.workOrders.dispatch.owner-1.'),
+    ).length;
+  }
+
+  it('MUTATION PROOF (stage-switch navigation): a partial dispatch failure survives a Worker → Correction → Worker stage switch — the pending id is not held only in a component ref, so an identical resubmit still recovers into exactly one history entry', async () => {
+    const settings = createControlledLocalSettings();
+    settings.failWritesMatching((key) => key === 'hammond.workOrders.index.owner-1', { count: 1 });
+    const harness = createWorkOrdersTestHarness('owner-1', { localSettings: settings });
+    harness.seedProject(PROJECT_ID);
+
+    renderPanel(harness);
+    await waitFor(() =>
+      expect(screen.getByLabelText('Human owner')).toHaveValue('owner@example.com'),
+    );
+    await fillMinimalWorkerForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Record dispatch' }));
+    await waitFor(() =>
+      expect(
+        screen.getByText(/was saved but could not be recorded in the history index/),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByText('History (0)')).toBeInTheDocument();
+
+    // Navigate away and back — this used to drop the only handle recovery had (an in-memory ref).
+    fireEvent.click(screen.getByRole('tab', { name: 'Correction' }));
+    await waitFor(() => expect(screen.getByLabelText('Correction number')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('tab', { name: 'Worker' }));
+    await waitFor(() => expect(screen.getByLabelText('Scope')).toHaveValue('Do the thing.'));
+
+    // An unedited resubmit must repair the existing document, not mint a hidden duplicate.
+    fireEvent.click(screen.getByRole('button', { name: 'Record dispatch' }));
+    await waitFor(() => expect(screen.getByText(/Recorded as dispatch/)).toBeInTheDocument());
+    expect(screen.getByText('History (1)')).toBeInTheDocument();
+    // The stronger proof: exactly one dispatch document was ever written — a repair that silently
+    // orphaned the original and wrote an identical duplicate under a fresh id would still show
+    // "History (1)" (the orphan stays invisible either way) but would fail this count.
+    expect(dispatchDocumentCount(settings)).toBe(1);
+  });
+
+  it("MUTATION PROOF (unmount/remount — simulated app restart): a partial dispatch failure recovers through a freshly mounted panel instance, proving recovery is not held in this component instance's memory", async () => {
+    const settings = createControlledLocalSettings();
+    settings.failWritesMatching((key) => key === 'hammond.workOrders.index.owner-1', { count: 1 });
+    const harness = createWorkOrdersTestHarness('owner-1', { localSettings: settings });
+    harness.seedProject(PROJECT_ID);
+
+    const first = renderPanel(harness);
+    await waitFor(() =>
+      expect(screen.getByLabelText('Human owner')).toHaveValue('owner@example.com'),
+    );
+    await fillMinimalWorkerForm();
+    fireEvent.click(screen.getByRole('button', { name: 'Record dispatch' }));
+    await waitFor(() => expect(screen.getByText('History (0)')).toBeInTheDocument());
+
+    // Destroy the component entirely — every ref/state this instance held is gone.
+    first.unmount();
+
+    // A brand-new panel instance, wired to the same service/store, discovers the pending attempt
+    // purely from durable state (the auto-persisted draft repopulates the form; the store recovers
+    // the id) — nothing survived in React memory across the unmount.
+    renderPanel(harness);
+    await waitFor(() => expect(screen.getByLabelText('Scope')).toHaveValue('Do the thing.'));
+    fireEvent.click(screen.getByRole('button', { name: 'Record dispatch' }));
+    await waitFor(() => expect(screen.getByText(/Recorded as dispatch/)).toBeInTheDocument());
+    expect(screen.getByText('History (1)')).toBeInTheDocument();
+    expect(dispatchDocumentCount(settings)).toBe(1);
   });
 });

@@ -27,11 +27,18 @@ export interface ControlledLocalSettings extends LocalSettingsStore {
     match: (key: string) => boolean,
     options?: { count?: number; error?: Error },
   ): void;
+  /** Same as `failWritesMatching`, but for `remove()` — used to reproduce a failure while clearing
+   * a pending-attempt marker *after* its document and index are already durably consistent. */
+  failRemovesMatching(
+    match: (key: string) => boolean,
+    options?: { count?: number; error?: Error },
+  ): void;
 }
 
 export function createControlledLocalSettings(): ControlledLocalSettings {
   const store = new Map<string, unknown>();
-  const rules: { match: (key: string) => boolean; remaining: number; error: Error }[] = [];
+  const writeRules: { match: (key: string) => boolean; remaining: number; error: Error }[] = [];
+  const removeRules: { match: (key: string) => boolean; remaining: number; error: Error }[] = [];
 
   return {
     store,
@@ -39,7 +46,7 @@ export function createControlledLocalSettings(): ControlledLocalSettings {
       store.has(key) ? store.get(key) : null,
     ) as LocalSettingsStore['read'],
     write: vi.fn(async (key: string, value: unknown) => {
-      const rule = rules.find((candidate) => candidate.remaining > 0 && candidate.match(key));
+      const rule = writeRules.find((candidate) => candidate.remaining > 0 && candidate.match(key));
       if (rule) {
         rule.remaining -= 1;
         throw rule.error;
@@ -47,13 +54,25 @@ export function createControlledLocalSettings(): ControlledLocalSettings {
       store.set(key, value);
     }) as LocalSettingsStore['write'],
     remove: vi.fn(async (key: string) => {
+      const rule = removeRules.find((candidate) => candidate.remaining > 0 && candidate.match(key));
+      if (rule) {
+        rule.remaining -= 1;
+        throw rule.error;
+      }
       store.delete(key);
     }),
     failWritesMatching(match, options = {}) {
-      rules.push({
+      writeRules.push({
         match,
         remaining: options.count ?? Infinity,
         error: options.error ?? new Error('write failed'),
+      });
+    },
+    failRemovesMatching(match, options = {}) {
+      removeRules.push({
+        match,
+        remaining: options.count ?? Infinity,
+        error: options.error ?? new Error('remove failed'),
       });
     },
   };

@@ -3,6 +3,8 @@ import { WorkOrderDomainError } from './errors';
 import type {
   WorkOrderDispatchSnapshot,
   WorkOrderIndexEntry,
+  WorkOrderPendingDispatchAttempt,
+  WorkOrderPendingReportAttempt,
   WorkOrderReportIndexEntry,
   WorkOrderReportRecord,
   WorkOrderStage,
@@ -33,6 +35,25 @@ function draftKey(
   return `hammond.workOrders.draft.${ownerId}.${projectId}.${taskId}.${stage}`;
 }
 
+/** Scoped by owner/project/task/stage — the same tuple the draft uses — because a dispatch attempt
+ * is a property of "what the owner is currently preparing for this stage of this task", not of any
+ * single generated id. At most one pending dispatch attempt exists per scope at a time. */
+function pendingDispatchKey(
+  ownerId: string,
+  projectId: string,
+  taskId: string,
+  stage: WorkOrderStage,
+): string {
+  return `hammond.workOrders.pendingDispatch.${ownerId}.${projectId}.${taskId}.${stage}`;
+}
+
+/** Scoped by the report's fixed `dispatchId` target — never by whichever dispatch the UI currently
+ * has selected — so a report recovery always reattaches to the same dispatch it was originally
+ * being attached to. */
+function pendingReportKey(ownerId: string, dispatchId: string): string {
+  return `hammond.workOrders.pendingReport.${ownerId}.${dispatchId}`;
+}
+
 function deepEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -48,6 +69,39 @@ function reportContentEqual(a: WorkOrderReportRecord, b: WorkOrderReportRecord):
   return deepEqual({ ...a, recordedAt: null }, { ...b, recordedAt: null });
 }
 
+/** Whether a pending dispatch attempt was submitted with the exact same packet+content that is
+ * being submitted now — an unedited retry (double click, or a resubmission after navigation/
+ * restart with nothing changed) rather than an edit of an earlier partial attempt. */
+function pendingDispatchMatches(
+  pending: WorkOrderPendingDispatchAttempt,
+  submission: { packet: WorkOrderDispatchSnapshot['packet']; content: string },
+): boolean {
+  return pending.content === submission.content && deepEqual(pending.packet, submission.packet);
+}
+
+function pendingReportMatches(
+  pending: WorkOrderPendingReportAttempt,
+  submission: {
+    rawText: string;
+    url: string | null;
+    returnedIdentity: WorkOrderReportRecord['returnedIdentity'];
+    headSha: string | null;
+    verificationNotes: string;
+    limitations: string;
+    provenance: string;
+  },
+): boolean {
+  return (
+    pending.rawText === submission.rawText &&
+    pending.url === submission.url &&
+    deepEqual(pending.returnedIdentity, submission.returnedIdentity) &&
+    pending.headSha === submission.headSha &&
+    pending.verificationNotes === submission.verificationNotes &&
+    pending.limitations === submission.limitations &&
+    pending.provenance === submission.provenance
+  );
+}
+
 /**
  * Device-local, verbatim persistence for work-order drafts, dispatch snapshots, and report
  * records. Never touches Supabase — this is the durable owner-scoped local store that keeps the
@@ -57,6 +111,19 @@ function reportContentEqual(a: WorkOrderReportRecord, b: WorkOrderReportRecord):
  * double click or a retry after a partial failure never creates a duplicate or silently mutates
  * history). Writes for one owner are serialized so a concurrent index read-modify-write can never
  * race and drop an entry.
+ *
+ * `appendDispatchDurable`/`appendReportDurable` (HAM3-009 Correction 2) additionally persist a
+ * *pending attempt* record — the stable id plus the exact submitted packet/content — before ever
+ * writing the document, so an attempt survives navigation, remount, or a process restart and is
+ * recoverable from scope alone (no id held only in memory). This is prospective only: it covers
+ * every attempt made from this version forward. `LocalSettingsStore` exposes no key-enumeration
+ * primitive (`read`/`write`/`remove` by exact key only — see `../api/contracts.ts`), so there is no
+ * way to scan for a dispatch/report document that was already orphaned by a version of this code
+ * that predates the pending-attempt record (i.e. saved-but-unindexed under the original Correction
+ * 1 fix, with no pending record ever written because the concept did not exist yet). Any such
+ * pre-existing orphan's id was never retained anywhere durable once its originating in-memory ref
+ * was dropped, so it is not migrated or reconciled here — there is nothing to migrate from. This
+ * gap is disclosed, not silently promised away.
  */
 export class WorkOrderLocalStore {
   private readonly writeChains = new Map<string, Promise<void>>();
@@ -178,24 +245,167 @@ export class WorkOrderLocalStore {
    * never sees a false success; a retry that reaches the index write cleanly repairs it in place.
    */
   async appendDispatch(snapshot: WorkOrderDispatchSnapshot): Promise<WorkOrderDispatchSnapshot> {
-    return this.enqueue(snapshot.ownerId, async () => {
-      const existing = await this.getDispatch(snapshot.ownerId, snapshot.id);
-      if (existing) {
-        if (!dispatchContentEqual(existing, snapshot)) {
-          throw new WorkOrderDomainError(
-            'immutable_conflict',
-            `Dispatch ${snapshot.id} is already recorded with different content and cannot be overwritten.`,
-          );
-        }
-        await this.ensureDispatchIndexEntry(existing);
-        return existing;
+    return this.enqueue(snapshot.ownerId, () => this.appendDispatchLocked(snapshot));
+  }
+
+  /** The body of `appendDispatch`, without its own `enqueue` — callers that are already running
+   * inside this owner's write chain (namely `appendDispatchDurable`) call this directly, since
+   * nesting `enqueue` calls for the same owner would deadlock (the inner call would wait on the
+   * very outer task that is calling it). */
+  private async appendDispatchLocked(
+    snapshot: WorkOrderDispatchSnapshot,
+  ): Promise<WorkOrderDispatchSnapshot> {
+    const existing = await this.getDispatch(snapshot.ownerId, snapshot.id);
+    if (existing) {
+      if (!dispatchContentEqual(existing, snapshot)) {
+        throw new WorkOrderDomainError(
+          'immutable_conflict',
+          `Dispatch ${snapshot.id} is already recorded with different content and cannot be overwritten.`,
+        );
       }
-      await this.persist(
-        () => this.settings.write(dispatchKey(snapshot.ownerId, snapshot.id), snapshot),
-        `Failed to save dispatch ${snapshot.id}.`,
+      await this.ensureDispatchIndexEntry(existing);
+      return existing;
+    }
+    await this.persist(
+      () => this.settings.write(dispatchKey(snapshot.ownerId, snapshot.id), snapshot),
+      `Failed to save dispatch ${snapshot.id}.`,
+    );
+    await this.ensureDispatchIndexEntry(snapshot);
+    return snapshot;
+  }
+
+  async getPendingDispatchAttempt(
+    ownerId: string,
+    projectId: string,
+    taskId: string,
+    stage: WorkOrderStage,
+  ): Promise<WorkOrderPendingDispatchAttempt | null> {
+    return this.settings.read<WorkOrderPendingDispatchAttempt>(
+      pendingDispatchKey(ownerId, projectId, taskId, stage),
+    );
+  }
+
+  private async setPendingDispatchAttempt(attempt: WorkOrderPendingDispatchAttempt): Promise<void> {
+    await this.persist(
+      () =>
+        this.settings.write(
+          pendingDispatchKey(attempt.ownerId, attempt.projectId, attempt.taskId, attempt.stage),
+          attempt,
+        ),
+      `Could not durably record attempt ${attempt.id} before saving it — nothing was written. Retry.`,
+    );
+  }
+
+  private async clearPendingDispatchAttempt(
+    ownerId: string,
+    projectId: string,
+    taskId: string,
+    stage: WorkOrderStage,
+  ): Promise<void> {
+    await this.settings.remove(pendingDispatchKey(ownerId, projectId, taskId, stage));
+  }
+
+  /**
+   * The durable-recovery entry point for recording a dispatch: unlike `appendDispatch` (which
+   * requires the caller to already hold a stable id), this derives and durably persists the
+   * attempt's own identity, so a UI/service recreated after a stage switch, task switch, remount,
+   * or process restart discovers the same in-flight attempt from `ownerId`/`projectId`/`taskId`/
+   * `stage` alone — no id supplied by the caller, no hidden UUID an owner would ever need to know.
+   *
+   * Recovery model — at most one pending attempt is tracked per (owner, project, task, stage):
+   *  - No pending attempt on record → a new attempt. A fresh id is minted and the attempt (id +
+   *    exact packet + exact content) is durably recorded as pending *before* the document is ever
+   *    written; if that write fails, this call fails truthfully and no untracked document is ever
+   *    created. Once the document and its index entry are consistent, the pending record is
+   *    cleared.
+   *  - A pending attempt exists with identical packet+content → an unedited retry (double click,
+   *    or resubmission after navigation/restart with nothing changed). The same id is reused,
+   *    which lets `appendDispatch`'s own idempotent repair recover a document that was saved but
+   *    never indexed.
+   *  - A pending attempt exists with *different* content → the packet was edited since an earlier
+   *    partial failure. The original attempt is recovered first, under its own id and exact
+   *    original bytes/timestamp (never deleted, never reused for the new content, never
+   *    re-validated — it was already accepted); its pending record is cleared only once that
+   *    fully succeeds. Only then is the edited content recorded as a new, distinct attempt under a
+   *    fresh id. If recovering the original fails again, the edited content is never attempted —
+   *    the caller sees a truthful error, the original pending record is untouched for a later
+   *    retry, and the edited draft (persisted separately by the caller) is not lost.
+   */
+  async appendDispatchDurable(params: {
+    ownerId: string;
+    projectId: string;
+    taskId: string;
+    stage: WorkOrderStage;
+    packet: WorkOrderDispatchSnapshot['packet'];
+    content: string;
+    createdAt: string;
+    newId: () => string;
+  }): Promise<{
+    snapshot: WorkOrderDispatchSnapshot;
+    recoveredOriginal: WorkOrderDispatchSnapshot | null;
+  }> {
+    return this.enqueue(params.ownerId, async () => {
+      const pending = await this.getPendingDispatchAttempt(
+        params.ownerId,
+        params.projectId,
+        params.taskId,
+        params.stage,
       );
-      await this.ensureDispatchIndexEntry(snapshot);
-      return snapshot;
+      let recoveredOriginal: WorkOrderDispatchSnapshot | null = null;
+
+      if (pending && !pendingDispatchMatches(pending, params)) {
+        const original: WorkOrderDispatchSnapshot = {
+          id: pending.id,
+          ownerId: pending.ownerId,
+          projectId: pending.projectId,
+          taskId: pending.taskId,
+          stage: pending.stage,
+          content: pending.content,
+          packet: pending.packet,
+          createdAt: pending.createdAt,
+        };
+        recoveredOriginal = await this.appendDispatchLocked(original);
+        await this.clearPendingDispatchAttempt(
+          params.ownerId,
+          params.projectId,
+          params.taskId,
+          params.stage,
+        );
+      }
+
+      const reuse = pending !== null && pendingDispatchMatches(pending, params);
+      const id = reuse ? pending!.id : params.newId();
+      const createdAt = reuse ? pending!.createdAt : params.createdAt;
+      const snapshot: WorkOrderDispatchSnapshot = {
+        id,
+        ownerId: params.ownerId,
+        projectId: params.projectId,
+        taskId: params.taskId,
+        stage: params.stage,
+        content: params.content,
+        packet: params.packet,
+        createdAt,
+      };
+      if (!reuse) {
+        await this.setPendingDispatchAttempt({
+          id,
+          ownerId: params.ownerId,
+          projectId: params.projectId,
+          taskId: params.taskId,
+          stage: params.stage,
+          packet: params.packet,
+          content: params.content,
+          createdAt,
+        });
+      }
+      const recorded = await this.appendDispatchLocked(snapshot);
+      await this.clearPendingDispatchAttempt(
+        params.ownerId,
+        params.projectId,
+        params.taskId,
+        params.stage,
+      );
+      return { snapshot: recorded, recoveredOriginal };
     });
   }
 
@@ -252,24 +462,131 @@ export class WorkOrderLocalStore {
    * document-then-index repair as `appendDispatch` — see there for why.
    */
   async appendReport(report: WorkOrderReportRecord): Promise<WorkOrderReportRecord> {
-    return this.enqueue(report.ownerId, async () => {
-      const existing = await this.getReport(report.ownerId, report.id);
-      if (existing) {
-        if (!reportContentEqual(existing, report)) {
-          throw new WorkOrderDomainError(
-            'immutable_conflict',
-            `Report ${report.id} is already recorded with different content and cannot be overwritten.`,
-          );
-        }
-        await this.ensureReportIndexEntry(existing);
-        return existing;
+    return this.enqueue(report.ownerId, () => this.appendReportLocked(report));
+  }
+
+  /** The body of `appendReport`, without its own `enqueue` — see `appendDispatchLocked` for why
+   * this split exists (avoids a nested-enqueue deadlock from `appendReportDurable`). */
+  private async appendReportLocked(report: WorkOrderReportRecord): Promise<WorkOrderReportRecord> {
+    const existing = await this.getReport(report.ownerId, report.id);
+    if (existing) {
+      if (!reportContentEqual(existing, report)) {
+        throw new WorkOrderDomainError(
+          'immutable_conflict',
+          `Report ${report.id} is already recorded with different content and cannot be overwritten.`,
+        );
       }
-      await this.persist(
-        () => this.settings.write(reportKey(report.ownerId, report.id), report),
-        `Failed to save report ${report.id}.`,
-      );
-      await this.ensureReportIndexEntry(report);
-      return report;
+      await this.ensureReportIndexEntry(existing);
+      return existing;
+    }
+    await this.persist(
+      () => this.settings.write(reportKey(report.ownerId, report.id), report),
+      `Failed to save report ${report.id}.`,
+    );
+    await this.ensureReportIndexEntry(report);
+    return report;
+  }
+
+  async getPendingReportAttempt(
+    ownerId: string,
+    dispatchId: string,
+  ): Promise<WorkOrderPendingReportAttempt | null> {
+    return this.settings.read<WorkOrderPendingReportAttempt>(pendingReportKey(ownerId, dispatchId));
+  }
+
+  private async setPendingReportAttempt(attempt: WorkOrderPendingReportAttempt): Promise<void> {
+    await this.persist(
+      () => this.settings.write(pendingReportKey(attempt.ownerId, attempt.dispatchId), attempt),
+      `Could not durably record report attempt ${attempt.id} before saving it — nothing was written. Retry.`,
+    );
+  }
+
+  private async clearPendingReportAttempt(ownerId: string, dispatchId: string): Promise<void> {
+    await this.settings.remove(pendingReportKey(ownerId, dispatchId));
+  }
+
+  /**
+   * The report equivalent of `appendDispatchDurable` — see there for the full recovery model.
+   * Scoped by the report's fixed `dispatchId`, so a stage change, task switch, or a *different*
+   * dispatch's report attempt never interferes with recovering this one.
+   */
+  async appendReportDurable(params: {
+    ownerId: string;
+    projectId: string;
+    taskId: string;
+    dispatchId: string;
+    rawText: string;
+    url: string | null;
+    returnedIdentity: WorkOrderReportRecord['returnedIdentity'];
+    headSha: string | null;
+    verificationNotes: string;
+    limitations: string;
+    provenance: string;
+    recordedAt: string;
+    newId: () => string;
+  }): Promise<{ report: WorkOrderReportRecord; recoveredOriginal: WorkOrderReportRecord | null }> {
+    return this.enqueue(params.ownerId, async () => {
+      const pending = await this.getPendingReportAttempt(params.ownerId, params.dispatchId);
+      let recoveredOriginal: WorkOrderReportRecord | null = null;
+
+      if (pending && !pendingReportMatches(pending, params)) {
+        const original: WorkOrderReportRecord = {
+          id: pending.id,
+          ownerId: pending.ownerId,
+          projectId: pending.projectId,
+          taskId: pending.taskId,
+          dispatchId: pending.dispatchId,
+          rawText: pending.rawText,
+          url: pending.url,
+          returnedIdentity: pending.returnedIdentity,
+          headSha: pending.headSha,
+          verificationNotes: pending.verificationNotes,
+          limitations: pending.limitations,
+          provenance: pending.provenance,
+          recordedAt: pending.recordedAt,
+        };
+        recoveredOriginal = await this.appendReportLocked(original);
+        await this.clearPendingReportAttempt(params.ownerId, params.dispatchId);
+      }
+
+      const reuse = pending !== null && pendingReportMatches(pending, params);
+      const id = reuse ? pending!.id : params.newId();
+      const recordedAt = reuse ? pending!.recordedAt : params.recordedAt;
+      const report: WorkOrderReportRecord = {
+        id,
+        ownerId: params.ownerId,
+        projectId: params.projectId,
+        taskId: params.taskId,
+        dispatchId: params.dispatchId,
+        rawText: params.rawText,
+        url: params.url,
+        returnedIdentity: params.returnedIdentity,
+        headSha: params.headSha,
+        verificationNotes: params.verificationNotes,
+        limitations: params.limitations,
+        provenance: params.provenance,
+        recordedAt,
+      };
+      if (!reuse) {
+        await this.setPendingReportAttempt({
+          id,
+          ownerId: params.ownerId,
+          projectId: params.projectId,
+          taskId: params.taskId,
+          dispatchId: params.dispatchId,
+          rawText: params.rawText,
+          url: params.url,
+          returnedIdentity: params.returnedIdentity,
+          headSha: params.headSha,
+          verificationNotes: params.verificationNotes,
+          limitations: params.limitations,
+          provenance: params.provenance,
+          recordedAt,
+        });
+      }
+      const recorded = await this.appendReportLocked(report);
+      await this.clearPendingReportAttempt(params.ownerId, params.dispatchId);
+      return { report: recorded, recoveredOriginal };
     });
   }
 }

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { WorkOrderDomainError } from './errors';
-import { createWorkOrderId } from './service';
+import { WorkOrderLocalStore } from './localStore';
+import { createWorkOrderId, WorkOrdersService } from './service';
 import {
   createControlledLocalSettings,
   createWorkOrdersTestHarness,
@@ -590,5 +591,235 @@ describe('WorkOrdersService partial-write recovery (HAM3-009 Correction 1)', () 
 
     const taskReports = await harness.service.getReportsForTask(harness.ownerId, TASK_ID);
     expect(taskReports).toEqual([recovered]);
+  });
+});
+
+describe('WorkOrdersService durable partial-write recovery (HAM3-009 Correction 2)', () => {
+  const OWNER_ID = 'owner-1';
+
+  it('recordDispatchDurable: rejects an invalid packet — nothing is persisted, and no pending record is left behind either', async () => {
+    const harness = createWorkOrdersTestHarness(OWNER_ID);
+    harness.seedProject(PROJECT_ID);
+    const emptyPacket: WorkOrderFields = {
+      stage: 'worker',
+      fields: await harness.service.defaultWorkerFields({
+        projectId: PROJECT_ID,
+        taskId: TASK_ID,
+        humanOwner: '',
+      }),
+    };
+    await expect(
+      harness.service.recordDispatchDurable({
+        ownerId: harness.ownerId,
+        projectId: PROJECT_ID,
+        taskId: TASK_ID,
+        packet: emptyPacket,
+      }),
+    ).rejects.toThrow(WorkOrderDomainError);
+    expect(await harness.service.listHistory(harness.ownerId, TASK_ID)).toEqual([]);
+    expect(
+      await harness.localStore.getPendingDispatchAttempt(
+        harness.ownerId,
+        PROJECT_ID,
+        TASK_ID,
+        'worker',
+      ),
+    ).toBeNull();
+  });
+
+  it('recordDispatchDurable: index write fails, then — from a freshly reconstructed service/store around the same underlying settings (simulated app restart) — an identical resubmission recovers, and the original worker identity becomes discoverable for Correction prefill', async () => {
+    const settings = createControlledLocalSettings();
+    settings.failWritesMatching((key) => key === `hammond.workOrders.index.${OWNER_ID}`, {
+      count: 1,
+    });
+    const harness = createWorkOrdersTestHarness(OWNER_ID, { localSettings: settings });
+    harness.seedProject(PROJECT_ID);
+    const packet = await buildRecordableWorkerPacket(harness);
+
+    await expect(
+      harness.service.recordDispatchDurable({
+        ownerId: harness.ownerId,
+        projectId: PROJECT_ID,
+        taskId: TASK_ID,
+        packet,
+      }),
+    ).rejects.toThrow(WorkOrderDomainError);
+    expect(await harness.service.listHistory(harness.ownerId, TASK_ID)).toEqual([]);
+    expect(await harness.service.getOriginalWorkerIdentity(harness.ownerId, TASK_ID)).toBeNull();
+
+    // Simulated restart: a brand-new WorkOrderLocalStore/WorkOrdersService wired around the exact
+    // same underlying settings — nothing carried over in memory, no id passed by the caller.
+    const restartedService = new WorkOrdersService({
+      localStore: new WorkOrderLocalStore(settings),
+      injection: harness.injection,
+      assignments: harness.assignments,
+      instructions: harness.instructions,
+    });
+    const { snapshot, recoveredOriginal } = await restartedService.recordDispatchDurable({
+      ownerId: harness.ownerId,
+      projectId: PROJECT_ID,
+      taskId: TASK_ID,
+      packet,
+    });
+    expect(recoveredOriginal).toBeNull();
+    const history = await restartedService.listHistory(harness.ownerId, TASK_ID);
+    expect(history).toEqual([snapshot]);
+
+    const originalWorker = await restartedService.getOriginalWorkerIdentity(
+      harness.ownerId,
+      TASK_ID,
+    );
+    expect(originalWorker).toEqual({
+      provider: 'Anthropic',
+      tool: 'Claude Code',
+      model: 'claude-sonnet-5',
+    });
+
+    // Correction prefill recovers the original Worker identity now that recovery is complete.
+    const correctionFields = await restartedService.defaultCorrectionFields({
+      ownerId: harness.ownerId,
+      projectId: PROJECT_ID,
+      taskId: TASK_ID,
+      humanOwner: 'Owner',
+    });
+    expect(correctionFields.assignedWorker).toEqual(originalWorker);
+
+    // The correction identity gate still enforces against the recovered history.
+    correctionFields.assignedWorker = { provider: 'OpenAI', tool: 'Codex', model: 'gpt-5.6' };
+    correctionFields.assignedReauditor = {
+      provider: 'DeepSeek',
+      tool: 'Kilo Code',
+      model: 'deepseek-v4-pro',
+    };
+    correctionFields.previousHeadSha = FULL_SHA_B;
+    correctionFields.auditReportReference = {
+      kind: 'url',
+      url: 'https://github.com/org/repo/pull/1#issuecomment-1',
+      provenance: 'verified',
+    };
+    correctionFields.requiredCorrections = 'Fix it.';
+    correctionFields.expectedReturnEvidence = 'New head.';
+    correctionFields.coordinates.workBranch = 'claude/task-1';
+    correctionFields.coordinates.startSha = FULL_SHA_A;
+    await expect(
+      restartedService.recordDispatchDurable({
+        ownerId: harness.ownerId,
+        projectId: PROJECT_ID,
+        taskId: TASK_ID,
+        packet: { stage: 'correction', fields: correctionFields as CorrectionPacketFields },
+        expectedWorker: originalWorker,
+      }),
+    ).rejects.toThrow(WorkOrderDomainError);
+  });
+
+  it('recordDispatchDurable: editing the packet after a partial failure recovers the original Worker dispatch into history first — Correction prefill then resolves the original (not the edited-away) worker identity', async () => {
+    const settings = createControlledLocalSettings();
+    settings.failWritesMatching((key) => key === `hammond.workOrders.index.${OWNER_ID}`, {
+      count: 1,
+    });
+    const harness = createWorkOrdersTestHarness(OWNER_ID, { localSettings: settings });
+    harness.seedProject(PROJECT_ID);
+    // A deterministic, strictly-increasing clock: the recovered original and the later edit must
+    // sort unambiguously by createdAt, which a real (millisecond-coarse) clock cannot guarantee
+    // for two calls issued back-to-back in the same test.
+    let tick = 0;
+    const service = new WorkOrdersService({
+      localStore: harness.localStore,
+      injection: harness.injection,
+      assignments: harness.assignments,
+      instructions: harness.instructions,
+      now: () => new Date(Date.UTC(2026, 8, 8, 0, 0, tick++)).toISOString(),
+    });
+    const originalPacket = await buildRecordableWorkerPacket(harness);
+
+    await expect(
+      service.recordDispatchDurable({
+        ownerId: harness.ownerId,
+        projectId: PROJECT_ID,
+        taskId: TASK_ID,
+        packet: originalPacket,
+      }),
+    ).rejects.toThrow(WorkOrderDomainError);
+
+    // The owner edits the assigned worker's model before resubmitting — a genuinely different
+    // packet, not a retry.
+    const editedPacket = await buildRecordableWorkerPacket(harness);
+    editedPacket.fields.assignedWorker = {
+      provider: 'Anthropic',
+      tool: 'Claude Code',
+      model: 'claude-sonnet-5-edited',
+    };
+    const { snapshot, recoveredOriginal } = await service.recordDispatchDurable({
+      ownerId: harness.ownerId,
+      projectId: PROJECT_ID,
+      taskId: TASK_ID,
+      packet: editedPacket,
+    });
+    expect(recoveredOriginal).not.toBeNull();
+    expect(recoveredOriginal?.packet).toEqual(originalPacket);
+    expect(snapshot.packet).toEqual(editedPacket);
+
+    const history = await service.listHistory(harness.ownerId, TASK_ID);
+    expect(history).toHaveLength(2);
+
+    // The original worker identity resolves to whichever Worker dispatch is earliest by
+    // createdAt — the recovered original, not the later edit.
+    const originalWorker = await service.getOriginalWorkerIdentity(harness.ownerId, TASK_ID);
+    expect(originalWorker).toEqual(originalPacket.fields.assignedWorker);
+    const correctionFields = await service.defaultCorrectionFields({
+      ownerId: harness.ownerId,
+      projectId: PROJECT_ID,
+      taskId: TASK_ID,
+      humanOwner: 'Owner',
+    });
+    expect(correctionFields.assignedWorker).toEqual(originalPacket.fields.assignedWorker);
+  });
+
+  it('attachReportDurable: index write fails, then — from a restarted service/store — an identical resubmission recovers and the report appears exactly once under its original dispatch', async () => {
+    const settings = createControlledLocalSettings();
+    settings.failWritesMatching((key) => key === `hammond.workOrders.reportIndex.${OWNER_ID}`, {
+      count: 1,
+    });
+    const harness = createWorkOrdersTestHarness(OWNER_ID, { localSettings: settings });
+    harness.seedProject(PROJECT_ID);
+    const packet = await buildRecordableWorkerPacket(harness);
+    const dispatch = await harness.service.recordDispatch({
+      id: createWorkOrderId(),
+      ownerId: harness.ownerId,
+      projectId: PROJECT_ID,
+      taskId: TASK_ID,
+      packet,
+    });
+
+    const reportParams = {
+      ownerId: harness.ownerId,
+      projectId: PROJECT_ID,
+      taskId: TASK_ID,
+      dispatchId: dispatch.id,
+      rawText: 'Worker report text',
+      url: 'https://github.com/org/repo/pull/1#issuecomment-1',
+      returnedIdentity: { provider: 'Anthropic', tool: 'Claude Code', model: 'claude-sonnet-5' },
+      headSha: FULL_SHA_A,
+      verificationNotes: 'All green.',
+      limitations: 'None disclosed.',
+      provenance: 'Pasted from PR comment',
+    };
+
+    await expect(harness.service.attachReportDurable(reportParams)).rejects.toThrow(
+      WorkOrderDomainError,
+    );
+    expect(await harness.service.getReportsForDispatch(harness.ownerId, dispatch.id)).toEqual([]);
+
+    const restartedService = new WorkOrdersService({
+      localStore: new WorkOrderLocalStore(settings),
+      injection: harness.injection,
+      assignments: harness.assignments,
+      instructions: harness.instructions,
+    });
+    const { report, recoveredOriginal } = await restartedService.attachReportDurable(reportParams);
+    expect(recoveredOriginal).toBeNull();
+    expect(report.rawText).toBe('Worker report text');
+    const reports = await restartedService.getReportsForDispatch(harness.ownerId, dispatch.id);
+    expect(reports).toEqual([report]);
   });
 });
