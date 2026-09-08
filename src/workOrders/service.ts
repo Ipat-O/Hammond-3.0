@@ -18,6 +18,7 @@ import type {
   WorkerPacketFields,
   WorkOrderDispatchSnapshot,
   WorkOrderFields,
+  WorkOrderPendingReportAttempt,
   WorkOrderReportRecord,
   WorkOrderStage,
 } from './types';
@@ -125,6 +126,17 @@ export class WorkOrdersService {
 
   async getReportsForTask(ownerId: string, taskId: string): Promise<WorkOrderReportRecord[]> {
     return this.localStore.listReportsForTask(ownerId, taskId);
+  }
+
+  /** Read-only accessor for a durably-recorded, not-yet-confirmed report attempt (HAM3-009
+   * Correction 3): lets the UI discover and restore a pending report into the report form when the
+   * owner reopens the dispatch it targets, without holding any state itself. `null` when no report
+   * attempt is in flight for this dispatch. */
+  async getPendingReportAttempt(
+    ownerId: string,
+    dispatchId: string,
+  ): Promise<WorkOrderPendingReportAttempt | null> {
+    return this.localStore.getPendingReportAttempt(ownerId, dispatchId);
   }
 
   /** The identity of the earliest recorded Worker-stage dispatch for a task — the "original worker" a correction must return to. `null` when no Worker dispatch is on record. */

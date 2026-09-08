@@ -15,6 +15,7 @@ import type {
   WorkerPacketFields,
   WorkOrderDispatchSnapshot,
   WorkOrderFields,
+  WorkOrderPendingReportAttempt,
   WorkOrderReportRecord,
   WorkOrderStage,
 } from './types';
@@ -293,6 +294,10 @@ interface ReportFormState {
   verificationNotes: string;
   limitations: string;
   provenance: string;
+  /** True when this form's values came from a recovered pending report attempt (HAM3-009
+   * Correction 3) rather than the owner opening a blank form — drives the "didn't finish" notice
+   * and the Retry label; never affects what `submitReportForm` sends. */
+  restored: boolean;
 }
 
 function emptyReportForm(dispatchId: string): ReportFormState {
@@ -307,6 +312,23 @@ function emptyReportForm(dispatchId: string): ReportFormState {
     verificationNotes: '',
     limitations: '',
     provenance: '',
+    restored: false,
+  };
+}
+
+function reportFormFromPending(pending: WorkOrderPendingReportAttempt): ReportFormState {
+  return {
+    dispatchId: pending.dispatchId,
+    rawText: pending.rawText,
+    url: pending.url ?? '',
+    provider: pending.returnedIdentity?.provider ?? '',
+    tool: pending.returnedIdentity?.tool ?? '',
+    model: pending.returnedIdentity?.model ?? '',
+    headSha: pending.headSha ?? '',
+    verificationNotes: pending.verificationNotes,
+    limitations: pending.limitations,
+    provenance: pending.provenance,
+    restored: true,
   };
 }
 
@@ -346,6 +368,19 @@ export function WorkOrdersPanel(props: WorkOrdersPanelProps) {
   );
 
   const loadTokenRef = useRef(0);
+  /** Guards the async pending-report lookup kicked off when a dispatch is opened (HAM3-009
+   * Correction 3): bumped whenever the owner/project/task/stage context resets (the main load
+   * effect below) or a different dispatch is opened, so a late-resolving lookup for a
+   * since-abandoned context is recognized as stale and dropped rather than populating the wrong
+   * dispatch's form. */
+  const reportPendingTokenRef = useRef(0);
+  const isMountedRef = useRef(true);
+  useEffect(
+    () => () => {
+      isMountedRef.current = false;
+    },
+    [],
+  );
 
   const computeDefaults = useCallback(
     async (nextStage: WorkOrderStage): Promise<WorkOrderFields> => {
@@ -397,6 +432,10 @@ export function WorkOrdersPanel(props: WorkOrdersPanelProps) {
   useEffect(() => {
     let cancelled = false;
     const token = ++loadTokenRef.current;
+    // Invalidates any in-flight pending-report lookup from the context this effect is leaving —
+    // otherwise it could resolve after `reportForm` below is reset to null and repopulate it with
+    // the previous owner/project/task/stage's recovered content.
+    ++reportPendingTokenRef.current;
     setLoading(true);
     setPendingConfirmation(null);
     setInjectionMessage(null);
@@ -515,9 +554,29 @@ export function WorkOrdersPanel(props: WorkOrdersPanelProps) {
       return;
     }
     setExpandedHistoryId(dispatch.id);
-    if (!reportsByDispatch[dispatch.id]) {
-      const reports = await service.getReportsForDispatch(ownerId, dispatch.id);
-      setReportsByDispatch((current) => ({ ...current, [dispatch.id]: reports }));
+    const dispatchId = dispatch.id;
+    // Scopes this lookup to the exact dispatch/context being opened right now — a later switch to
+    // a different dispatch, or a task/owner/stage reset, bumps this token and makes the check below
+    // recognize this lookup as stale.
+    const token = ++reportPendingTokenRef.current;
+    if (!reportsByDispatch[dispatchId]) {
+      const reports = await service.getReportsForDispatch(ownerId, dispatchId);
+      setReportsByDispatch((current) => ({ ...current, [dispatchId]: reports }));
+    }
+    const pending = await service.getPendingReportAttempt(ownerId, dispatchId);
+    if (!isMountedRef.current || reportPendingTokenRef.current !== token) return;
+    if (!pending) return;
+    let applied = false;
+    setReportForm((current) => {
+      // The owner already has a report form open (restored earlier, or opened by hand and possibly
+      // typed into since this lookup began) — never clobber it with a late-arriving result.
+      if (current !== null) return current;
+      applied = true;
+      return reportFormFromPending(pending);
+    });
+    if (applied) {
+      setAttachError(null);
+      setRecoveredReportNotice(null);
     }
   }
 
@@ -940,13 +999,15 @@ export function WorkOrdersPanel(props: WorkOrdersPanelProps) {
                       >
                         Inject this packet
                       </button>
-                      <button
-                        type="button"
-                        className="button button-small button-quiet"
-                        onClick={() => beginReportForm(dispatch.id)}
-                      >
-                        Attach returned report
-                      </button>
+                      {reportForm?.dispatchId !== dispatch.id && (
+                        <button
+                          type="button"
+                          className="button button-small button-quiet"
+                          onClick={() => beginReportForm(dispatch.id)}
+                        >
+                          Attach returned report
+                        </button>
+                      )}
                     </div>
 
                     {pendingConfirmation?.id === dispatch.id && (
@@ -1017,6 +1078,11 @@ export function WorkOrdersPanel(props: WorkOrdersPanelProps) {
 
                     {reportForm?.dispatchId === dispatch.id && (
                       <div className="stack-form work-order-report-form">
+                        {reportForm.restored && (
+                          <p className="muted-copy" role="status">
+                            Previous report save didn&apos;t finish. Retry recording.
+                          </p>
+                        )}
                         <TextAreaField
                           label="Raw returned text"
                           value={reportForm.rawText}
@@ -1082,7 +1148,11 @@ export function WorkOrdersPanel(props: WorkOrdersPanelProps) {
                             disabled={attaching}
                             onClick={() => void submitReportForm()}
                           >
-                            {attaching ? 'Attaching…' : 'Attach report'}
+                            {attaching
+                              ? 'Attaching…'
+                              : reportForm.restored
+                                ? 'Retry recording'
+                                : 'Attach report'}
                           </button>
                           <button
                             type="button"
