@@ -6,14 +6,13 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## in_design
 
-- [HAM3-009](./tasks/HAM3-009.md) — Work-order generation and dispatch records
 - [HAM3-010](./tasks/HAM3-010.md) — Exact-SHA evidence and approval workflow
 - [HAM3-011](./tasks/HAM3-011.md) — Tracker depth, activity, search, and export
 - [HAM3-012](./tasks/HAM3-012.md) — Integrated desktop release and human QA
 
 ## ready_for_development
 
-None.
+- [HAM3-009](./tasks/HAM3-009.md) — Work-order generation and dispatch records
 
 ## in_development
 
@@ -25,11 +24,12 @@ None.
 
 ## testing
 
-- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
-  PR #10 at `92e0872`; DeepSeek APPROVE verified, approved-head Windows recheck pending.
+None.
 
 ## merged
 
+- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
+  Merge commit `379c2cfefb894a5cb94aadc4a9a78e9bde2024ed` · owner accepted prior smoke coverage; approved-head recheck waived
 - [HAM3-007](./tasks/HAM3-007.md) — Instruction Studio UI
   Merge commit `85a012577d3384258b0c1d586a3a0ff08d70e863` · owner Windows Studio smoke passed
 - [HAM3-006](./tasks/HAM3-006.md) — Harness adapters, agent assignment, and managed-file injection

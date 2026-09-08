@@ -835,3 +835,9 @@
 - Verified public APPROVE https://github.com/Ipat-O/Hammond-3.0/pull/10#issuecomment-5582955232 at 92e08721f78350f5026e36ab3c8164be59f3303b and matching live open/draft, mergeable PR targeting dev. Move display/retry CLOSED with independent mutation proof. F3/F4 deferred; no new material defects.
 - Independent evidence: focused 122/122, affected 159/159, full 395/395, static/build/touched format pass; global only unchanged default.json. Auditor reports restored mutations/removed worktree and owner dev preserved at 6a4f6a0. No new native/backend evidence; old smoke at 727c2e1 does not validate new head.
 - HAM3-008 moved to testing. Device-local tracker/work-orders/HAM3-008-OWNER-TEST.md specifies proportionate real Windows recheck and accurate optional timing/fault-injection limits. Independent exact-head automation accepted without another full-suite run. No ready/merge action; owner authorization remains a later gate.
+
+## 2026-09-08 — HAM3-008 merged; HAM3-009 ready
+
+- Owner explicitly accepted previous Windows smoke PASS at 727c2e1 as sufficient and waived final-head native recheck, then authorized merge. Independent DeepSeek APPROVE remains pinned to 92e08721f78350f5026e36ab3c8164be59f3303b; no new-head Windows test is claimed.
+- Verified live PR #10 exact approved head, marked ready and merged with head-match protection. GitHub confirms merge commit 379c2cfefb894a5cb94aadc4a9a78e9bde2024ed at 2026-09-08T09:50:22Z. Owner dev fast-forwarded to merged state. F3/F4 remain recorded nonblocking follow-ups; no packaged shipped claim.
+- HAM3-008 moved to merged. Next sequential task HAM3-009 moved to ready_for_development with dependencies already merged; no worker dispatch yet. No redundant feature test run after exact-head independent verification.
