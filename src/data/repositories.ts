@@ -122,6 +122,17 @@ export class ProjectMemoryRepository {
       await this.client.from('comments').select('*').eq('task_id', taskId).order('created_at'),
     );
   }
+  /** Newest-first comments across the whole project, for a project-level recent feed (never task-scoped). */
+  async listRecentComments(projectId: string, limit = 5) {
+    return dataOrThrow(
+      await this.client
+        .from('comments')
+        .select('*')
+        .eq('project_id', projectId)
+        .order('created_at', { ascending: false })
+        .limit(limit),
+    );
+  }
   async addComment(input: Tables['comments']['Insert']) {
     assertNoAbsoluteLocalPaths(input);
     return dataOrThrow(await this.client.from('comments').insert(input).select().single());
@@ -133,17 +144,28 @@ export class ProjectMemoryRepository {
     assertNoAbsoluteLocalPaths(input);
     return dataOrThrow(await this.client.from('task_evidence').insert(input).select().single());
   }
+  /** Newest-first evidence across the whole project, for a project-level recent summary. */
+  async listEvidence(projectId: string, limit = 5) {
+    return dataOrThrow(
+      await this.client
+        .from('task_evidence')
+        .select('*')
+        .eq('project_id', projectId)
+        .order('created_at', { ascending: false })
+        .limit(limit),
+    );
+  }
   async recordActivity(input: Tables['activity']['Insert']) {
     assertNoAbsoluteLocalPaths(input);
     return dataOrThrow(await this.client.from('activity').insert(input).select().single());
   }
-  async listActivity(projectId: string) {
-    return dataOrThrow(
-      await this.client
-        .from('activity')
-        .select('*')
-        .eq('project_id', projectId)
-        .order('created_at', { ascending: false }),
-    );
+  async listActivity(projectId: string, options: { limit?: number } = {}) {
+    let query = this.client
+      .from('activity')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false });
+    if (options.limit !== undefined) query = query.limit(options.limit);
+    return dataOrThrow(await query);
   }
 }

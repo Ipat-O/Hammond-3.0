@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import type { DirectoryContextManager } from './directoryContextManager';
-import type { DirectoryContextRecord, LocalSettingsStateV1 } from './state';
+import type { DirectoryContextRecord, LocalSettingsStateV2 } from './state';
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'That action failed. Nothing was changed.';
@@ -9,9 +9,25 @@ function errorMessage(error: unknown) {
 
 interface DirectoryContextPanelProps {
   manager: DirectoryContextManager;
-  state: LocalSettingsStateV1;
-  onStateChange: (next: LocalSettingsStateV1) => void;
+  state: LocalSettingsStateV2;
+  /**
+   * Notified with each mutation's own resolved state — for a caller that manages its own state
+   * independently of a `manager.subscribe` mirror (e.g. this component's standalone tests). A
+   * host that already mirrors `manager`'s canonical state via `subscribe` (e.g.
+   * `useDirectoryContextState`, as `TrackerPage` uses) must omit this: the subscription already
+   * publishes every commit synchronously and in the correct order, while this callback fires only
+   * once that SPECIFIC mutation's own (possibly slow, possibly out-of-order-resolving) write
+   * settles — wiring both up would give production two competing publishers of the same state,
+   * the exact regression Correction 2 (F3) fixed.
+   */
+  onStateChange?: (next: LocalSettingsStateV2) => void;
   projectId: string;
+  /**
+   * Wraps a state-changing action (Open/Change, Close) so a host screen can guard it against
+   * unsaved Instruction Studio edits before it runs, the same way primary navigation is guarded.
+   * Omit to run every action immediately (the default in isolated/standalone use).
+   */
+  beforeChange?: (action: () => void) => void;
 }
 
 type Reachability = boolean | 'checking';
@@ -21,6 +37,7 @@ export function DirectoryContextPanel({
   state,
   onStateChange,
   projectId,
+  beforeChange,
 }: DirectoryContextPanelProps) {
   const contexts = manager.contextsForProject(state, projectId);
   const contextsKey = contexts.map((context) => `${context.id}:${context.path}`).join('|');
@@ -56,38 +73,64 @@ export function DirectoryContextPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [manager, contextsKey]);
 
-  async function linkNewDirectory() {
+  function runGuarded(action: () => void) {
+    if (beforeChange) beforeChange(action);
+    else action();
+  }
+
+  function linkNewDirectory() {
     setActionError(null);
     setLinking(true);
-    try {
-      const path = await manager.pickDirectory();
-      if (path === null) return;
-      const { state: nextState } = await manager.linkDirectory(state, projectId, path);
-      onStateChange(nextState);
-    } catch (error) {
-      setActionError(errorMessage(error));
-    } finally {
-      setLinking(false);
-    }
+    void manager
+      .pickDirectory()
+      .then((path) => {
+        if (path === null) return;
+        runGuarded(() => {
+          void manager
+            .linkDirectory(state, projectId, path)
+            .then(({ state: nextState }) => onStateChange?.(nextState))
+            .catch((error: unknown) => setActionError(errorMessage(error)));
+        });
+      })
+      .catch((error: unknown) => setActionError(errorMessage(error)))
+      .finally(() => setLinking(false));
   }
 
-  async function changeActive(contextId: string) {
+  function changeActive(contextId: string) {
+    setActionError(null);
+    runGuarded(() => {
+      setBusyContextId(contextId);
+      void manager
+        .setActive(state, contextId)
+        .then((next) => onStateChange?.(next))
+        .catch((error: unknown) => setActionError(errorMessage(error)))
+        .finally(() => setBusyContextId(null));
+    });
+  }
+
+  function closeContext(contextId: string) {
+    setActionError(null);
+    runGuarded(() => {
+      setBusyContextId(contextId);
+      void manager
+        .closeActive(state)
+        .then((next) => onStateChange?.(next))
+        .catch((error: unknown) => setActionError(errorMessage(error)))
+        .finally(() => setBusyContextId(null));
+    });
+  }
+
+  async function forgetContext(contextId: string) {
     setActionError(null);
     setBusyContextId(contextId);
     try {
-      onStateChange(await manager.setActive(state, contextId));
-    } catch (error) {
-      setActionError(errorMessage(error));
-    } finally {
-      setBusyContextId(null);
-    }
-  }
-
-  async function unlinkContext(contextId: string) {
-    setActionError(null);
-    setBusyContextId(contextId);
-    try {
-      onStateChange(await manager.unlink(state, contextId));
+      // The manager call is the required side effect and must run unconditionally — never as an
+      // argument expression to an optional call, which the language short-circuits (skipping
+      // evaluation of its arguments entirely, including this `await`) when `onStateChange` is
+      // absent, as it always is in production since Correction 2 (F3). Only the NOTIFICATION is
+      // optional.
+      const next = await manager.forget(state, contextId);
+      onStateChange?.(next);
     } catch (error) {
       setActionError(errorMessage(error));
     } finally {
@@ -101,7 +144,10 @@ export function DirectoryContextPanel({
     try {
       const path = await manager.pickDirectory();
       if (path === null) return;
-      onStateChange(await manager.replacePath(state, contextId, path));
+      // Same reasoning as `forgetContext` above: the manager call must never be skippable by an
+      // absent `onStateChange`.
+      const next = await manager.replacePath(state, contextId, path);
+      onStateChange?.(next);
     } catch (error) {
       setActionError(errorMessage(error));
     } finally {
@@ -118,7 +164,7 @@ export function DirectoryContextPanel({
     }
   }
 
-  const activeContext = contexts.find((context) => context.id === state.lastOpenContextId) ?? null;
+  const activeContext = manager.activeContextForProject(state, projectId);
   const activeReachable = activeContext ? reachability[activeContext.id] : undefined;
 
   return (
@@ -131,7 +177,7 @@ export function DirectoryContextPanel({
         <button
           className="button button-secondary"
           type="button"
-          onClick={() => void linkNewDirectory()}
+          onClick={linkNewDirectory}
           disabled={linking}
         >
           {linking ? 'Choosing…' : 'Link directory'}
@@ -162,7 +208,7 @@ export function DirectoryContextPanel({
         <ul className="directory-context-list">
           {contexts.map((context) => {
             const reachable = reachability[context.id];
-            const isActive = context.id === state.lastOpenContextId;
+            const isActive = context.id === activeContext?.id;
             const isBusy = busyContextId === context.id;
             return (
               <li
@@ -200,26 +246,15 @@ export function DirectoryContextPanel({
                       <button
                         className="button button-small button-quiet"
                         type="button"
-                        onClick={() => void unlinkContext(context.id)}
+                        onClick={() => void forgetContext(context.id)}
                         disabled={isBusy}
-                        aria-label={`Unlink ${context.label}`}
+                        aria-label={`Forget ${context.label}`}
                       >
-                        Unlink
+                        Forget
                       </button>
                     </>
-                  ) : (
+                  ) : isActive ? (
                     <>
-                      {!isActive && (
-                        <button
-                          className="button button-small"
-                          type="button"
-                          onClick={() => void changeActive(context.id)}
-                          disabled={isBusy}
-                          aria-label={`Open ${context.label}`}
-                        >
-                          Open
-                        </button>
-                      )}
                       <button
                         className="button button-small button-quiet"
                         type="button"
@@ -232,11 +267,41 @@ export function DirectoryContextPanel({
                       <button
                         className="button button-small button-quiet"
                         type="button"
-                        onClick={() => void unlinkContext(context.id)}
+                        onClick={() => closeContext(context.id)}
                         disabled={isBusy}
                         aria-label={`Close ${context.label}`}
                       >
                         Close
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        className="button button-small"
+                        type="button"
+                        onClick={() => changeActive(context.id)}
+                        disabled={isBusy}
+                        aria-label={`Open ${context.label}`}
+                      >
+                        Open
+                      </button>
+                      <button
+                        className="button button-small button-quiet"
+                        type="button"
+                        onClick={() => void revealContext(context)}
+                        disabled={reachable !== true}
+                        aria-label={`Reveal ${context.label}`}
+                      >
+                        Reveal
+                      </button>
+                      <button
+                        className="button button-small button-quiet"
+                        type="button"
+                        onClick={() => void forgetContext(context.id)}
+                        disabled={isBusy}
+                        aria-label={`Forget ${context.label}`}
+                      >
+                        Forget
                       </button>
                     </>
                   )}

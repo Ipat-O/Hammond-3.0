@@ -74,6 +74,9 @@ function makeServices(projects: Project[] = [], tasks: Task[] = []): TrackerServ
     memory: {
       listComments: vi.fn().mockResolvedValue([]),
       addComment: vi.fn(),
+      listRecentComments: vi.fn().mockResolvedValue([]),
+      listActivity: vi.fn().mockResolvedValue([]),
+      listEvidence: vi.fn().mockResolvedValue([]),
     },
   };
 
@@ -103,11 +106,9 @@ describe('Hammond tracker workspace', () => {
     render(<App services={makeServices()} initialSession={session} />);
 
     expect(
-      await screen.findByRole('heading', { name: 'Good morning, owner.' }),
+      await screen.findByRole('heading', { name: 'Clear boundaries, ready to extend.' }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole('heading', { name: 'Clear boundaries, ready to extend.' }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Good morning, owner.' })).toBeInTheDocument();
     expect(screen.getByText('Local workspace')).toBeInTheDocument();
     expect(screen.getByText('Project memory')).toBeInTheDocument();
     expect(screen.getByText('Local settings')).toBeInTheDocument();
@@ -125,6 +126,7 @@ describe('Hammond tracker workspace', () => {
     expect(
       (await screen.findAllByRole('heading', { name: 'Hammond project' })).length,
     ).toBeGreaterThan(0);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit project' }));
     const nameInput = screen.getByLabelText('Project name');
@@ -182,6 +184,7 @@ describe('Hammond tracker workspace', () => {
     addComment.mockResolvedValue(savedComment);
 
     render(<App services={services} initialSession={session} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
     expect(await screen.findByRole('button', { name: /First task/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /First task/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
@@ -218,6 +221,7 @@ describe('Hammond tracker workspace', () => {
     const services = makeServices([project()], tasks);
 
     render(<App services={services} initialSession={session} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
     expect(await screen.findByRole('button', { name: /Parent taskReady/ })).toBeInTheDocument();
     expect(screen.queryByText('Child task')).not.toBeInTheDocument();
     expect(screen.getByText('2 children')).toBeInTheDocument();
@@ -260,6 +264,7 @@ describe('Hammond tracker workspace', () => {
     create.mockResolvedValue(secondChild);
 
     render(<App services={services} initialSession={session} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
 
     // Select the parent (opens edit, then cancel) so selectedTaskId still identifies
     // the parent when the ordinary "+ child" create flow is opened from its row.
@@ -302,6 +307,7 @@ describe('Hammond tracker workspace', () => {
     const services = makeServices([project()], tasks);
 
     render(<App services={services} initialSession={session} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
 
     expect(await screen.findByRole('button', { name: /Level oneBacklog/ })).toBeInTheDocument();
     expect(screen.queryByText('Level two')).not.toBeInTheDocument();
@@ -361,6 +367,7 @@ describe('Hammond tracker workspace', () => {
     update.mockResolvedValue(reparented);
 
     render(<App services={services} initialSession={session} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
 
     fireEvent.click(await screen.findByRole('button', { name: /^Movable task/ }));
     fireEvent.change(screen.getByLabelText('Parent task'), { target: { value: 'level-4' } });
@@ -379,6 +386,7 @@ describe('Hammond tracker workspace', () => {
     const services = makeServices([project()], [parent]);
 
     render(<App services={services} initialSession={session} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
     const title = await screen.findByText('Parent task', { selector: '.outliner-task-title' });
     const row = within(title.closest('.outliner-row') as HTMLElement);
 
@@ -397,6 +405,7 @@ describe('Hammond tracker workspace', () => {
     const services = makeServices([project()], [archived]);
 
     render(<App services={services} initialSession={session} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
     fireEvent.click(await screen.findByLabelText('Show archived'));
 
     const title = await screen.findByText('Archived task');
@@ -440,6 +449,7 @@ describe('task archive cascades to the complete subtree', () => {
     archive.mockReturnValue(new Promise(() => {})); // never resolves; assert on the optimistic state
 
     render(<App services={services} initialSession={session} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
     expect(
       await screen.findByText('Parent task', { selector: '.outliner-task-title' }),
     ).toBeInTheDocument();
@@ -473,6 +483,7 @@ describe('task archive cascades to the complete subtree', () => {
     archive.mockResolvedValue(archivedRows([parent, child, grandchild], archivedAt));
 
     render(<App services={services} initialSession={session} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
     const parentTitle = await screen.findByText('Parent task', {
       selector: '.outliner-task-title',
     });
@@ -515,6 +526,7 @@ describe('task archive cascades to the complete subtree', () => {
     archive.mockResolvedValue(archivedRows([grandchild], archivedAt));
 
     render(<App services={services} initialSession={session} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Expand Parent task' }));
     fireEvent.click(screen.getByRole('button', { name: 'Expand Child task' }));
 
@@ -547,6 +559,7 @@ describe('task archive cascades to the complete subtree', () => {
       .mockResolvedValueOnce(archivedRows([parent, child], archivedAt));
 
     render(<App services={services} initialSession={session} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
     const parentTitle = await screen.findByText('Parent task', {
       selector: '.outliner-task-title',
     });
@@ -580,6 +593,7 @@ describe('task archive cascades to the complete subtree', () => {
     archive.mockReturnValue(new Promise(() => {}));
 
     render(<App services={services} initialSession={session} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Expand Parent task' }));
     fireEvent.click(screen.getByRole('button', { name: 'Expand Child task' }));
 

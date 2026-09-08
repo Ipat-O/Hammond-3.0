@@ -1746,3 +1746,154 @@ label {
 .history-drawer-source {
   margin-top: 8px;
 }
+
+.sidebar-open-directory {
+  margin: 4px 10px 14px;
+  width: calc(100% - 20px);
+  justify-content: center;
+}
+
+.home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 18px;
+  margin-top: 32px;
+}
+
+.home-identity-card,
+.home-directory-section,
+.home-tasks-section,
+.home-comments-section,
+.home-instructions-section,
+.home-activity-section,
+.home-evidence-section {
+  border: 1px solid rgba(145, 162, 214, 0.16);
+  border-radius: 15px;
+  background: rgba(16, 23, 46, 0.64);
+  padding: 21px 22px;
+}
+
+.home-identity-card {
+  grid-column: 1 / -1;
+}
+
+.home-identity-card h2 {
+  margin-bottom: 7px;
+  font-size: 25px;
+}
+
+.home-selected-task-title {
+  margin: 4px 0 10px;
+  color: #e4f1f0;
+  font-weight: 600;
+}
+
+.instruction-status-list {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.instruction-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  border-left: 2px solid rgba(120, 152, 209, 0.42);
+  border-radius: 4px;
+  background: rgba(18, 27, 50, 0.6);
+  padding: 9px 12px;
+}
+
+.instruction-status-role {
+  min-width: 84px;
+  color: #e4f1f0;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.instruction-status-provider {
+  color: #8e9bb9;
+  font-size: 11px;
+}
+
+.instruction-status-selection {
+  color: #8e9bb9;
+  font-size: 10px;
+  font-style: italic;
+}
+
+.instruction-status-badge {
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.instruction-status-Missing {
+  background: rgba(221, 172, 106, 0.16);
+  color: #e4c5a5;
+}
+
+.instruction-status-ManagedValid {
+  background: rgba(120, 209, 194, 0.13);
+  color: #a3d8d0;
+}
+
+.instruction-status-ManagedForeign,
+.instruction-status-ManagedMalformed,
+.instruction-status-Unmanaged {
+  background: rgba(221, 106, 117, 0.13);
+  color: #e4a5ae;
+}
+
+.instruction-status-error {
+  color: #e4a5ae;
+  font-size: 10px;
+}
+
+.home-activity-list,
+.home-evidence-list {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11px;
+}
+
+.home-activity-list li,
+.home-evidence-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  border-bottom: 1px solid rgba(145, 162, 214, 0.1);
+  padding-bottom: 8px;
+  color: #c3cbe2;
+}
+
+.home-activity-list time,
+.home-evidence-list time {
+  margin-left: auto;
+  color: #8e9bb9;
+  font-size: 10px;
+}
+
+.home-evidence-kind {
+  border-radius: 999px;
+  background: rgba(112, 137, 230, 0.13);
+  padding: 2px 8px;
+  color: #aebcf1;
+  font-size: 9px;
+}
+
+.directory-choice-list {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+  padding: 0;
+  list-style: none;
+}

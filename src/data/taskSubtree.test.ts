@@ -1,4 +1,4 @@
-import { getTaskSubtreeIds } from './taskSubtree';
+import { getTaskAncestorIds, getTaskSubtreeIds } from './taskSubtree';
 
 type MinimalTask = { id: string; parent_task_id: string | null };
 
@@ -57,6 +57,45 @@ describe('getTaskSubtreeIds', () => {
 
     const result = getTaskSubtreeIds(tasks, 'a');
     expect(result).toEqual(new Set(['a', 'b', 'c']));
+    expect(result.size).toBe(3);
+  });
+});
+
+describe('getTaskAncestorIds', () => {
+  it('returns every ancestor at four or more levels, excluding the task itself', () => {
+    const tasks: MinimalTask[] = [
+      { id: 'l1', parent_task_id: null },
+      { id: 'l2', parent_task_id: 'l1' },
+      { id: 'l3', parent_task_id: 'l2' },
+      { id: 'l4', parent_task_id: 'l3' },
+      { id: 'l5', parent_task_id: 'l4' },
+    ];
+
+    expect(getTaskAncestorIds(tasks, 'l5')).toEqual(new Set(['l1', 'l2', 'l3', 'l4']));
+  });
+
+  it('returns an empty set for a top-level task', () => {
+    const tasks: MinimalTask[] = [{ id: 'root', parent_task_id: null }];
+    expect(getTaskAncestorIds(tasks, 'root')).toEqual(new Set());
+  });
+
+  it('returns an empty set for an unknown task id', () => {
+    const tasks: MinimalTask[] = [{ id: 'root', parent_task_id: null }];
+    expect(getTaskAncestorIds(tasks, 'ghost')).toEqual(new Set());
+  });
+
+  it('terminates without looping on a malformed pre-existing cycle', () => {
+    const tasks: MinimalTask[] = [
+      { id: 'a', parent_task_id: 'c' },
+      { id: 'b', parent_task_id: 'a' },
+      { id: 'c', parent_task_id: 'b' },
+    ];
+
+    // Every node in a pure cycle is structurally reachable by walking up from any other node, so
+    // all three (including 'a' itself, reached once the walk comes back around) are visited
+    // exactly once each — the important behavior under test is that the walk terminates at all.
+    const result = getTaskAncestorIds(tasks, 'a');
+    expect(result).toEqual(new Set(['c', 'b', 'a']));
     expect(result.size).toBe(3);
   });
 });

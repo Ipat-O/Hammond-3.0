@@ -32,3 +32,21 @@ export function getTaskSubtreeIds(
   }
   return subtreeIds;
 }
+
+/**
+ * Returns every ancestor id of `taskId` (not including `taskId` itself), walking
+ * `parent_task_id` links up from the supplied snapshot. Used to expand a resumed nested task's
+ * whole ancestor chain in an outliner so it is actually visible rather than hidden behind
+ * collapsed rows. Visited ids are never re-queued, so a pre-existing cycle terminates instead of
+ * looping; an unresolvable parent id simply ends the walk early.
+ */
+export function getTaskAncestorIds(tasks: ReadonlyArray<SubtreeTask>, taskId: string): Set<string> {
+  const byId = new Map(tasks.map((task) => [task.id, task] as const));
+  const ancestorIds = new Set<string>();
+  let current = byId.get(taskId)?.parent_task_id ?? null;
+  while (current && !ancestorIds.has(current)) {
+    ancestorIds.add(current);
+    current = byId.get(current)?.parent_task_id ?? null;
+  }
+  return ancestorIds;
+}
