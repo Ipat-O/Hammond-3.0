@@ -16,12 +16,12 @@ None.
 
 ## in_development
 
-- [HAM3-009](./tasks/HAM3-009.md) — Work-order generation and dispatch records
-  PR #11 at `8fb2a99`; Sonnet Correction 3: restore pending report form only.
+None.
 
 ## in_review
 
-None.
+- [HAM3-009](./tasks/HAM3-009.md) — Work-order generation and dispatch records
+  PR #11 at `b2828a8`; DeepSeek round-4 audit routed after Correction 3.
 
 ## testing
 
