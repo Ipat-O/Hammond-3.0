@@ -16,12 +16,12 @@ None.
 
 ## in_development
 
-- [HAM3-009](./tasks/HAM3-009.md) — Work-order generation and dispatch records
-  Sonnet work order prepared at `b391b81`; DeepSeek assigned independent auditor.
+None.
 
 ## in_review
 
-None.
+- [HAM3-009](./tasks/HAM3-009.md) — Work-order generation and dispatch records
+  Draft PR #11 at `7b8edad`; DeepSeek round-1 audit routed.
 
 ## testing
 
