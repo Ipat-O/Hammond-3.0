@@ -17,12 +17,12 @@ None.
 
 ## in_development
 
-None.
+- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
+  PR #10 at `727c2e1`; Sonnet Correction 10: synthetic-row Move display/retry identity.
 
 ## in_review
 
-- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
-  PR #10 at `727c2e1`; round-8 CHANGES, owner-requested diagnostic QA smoke before correction.
+None.
 
 ## testing
 
