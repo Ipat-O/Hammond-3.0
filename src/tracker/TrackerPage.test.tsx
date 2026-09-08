@@ -4125,3 +4125,209 @@ describe('Correction 9 — canonical queue identity (F1) and scoped cancellation
     });
   });
 });
+
+describe('Correction 10 — synthetic-row Move display reconciles by real id; Retry normalizes a stale synthetic id', () => {
+  const realTask = (overrides: Partial<Task> & Pick<Task, 'id' | 'project_id'>): Task => ({
+    owner_id: ownerId,
+    title: overrides.id,
+    description: '',
+    status: 'backlog',
+    priority: 0,
+    parent_task_id: null,
+    due_at: null,
+    archived_at: null,
+    created_at: '2026-08-13T08:00:00.000Z',
+    updated_at: '2026-08-13T08:00:00.000Z',
+    ...overrides,
+  });
+
+  it('A. SUCCESS: an outliner Move issued on a still-synthetic row is reconciled and rendered by the REAL id once its pending create durably completes — never silently dropped by the vanished draft id captured at click time', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [] } });
+    let resolveCreate!: (task: Task) => void;
+    (services.repositories.tasks.create as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise<Task>((resolve) => { resolveCreate = resolve; }),
+    );
+    let resolveMove!: (task: Task) => void;
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise<Task>((resolve) => { resolveMove = resolve; }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New task' }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    await waitFor(() => expect(services.repositories.tasks.create).toHaveBeenCalledTimes(1));
+
+    // The row is still synthetic (its create has not settled) at the moment the outliner Move is
+    // issued — this is the exact repro: capturing the draft id here is the bug.
+    const moveSelect = screen.getByLabelText('Move v1') as HTMLSelectElement;
+    expect(moveSelect.value).toBe('backlog');
+    fireEvent.change(moveSelect, { target: { value: 'done' } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The move queues behind the still-in-flight create; nothing dispatched yet.
+    expect(services.repositories.tasks.update).not.toHaveBeenCalled();
+
+    resolveCreate(realTask({ id: 'new-task-real-id', project_id: 'project-a', title: 'v1' }));
+
+    // The queued move dispatches against the REAL id the create produced, with the requested
+    // status — never a bogus request against the synthetic draft id.
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
+    expect(services.repositories.tasks.update).toHaveBeenCalledWith('new-task-real-id', { status: 'done' });
+    expect(services.repositories.tasks.create).toHaveBeenCalledTimes(1);
+    expect(services.repositories.tasks.update).not.toHaveBeenCalledWith(
+      expect.stringMatching(/^draft-task-/),
+      expect.anything(),
+    );
+
+    resolveMove(realTask({ id: 'new-task-real-id', project_id: 'project-a', title: 'v1', status: 'done' }));
+
+    // The persisted status update must be reflected in the RENDERED row/select without a reload.
+    // At baseline (captured-id-only reconciliation) this select stays stuck on 'backlog' forever —
+    // the successful response never matches the vanished synthetic id in the rendered collection.
+    await waitFor(() => {
+      const select = screen.getByLabelText('Move v1') as HTMLSelectElement;
+      expect(select.value).toBe('done');
+    });
+    const row = screen.getByRole('button', { name: /^v1/ }).closest('li')!;
+    expect(row.textContent).toContain('Done');
+  });
+
+  it('B. FAILURE THEN RETRY: a failed outliner Move on a since-durable row lets Retry dispatch a second update against the CURRENT real id with the originally-requested status — never a no-op against the vanished synthetic id', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [] } });
+    let resolveCreate!: (task: Task) => void;
+    (services.repositories.tasks.create as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise<Task>((resolve) => { resolveCreate = resolve; }),
+    );
+    const updateResolvers: Array<(task: Task) => void> = [];
+    const updateRejecters: Array<(error: Error) => void> = [];
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise<Task>((resolve, reject) => {
+          updateResolvers.push(resolve);
+          updateRejecters.push(reject);
+        }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New task' }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    await waitFor(() => expect(services.repositories.tasks.create).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByLabelText('Move v1'), { target: { value: 'done' } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(services.repositories.tasks.update).not.toHaveBeenCalled();
+
+    resolveCreate(realTask({ id: 'new-task-real-id', project_id: 'project-a', title: 'v1' }));
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
+    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(1, 'new-task-real-id', { status: 'done' });
+
+    updateRejecters[0](new Error('move blew up'));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('move blew up');
+    const retryButton = within(alert).getByRole('button', { name: 'Retry save' });
+
+    fireEvent.click(retryButton);
+
+    // The Retry must issue a SECOND update against the REAL id with the originally-requested
+    // status. At baseline, the retry target still names the vanished synthetic draft id, `tasks`
+    // no longer contains it, and this click is a silent no-op — no second call is ever made.
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
+    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(2, 'new-task-real-id', { status: 'done' });
+
+    updateResolvers[1](realTask({ id: 'new-task-real-id', project_id: 'project-a', title: 'v1', status: 'done' }));
+
+    await waitFor(() => {
+      const select = screen.getByLabelText('Move v1') as HTMLSelectElement;
+      expect(select.value).toBe('done');
+    });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('C. failed create with a queued Move sends no bogus id: with no durable id ever assigned, the queued move fails truthfully once the create rejects — never the synthetic draft id sent to the repository, and never a second create', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [] } });
+    let rejectCreate!: (error: Error) => void;
+    (services.repositories.tasks.create as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise<Task>((_resolve, reject) => { rejectCreate = reject; }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New task' }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'v1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    await waitFor(() => expect(services.repositories.tasks.create).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByLabelText('Move v1'), { target: { value: 'done' } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(services.repositories.tasks.update).not.toHaveBeenCalled();
+
+    rejectCreate(new Error('create blew up'));
+
+    // The still-open "New task" form and the outliner's shared error banner both surface the same
+    // `taskSaveError`, so two identical alerts are expected here — assert at least one carries it.
+    await waitFor(() => {
+      const alerts = screen.getAllByRole('alert');
+      expect(alerts.some((el) => el.textContent?.includes('never created'))).toBe(true);
+    });
+    expect(services.repositories.tasks.update).not.toHaveBeenCalled();
+    expect(services.repositories.tasks.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("C. moving Task A then switching to a different project while the move is held: the stale completion can never select A over the newer context, and can never clear/overwrite Project B's own newer retry/error state", async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task Alpha', status: 'backlog' });
+    const taskB = task({ id: 'task-b', project_id: 'project-b', title: 'Task Bravo', status: 'backlog' });
+    const { services } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [taskA], 'project-b': [taskB] },
+    });
+    const resolvers: Array<{ id: string; resolve: (task: Task) => void; reject: (error: Error) => void }> = [];
+    (services.repositories.tasks.update as ReturnType<typeof vi.fn>).mockImplementation(
+      (id: string) =>
+        new Promise<Task>((resolve, reject) => {
+          resolvers.push({ id, resolve, reject });
+        }),
+    );
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+
+    // Task A: an outliner Move held in flight.
+    fireEvent.change(await screen.findByLabelText('Move Task Alpha'), { target: { value: 'done' } });
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
+
+    // Switching to Project B proceeds immediately — an outliner Move never dirties the guard.
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByRole('heading', { name: 'Project B' }).length).toBeGreaterThan(0));
+    expect(screen.getByRole('button', { name: /^Task Bravo/ })).toBeInTheDocument();
+
+    // Project B develops its own, strictly newer failure/retry state.
+    fireEvent.change(screen.getByLabelText('Move Task Bravo'), { target: { value: 'done' } });
+    await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
+    const bravoCall = resolvers.find((entry) => entry.id === 'task-b')!;
+    bravoCall.reject(new Error('bravo blew up'));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('bravo blew up');
+
+    // Task A's stale, cross-project completion now resolves as a SUCCESS, after the switch.
+    const alphaCall = resolvers.find((entry) => entry.id === 'task-a')!;
+    alphaCall.resolve({ ...taskA, status: 'done' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // Project B's own newer error/retry banner is completely untouched, and its list/selection are
+    // never contaminated by task A's unrelated, stale, cross-project completion.
+    expect(screen.getByRole('alert').textContent).toContain('bravo blew up');
+    expect(screen.getByRole('button', { name: /^Task Bravo/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Task Alpha/ })).not.toBeInTheDocument();
+  });
+});

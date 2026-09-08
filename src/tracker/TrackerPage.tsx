@@ -2079,14 +2079,25 @@ export function TrackerPage({
    * synthetic one — never a bogus request against an id nothing durable was ever assigned. If the
    * create instead fails, there is no durable id to move, and the attempt fails truthfully rather
    * than silently doing nothing or reporting success.
+   *
+   * HAM3-008 Correction 10: the repository call above already targets the row's real id once its
+   * pending create has settled — but `task` here is the CALLER's own captured reference, still
+   * carrying the synthetic `draft-task-…` id it had at the moment this move was requested. Reusing
+   * that stale id for the outcome below (rather than the coordinator's own current durable
+   * identity) is a display/retry bug, not a persistence one. Captured once, up front, so both
+   * outcome branches resolve through the exact SAME coordinator instance this move was submitted
+   * to — never whatever `taskSaveCoordinatorRef.current` happens to hold if an owner change has
+   * since swapped it out (that case never reaches this code anyway, via the project guard below,
+   * but the capture makes "the operation's own coordinator" the only one ever consulted here).
    */
   async function moveTask(task: Task, status: TaskStatus) {
+    const coordinator = taskSaveCoordinatorRef.current;
     const projectIdAtStart = selectedProjectIdRef.current;
     const optimistic = { ...task, status, updated_at: new Date().toISOString() };
     setTasks((current) => current.map((item) => item.id === task.id ? optimistic : item));
     setTaskSaveError(null);
     setTaskRetry({ kind: 'move', taskId: task.id, status });
-    const outcome = await taskSaveCoordinatorRef.current.submit(
+    const outcome = await coordinator.submit(
       task.id,
       ({ durableId }) => {
         const targetId = resolveDurableTaskId(task, durableId);
@@ -2106,11 +2117,23 @@ export function TrackerPage({
     if (selectedProjectIdRef.current !== projectIdAtStart) return;
     if (outcome.status === 'success') {
       const saved = Array.isArray(outcome.result) ? outcome.result[0] : outcome.result;
-      setTasks((current) => current.map((item) => item.id === task.id ? saved : item));
+      // Matched by the ORIGINAL captured id (the row may still be showing it, if this move's own
+      // create-reconciliation raced ahead of `saveTask`'s) OR by `saved.id` (the row may already
+      // have been rewritten to its real id by then) — the same either-alias reconciliation
+      // `saveTask` itself already relies on, so this durably-correct write is never dropped on the
+      // floor just because the rendered row's id moved on from what was captured at call time
+      // (HAM3-008 Correction 10).
+      setTasks((current) => current.map((item) => (item.id === task.id || item.id === saved.id ? saved : item)));
       setTaskRetry(null);
     } else if (outcome.status === 'error') {
+      // The row this failure belongs to may no longer be the synthetic id captured at call time —
+      // resolve its CURRENT durable identity through this same operation's own coordinator before
+      // pointing the selection at it, so the detail panel follows the row actually on screen
+      // rather than a vanished draft id (HAM3-008 Correction 10). `taskRetry` itself keeps the
+      // originally-captured id set above; `retryTaskSave` normalizes it the same way at retry time.
+      const currentTaskId = coordinator.getDurableId(task.id) ?? task.id;
       setTaskSaveError(errorMessage(outcome.error));
-      setSelectedTaskId(task.id);
+      setSelectedTaskId(currentTaskId);
     }
   }
 
@@ -2165,9 +2188,20 @@ export function TrackerPage({
     }
   }
 
+  /**
+   * `taskRetry.taskId` may still be the synthetic `draft-task-…` id captured when the failed
+   * move/archive was originally requested — its create can have durably completed, under a
+   * completely different real id, any time between then and now. Normalize it through the SAME
+   * draft/real alias the coordinator itself uses (HAM3-008 Correction 9) BEFORE looking the task
+   * up, so a legacy/synthetic retry id still resolves to the row actually on screen instead of
+   * silently finding nothing and no-opping. This is the consumer's own resolution — it holds
+   * regardless of whether the originating failure handler happened to record a resolved id or not
+   * (HAM3-008 Correction 10).
+   */
   async function retryTaskSave() {
     if (!taskRetry) return;
-    const task = tasks.find((item) => item.id === taskRetry.taskId);
+    const targetId = taskSaveCoordinatorRef.current.getDurableId(taskRetry.taskId) ?? taskRetry.taskId;
+    const task = tasks.find((item) => item.id === targetId);
     if (!task) return;
     if (taskRetry.kind === 'move' && taskRetry.status) {
       await moveTask(task, taskRetry.status);
