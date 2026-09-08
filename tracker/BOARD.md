@@ -21,12 +21,12 @@ None.
 
 ## in_review
 
-- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
-  PR #10 at `92e0872`; DeepSeek round-9 audit routed after Correction 10.
+None.
 
 ## testing
 
-None.
+- [HAM3-008](./tasks/HAM3-008.md) — Project home, directory switching, and resume
+  PR #10 at `92e0872`; DeepSeek APPROVE verified, approved-head Windows recheck pending.
 
 ## merged
 
