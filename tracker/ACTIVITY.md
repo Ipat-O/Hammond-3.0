@@ -889,3 +889,9 @@
 - Verified live open/draft PR #11 at b2828a8b741146aa16d9ea1cab090193dad747e1, direct parent 8fb2a994d01a3dc9b075d7555334d60ca183afec, same branch. Public report verified: https://github.com/Ipat-O/Hammond-3.0/pull/11#issuecomment-5588698881. Three expected files changed; full implementation whitespace clean.
 - Worker reports pending report form restoration, explicit Retry and context guard, thin service accessor; 127/136/525 checks and restored source mutation. No storage/native/schema changes or new runtime evidence. No orchestrator feature tests/edits.
 - HAM3-009 moved to in_review. Device-local tracker/work-orders/HAM3-009-AUDIT-4.md routes DeepSeek to full PR with bounded new probes for exact recovery fields/IDs, restart, owner/dispatch changes and newer typing. Prior closed algorithms/deferrals retained; no independent verdict, ready or merge.
+
+## 2026-09-08 — HAM3-009 bounded Correction 4 approval; owner smoke
+
+- Recorded owner's explicit scope override: one lifecycle fix, no worker checks, bounded follow-up only. Delivered head 9a3cdb3763a34c60556cfa088c79e43d90aefef2 directly follows b2828a8 per verified published audit; one effect hunk resets mount flag at setup, cleanup/dependencies unchanged.
+- Verified live open/draft mergeable PR #11 head matches round-5 APPROVE https://github.com/Ipat-O/Hammond-3.0/pull/11#issuecomment-5590107743. Two targeted StrictMode recovery/unmount probes passed, restored/removed. Scope is Correction 4 only, not fresh full-PR audit; earlier broad evidence and deferrals retained. No new broad checks run by orchestrator.
+- HAM3-009 moved to testing. Prepared device-local tracker/work-orders/HAM3-009-OWNER-TEST.md for short real-app smoke. No ready/merge action; owner smoke/authorization pending.
