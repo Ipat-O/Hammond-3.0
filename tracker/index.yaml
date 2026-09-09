@@ -309,7 +309,7 @@ tasks:
     added: after the HAM3-004 human check at the owner's request; extends the foundation plan from twelve tasks to thirteen
   - id: HAM3-014
     title: LLM access to project memory and instruction scopes
-    state: in_development
+    state: in_review
     depends_on: [HAM3-004, HAM3-005, HAM3-006, HAM3-007, HAM3-008, HAM3-013]
     worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
@@ -319,15 +319,16 @@ tasks:
     design_note: D-022 settles bundled stdio/named-pipe boundary; complete instruction scope/provenance required
     branch: claude/sleepy-fermat-8180q8
     base_sha: ab265e93475b7b3b3a7c36e02b6eb26df987153a
-    current_head_sha: 95b6c78451e0495efaf59bb0c72de7409c2b833a
+    current_head_sha: 6f92b2e248ee87d7118e7f80638523f0d3ce9b65
     pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/12
-    worker_report: https://github.com/Ipat-O/Hammond-3.0/pull/12#issuecomment-5599016149
-    worker_report_provenance: published Correction 1 top-level report verified at delivered head
+    worker_report: https://github.com/Ipat-O/Hammond-3.0/pull/12#issuecomment-5601627260
+    worker_report_provenance: published Correction 2 top-level report verified at delivered head
     correction_packet: tracker/work-orders/HAM3-014-CORRECTION-2.md (device-local)
-    audit_packet: tracker/work-orders/HAM3-014-AUDIT-1.md (device-local)
+    audit_packet: tracker/work-orders/HAM3-014-AUDIT-2.md (device-local)
     audit_verdict: CHANGES
     audited_head_sha: 95b6c78451e0495efaf59bb0c72de7409c2b833a
     audit_report: https://github.com/Ipat-O/Hammond-3.0/pull/12#issuecomment-5599404930
     actual_auditor_identity: DeepSeek / Kilo Code / deepseek/deepseek-v4-flash-vision-exp
     auditor_identity_deviation: actual model differs from assigned deepseek-v4-pro; no owner waiver recorded; retain findings, next audit remains assigned to V4 Pro
-    outstanding: F1-F4 corrections; credential protection evidence; official Supabase generated types/checks; real Windows pipe/ACL/installed execution/MCP host evidence; new-head independent audit; owner smoke
+    current_audit_status: no verdict at 6f92b2e; retained CHANGES is historical at 95b6c78
+    outstanding: independent F1-F4/F6 closure; official Supabase generated types/checks; real Windows pipe/ACL/installed execution/MCP host evidence; new-head independent audit; owner smoke

@@ -14,11 +14,11 @@ None.
 
 ## in_development
 
-- [HAM3-014](./tasks/HAM3-014.md) — PR #12 audit CHANGES at 95b6c78; Sonnet Correction 2 packet prepared.
+None.
 
 ## in_review
 
-None.
+- [HAM3-014](./tasks/HAM3-014.md) — PR #12 Correction 2 at 6f92b2e; DeepSeek V4 Pro re-audit packet prepared.
 
 ## testing
 

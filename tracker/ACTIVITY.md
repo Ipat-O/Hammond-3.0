@@ -954,3 +954,10 @@
 - Independent native Windows evidence reports check/clippy/build, 427 frontend tests via threads, 81 app/34 shared Rust tests, and successful NSIS/MSI companion inclusion. Packaging regression fails on missing .exe expectation. Live pipe/ACL/installed execution/MCP and official Supabase tests/types remain unverified.
 - Prepared local HAM3-014-CORRECTION-2.md at same branch/head for F1 Windows regression, F2 durable-write UI refresh preserving drafts/context, F3 historical instruction scope, and F4 unambiguous dedup payload with concrete DB proof. F5 paging remains observation; F6 credential protection requires evidence, not disclosure-as-waiver. No automatic DPAPI/realtime/pagination expansion.
 - HAM3-014 returns to in_development. No new-head approval, owner smoke, readiness, hosted changes or merge; orchestrator did not implement fixes or perform independent audit.
+
+## 2026-09-09 — HAM3-014 Correction 2 intake; round-2 audit packet
+
+- Verified published worker report 5601627260, open/draft PR #12 and full head 6f92b2e248ee87d7118e7f80638523f0d3ce9b65, direct parent 95b6c78; same branch, 22 correction files, full whitespace check clean.
+- Worker reports F1 Windows suffix, F2 notification/UI reconciliation, F3 instruction-version scope, F4 framed full-payload/target/archive retry identity, and F6 explicit Windows credential DACL. Attributed verification: 119 Rust, 448 frontend, 118 pgTAP on native PG16; official generated types/stack and real Windows/pipe/ACL/installed/MCP execution remain unverified.
+- Prepared local HAM3-014-AUDIT-2.md for full new-head review with an explicit actual V4 Pro identity gate, separate F1-F4/F6 dispositions, F5 retained observation, and current-head runtime/database evidence. Existing CHANGES at 95b6c78 is historical; no new-head verdict exists.
+- HAM3-014 moves to in_review. No orchestrator feature tests/fixes, owner smoke, ready transition, hosted changes or merge.
