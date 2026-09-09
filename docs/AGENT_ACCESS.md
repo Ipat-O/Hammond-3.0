@@ -159,13 +159,17 @@ automatic, silent retry.
 
 1. In Hammond, open a project, go to its **Agent access** panel (next to directory contexts), pick
    **read-only** or **read + task write**, and enable it.
-2. Copy the launch configuration. It contains only an opaque `profileId` — never the connection
-   secret — as `args` to the bundled `hammond-mcp-companion` executable:
+2. Copy the launch configuration. `command` is resolved at the time you open the panel — via
+   Tauri's own resource resolver (`BaseDirectory::Resource`, the documented API for locating a
+   file `externalBin` staged into the installed app; see "Packaging" below), falling back to the
+   directory next to Hammond's own executable if that ever errors — so it points at wherever this
+   install actually placed the companion, not a guess. It contains only an opaque `profileId` —
+   never the connection secret — as `args`:
    ```json
    {
      "mcpServers": {
        "hammond": {
-         "command": "<path next to Hammond.exe>\\hammond-mcp-companion.exe",
+         "command": "<resolved path>\\hammond-mcp-companion.exe",
          "args": ["--profile", "<profileId>"]
        }
      }
@@ -194,38 +198,69 @@ Every tool error is `{ code, message }`. Stable codes in use today: `invalid_par
 
 Real, not simulated, evidence exists for:
 
-- **Protocol/facade correctness** (Rust): 37 tests exercise the handshake, permission/generation
-  checks, and call loop directly against `tokio::io::duplex()` — no OS pipe, no mock objects
-  standing in for real async I/O.
+- **Protocol/facade correctness** (Rust): 34 tests in `hammond-agent-access` (the shared crate —
+  see "Packaging" below) exercise the handshake, permission/generation checks, and call loop
+  directly against `tokio::io::duplex()` — no OS pipe, no mock objects standing in for real async
+  I/O.
 - **The `cfg(windows)` named-pipe code, including the SDDL security-descriptor FFI**, compiles
   clean for the `x86_64-pc-windows-gnu` target, cross-compiled from this Linux environment (a
   genuine, if partial, substitute for a Windows host) — this caught and fixed a real `HLOCAL` type
-  mismatch before it could ever reach a Windows build.
+  mismatch before it could ever reach a Windows build. The same cross-compile also builds a real
+  PE32+ `hammond-mcp-companion.exe` end to end through the packaging path below.
 - **Facade logic** (TypeScript): 25 tests cover permission checks, cross-project scoping,
   pagination, every instruction-provenance combination (base/owner/absent, explicit vs.
   assignment-derived provider, mismatch reporting, selected-empty vs. absent override), and
   revision-conflict mapping.
-- **Database migration correctness and concurrency**: this sandbox cannot reach Docker (Docker Hub
-  and the AWS ECR image mirror both return policy `403`s at the outbound proxy — confirmed via the
-  proxy's own failure log, not assumed), so `supabase start`/`supabase gen types` could not run.
-  Verified instead against native PostgreSQL 16 + pgTAP with a hand-built shim reproducing
-  Supabase's `auth.uid()`/`auth.role()`/RLS environment closely enough to apply all five real
-  migrations unmodified: 20 pgTAP assertions
+- **Companion packaging is wired and verified, not just configured.** `hammond-mcp-companion` is
+  its own Cargo package (`src-tauri/crates/companion`, workspace member, no `tauri` dependency),
+  sharing protocol/state code with the app through `hammond-agent-access`
+  (`src-tauri/crates/agent-access` — everything `commands.rs` doesn't own). `build.rs` builds and
+  stages it into `binaries/hammond-mcp-companion-<target-triple>[.exe]` — the exact name
+  `tauri.conf.json`'s `externalBin: ["binaries/hammond-mcp-companion"]` expects — into a
+  target-dir separate from the outer build's own (a shared one deadlocks: the nested `cargo build`
+  would block on a lock the outer build cannot release until `build.rs` returns) *before*
+  `tauri_build::build()`'s own eager path validation runs, closing the ordering gap a prior round
+  of this delivery hit and reverted. Evidence this actually works, not just that it's plausible:
+  a real, from-clean `cargo check`/`cargo build`/`cargo clippy` (workspace and
+  `x86_64-pc-windows-gnu` cross-target) succeed with no prior manual step and produce the
+  correctly-named staged binary (confirmed a genuine PE32+ Windows executable, not just a
+  same-named stub, for the cross target); an automated regression test
+  (`src-tauri/tests/companion_sidecar_packaging.rs`) wipes the staged artifact, runs a real nested
+  `cargo check`, and asserts it reappears; and the failure path was manually reproduced once (a
+  deliberately broken companion source file made `cargo check` fail loudly at `build.rs:58` with
+  exit code 101 and a clear message, then was restored and reverified clean) rather than assumed.
+  `launch_config_for`'s copied command now resolves through Tauri's own `BaseDirectory::Resource`
+  resolver instead of a hand-derived path, with unit tests pinning that a directory containing a
+  space (a real Windows `Program Files` install path) round-trips through the JSON config exactly.
+- **Database migration correctness and concurrency**: `supabase start` was attempted fresh in this
+  round after actually getting the Docker daemon running in this sandbox (it does start; only the
+  init script that would normally launch it at boot fails here). It still cannot complete, but on a
+  *different* gate than previously found: the outbound proxy now permits the registry/CDN hosts it
+  previously rejected outright, but Docker Hub's own anonymous-pull rate limit returns `429 Too
+  Many Requests` for the Supabase images, and the signed CDN blob URLs it falls back to return
+  `Forbidden` — both confirmed from `supabase start`'s own output, not assumed. `supabase gen
+  types`/`db reset`/`test db --local` all depend on the same local stack and so share this gate.
+  This is unchanged since the prior round: native PostgreSQL 16 + pgTAP with a hand-built shim
+  reproducing Supabase's `auth.uid()`/`auth.role()`/RLS environment closely enough to apply all
+  five real migrations unmodified — 20 pgTAP assertions
   (`supabase/tests/task_revision_and_agent_writes.test.sql`) plus a genuine two-`psql`-session race
-  (one session holds the hierarchy advisory lock for 3 seconds mid-archive while the other
-  concurrently attempts a create under the same parent; the second call measurably blocks for the
-  remaining ~2.3 seconds, then correctly sees the parent as archived) — not just sequential
-  assertions. The existing 4 pgTAP files (86 assertions) still pass unmodified against the new
-  schema. `src/data/database.types.ts` is hand-extended to match the migration exactly, since
-  `supabase gen types` also needs Docker; **this still needs a real `supabase gen types` run once
-  Docker/Supabase CLI access is available**, to catch any drift between the hand-written types and
-  what the CLI would actually generate. Postgres 17 (this project's configured version) vs. the 16
-  available via apt in this sandbox is also unverified as a source of behavioral difference,
-  though nothing this migration uses (`plpgsql`, advisory locks, standard triggers, `jsonb`) is
-  version-sensitive across 13–17.
-- **Full existing test suites still pass**: 427 frontend tests (up from 395 baseline), 115 Rust
-  tests (up from 78 baseline) plus the new 37, `cargo clippy`/`cargo fmt`/`eslint`/`prettier` clean,
-  `npm run build` and `cargo build`/`cargo check` (native + Windows cross-target) all succeed.
+  (one session holds the **project-scoped** hierarchy advisory lock — `pg_advisory_xact_lock` keyed
+  on `project_id`, serializing every hierarchy-affecting write for that project, not just the one
+  subtree — for 3 seconds mid-archive while the other concurrently attempts a create under the same
+  parent; the second call measurably blocks for the remaining ~2.3 seconds, then correctly sees the
+  parent as archived) — not just sequential assertions. The existing 4 pgTAP files (86 assertions)
+  still pass unmodified against the new schema. `src/data/database.types.ts` is hand-extended to
+  match the migration exactly, since `supabase gen types` also needs Docker; **this still needs a
+  real `supabase gen types` run once Docker/Supabase CLI access is available**, to catch any drift
+  between the hand-written types and what the CLI would actually generate. Postgres 17 (this
+  project's configured version) vs. the 16 available via apt in this sandbox is also unverified as
+  a source of behavioral difference, though nothing this migration uses (`plpgsql`, advisory locks,
+  standard triggers, `jsonb`) is version-sensitive across 13–17.
+- **Full existing test suites still pass**: 427 frontend tests (unchanged this round), 119 Rust
+  tests across the workspace (84 in `hammond_lib`, 34 in `hammond-agent-access`, 1 packaging
+  integration test — up from 115 total in the prior round, split across the new crate boundary),
+  `cargo clippy`/`cargo fmt`/`eslint`/`prettier` clean, `npm run build` and
+  `cargo build`/`cargo check` (native + Windows cross-target) all succeed.
 
 **Not verified — explicitly pending a real Windows host, disclosed rather than assumed:**
 
@@ -233,19 +268,15 @@ Real, not simulated, evidence exists for:
   an actual second Windows account being refused.
 - The companion binary has never run for real, including its own named-pipe **client** connect
   path and its `LOCALAPPDATA`-based profile-file lookup.
-- No packaged Windows build (installer or otherwise) has been produced or installed.
-- **Packaging the companion into the installer is not yet wired.** `tauri.conf.json`'s
-  `bundle.resources`/`externalBin` both make Tauri's own `build.rs` validate the referenced path
-  _at `cargo build`/`cargo check` time_, not at bundle time — since the companion is a second
-  `[[bin]]` in the same Cargo package, referencing it this way created a chicken-and-egg failure
-  that broke plain `cargo check` for everyone (confirmed by actually adding it and watching
-  `cargo check` fail with `resource path ... doesn't exist`, then reverting). A real fix needs
-  either a documented "build the companion first" contributor step (breaking the assumption that
-  `cargo check`/`clippy` run standalone against `src-tauri/`) or a `beforeBuildCommand` hook
-  (which only covers `tauri build`/`tauri dev`, not direct `cargo` invocations) — a repo-wide
-  workflow decision left to the owner rather than forced through silently. `npm run
-companion:build` builds the companion binary standalone today for manual local testing; it is
-  not yet part of the installer.
+- No packaged Windows build (installer or otherwise) has been produced or installed — `cargo
+  tauri build`/`tauri build` itself (the step that would invoke NSIS/WiX and produce an
+  installable `.exe`/`.msi`) has not been run in this environment, only the `cargo
+  check`/`build`/`clippy` steps that share its build script. The companion sidecar's *inclusion*
+  in that bundle is wired and verified per "Verification status" above; the installer step around
+  it is not.
+- `npm run companion:build` builds the companion standalone (`cargo build --release --package
+  hammond-mcp-companion`) for manual local testing outside a full app build; it is not needed for
+  packaging, which `build.rs` now does automatically.
 - A real MCP host (Claude Desktop, Codex, etc.) has never connected to the packaged companion end
   to end. The MCP JSON-RPC message shapes (`initialize`, `tools/list`, `tools/call`) follow the
   2024-11-05 protocol revision and are unit-tested for their pure logic, but the actual stdio

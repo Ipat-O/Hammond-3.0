@@ -2,6 +2,8 @@ node_modules/
 dist/
 src-tauri/target/
 src-tauri/gen/
+# Built by src-tauri/build.rs on every build; see docs/AGENT_ACCESS.md "Packaging".
+src-tauri/binaries/
 .env
 .env.*
 !.env.example
