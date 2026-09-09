@@ -293,11 +293,33 @@ Real, not simulated, evidence exists for:
   project's configured version) vs. the 16 available via apt in this sandbox is also unverified as
   a source of behavioral difference, though nothing this migration uses (`plpgsql`, advisory locks,
   standard triggers, `jsonb`) is version-sensitive across 13–17.
-- **Full existing test suites still pass**: 427 frontend tests (unchanged this round), 119 Rust
-  tests across the workspace (84 in `hammond_lib`, 34 in `hammond-agent-access`, 1 packaging
-  integration test — up from 115 total in the prior round, split across the new crate boundary),
-  `cargo clippy`/`cargo fmt`/`eslint`/`prettier` clean, `npm run build` and
-  `cargo build`/`cargo check` (native + Windows cross-target) all succeed.
+- **Full existing test suites still pass**: 427 frontend tests (unchanged this round), 121 Rust
+  tests across the workspace (86 in `hammond_lib`, 34 in `hammond-agent-access`, 1 packaging
+  integration test — up 2 from the prior round's 119, both new tests below), `cargo
+  clippy`/`cargo fmt`/`eslint`/`prettier` clean, `npm run build` and `cargo build`/`cargo check`
+  (native + Windows cross-target) all succeed.
+- **The owner-reported native crash on enabling Agent access is fixed and root-caused, not just
+  worked around.** `agent_access_enable` is a synchronous (non-`async fn`) `#[tauri::command]`,
+  which Tauri dispatches inline on whatever native thread delivers IPC — confirmed by reading
+  `tauri-macros`' `body_blocking` expansion (no `spawn_blocking` wrapper) and
+  `Webview::on_message`'s call site; that thread never has an entered Tokio runtime on its own.
+  `start_listener` called a bare `tokio::spawn`, which panics under exactly that condition
+  (`tokio::runtime::Handle::current()` finds nothing) — reproduced verbatim in this environment
+  (`there is no reactor running, must be called from the context of a Tokio 1.x runtime`), which
+  on Windows unwinds into the WebView2/tao native callback boundary and aborts the process via
+  `__fastfail(FAST_FAIL_FATAL_APP_EXIT)`, matching the owner's WER report exactly (`EventType
+  BEX64`, exception `c0000409`, exception data `7`). Fixed by switching to
+  `tauri::async_runtime::spawn` — Tauri's own documented pattern, which enters the runtime handle
+  before spawning regardless of the calling thread. `agent_access_enable` now also waits (via a
+  bounded, blocking channel receive — safe here precisely because this thread never drives other
+  async tasks) for the listener to actually bind before reporting success or writing the profile,
+  and rolls back cleanly on a bind failure, so a failed enable never leaves `agent_access_status`
+  reporting "enabled" with no real listener behind it. Two new Rust tests
+  (`agent_access::commands::command_boundary_tests`) call the real, unmodified `start_listener`
+  from a plain `#[test]` thread that deliberately never entered a Tokio runtime — the same
+  boundary condition as the real native call site, which a `#[tokio::test]` would have hidden —
+  and were confirmed to reproduce the exact panic above against the pre-fix code before
+  confirming the fix passes.
 
 **Not verified — explicitly pending a real Windows host, disclosed rather than assumed:**
 
@@ -320,7 +342,9 @@ Real, not simulated, evidence exists for:
   transport has not been exercised against a real host process.
 - The owner smoke sequence in the original work order (enable read-only, connect a real host,
   compare against Studio, enable task-write, create a task, edit both sides for a real conflict,
-  restart/reconnect, revoke) has not been run — it requires the Windows environment above.
+  restart/reconnect, revoke) has not been run — it requires the Windows environment above. A
+  prior attempt at just the first step (enable) hit the native crash fixed above and got no
+  further; this sequence needs to be attempted again from the top now that the fix is in.
 
 ## Non-scope (unchanged from the original plan)
 

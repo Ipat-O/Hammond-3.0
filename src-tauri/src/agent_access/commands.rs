@@ -25,7 +25,7 @@ use super::types::{
 
 struct RunningListener {
     shutdown: watch::Sender<bool>,
-    handle: tokio::task::JoinHandle<()>,
+    handle: tauri::async_runtime::JoinHandle<()>,
 }
 
 #[derive(Default)]
@@ -200,26 +200,70 @@ fn stop_listener(managed: &AgentAccessManaged) {
     }
 }
 
-fn start_listener(app: &AppHandle, managed: &AgentAccessManaged, pipe_name: String) {
+/// Starts the named-pipe listener and blocks (this command runs synchronously, inline on
+/// whatever native thread dispatches Tauri IPC — never assume it has an entered Tokio runtime;
+/// see the module doc comment) until the listener has actually bound or definitively failed to.
+///
+/// Must use `tauri::async_runtime::spawn`, not a bare `tokio::spawn`: the latter calls
+/// `tokio::runtime::Handle::current()` internally and panics if the calling thread never entered
+/// a runtime context, which a synchronous Tauri command's thread never does on its own.
+/// `tauri::async_runtime::spawn` enters the app's runtime handle first (see `tauri::async_runtime`
+/// docs), which is exactly the supported way to spawn from here.
+///
+/// A caller that gets `Err` back has no running listener left behind: the spawned task's `ready`
+/// signal fires before any listener is considered live, so a bind failure never leaves an
+/// orphaned task or a stale `RunningListener` entry.
+///
+/// Deliberately takes an already-built [`Dispatcher`] rather than an `AppHandle` (the caller
+/// builds one via [`build_dispatcher`]): the spawn-and-wait logic here is exactly the boundary
+/// that crashed in production, and it needs nothing Tauri-app-specific to do its job — keeping
+/// `AppHandle` out of this function's signature is what lets
+/// `command_boundary_tests` exercise this exact code from a plain thread with no entered Tokio
+/// runtime and no mock app/webview needed to do it.
+fn start_listener(
+    managed: &AgentAccessManaged,
+    pipe_name: String,
+    dispatcher: Dispatcher,
+) -> Result<(), AgentAccessCommandError> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let dispatcher = build_dispatcher(app.clone(), managed.pending.clone());
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let core = managed.core.clone();
-    let handle = tokio::spawn(async move {
-        if let Err(error) = run_listener(pipe_name, core, dispatcher, shutdown_rx).await {
-            // The listener stopping is not itself surfaced to the frontend today; `agent_access_status`
-            // still reports the profile as enabled since native-transport failures (e.g. this
-            // platform has no Windows named pipe support) are a packaging/platform boundary rather
-            // than an owner-actionable app state. See docs/AGENT_ACCESS.md "Verification status".
+    let handle = tauri::async_runtime::spawn(async move {
+        if let Err(error) = run_listener(pipe_name, core, dispatcher, shutdown_rx, ready_tx).await {
+            // A failure here happens only *after* a successful bind (the bind failure path
+            // already reported itself through `ready` and returned before reaching this point).
+            // Post-bind transport failures are not surfaced to the frontend today; `agent_access_status`
+            // still reports the profile as enabled since they are a packaging/platform boundary
+            // rather than an owner-actionable app state. See docs/AGENT_ACCESS.md "Verification status".
             eprintln!("hammond agent access: listener stopped: {error}");
         }
     });
-    *managed
-        .listener
-        .lock()
-        .expect("agent access listener lock poisoned") = Some(RunningListener {
-        shutdown: shutdown_tx,
-        handle,
-    });
+
+    // Safe to block this thread on a plain channel recv here: this command never runs on a
+    // Tokio worker thread that's driving other tasks (see the doc comment above), so there is
+    // nothing else on this thread to starve.
+    match ready_rx.blocking_recv() {
+        Ok(Ok(())) => {
+            *managed
+                .listener
+                .lock()
+                .expect("agent access listener lock poisoned") = Some(RunningListener {
+                shutdown: shutdown_tx,
+                handle,
+            });
+            Ok(())
+        }
+        Ok(Err(message)) => {
+            handle.abort();
+            Err(AgentAccessCommandError::Transport(message))
+        }
+        Err(_recv_error) => {
+            handle.abort();
+            Err(AgentAccessCommandError::Transport(
+                "The agent access listener stopped before it finished starting.".to_owned(),
+            ))
+        }
+    }
 }
 
 #[tauri::command]
@@ -234,6 +278,9 @@ pub fn agent_access_enable(
     if let Some(previous) = state.core.current() {
         state.pending.invalidate_generation(previous.generation);
     }
+    // Truthful status while enabling is in flight: nothing is enabled again until a listener is
+    // actually confirmed live and the new profile is durably written below.
+    state.core.set(None);
 
     let profile_id = generate_token(16);
     let secret = generate_token(32);
@@ -249,10 +296,21 @@ pub fn agent_access_enable(
         created_at: current_timestamp(),
     };
 
-    let dir = profile_dir(&app)?;
-    store::write_profile(&dir, &profile).map_err(map_store_error)?;
+    let dispatcher = build_dispatcher(app.clone(), state.pending.clone());
+    start_listener(&state, pipe_name, dispatcher)?;
+
+    let dir = match profile_dir(&app) {
+        Ok(dir) => dir,
+        Err(error) => {
+            stop_listener(&state);
+            return Err(error);
+        }
+    };
+    if let Err(error) = store::write_profile(&dir, &profile) {
+        stop_listener(&state);
+        return Err(map_store_error(error));
+    }
     state.core.set(Some(profile.clone()));
-    start_listener(&app, &state, pipe_name);
 
     Ok(to_dto(&app, &profile))
 }
@@ -409,5 +467,111 @@ mod tests {
             build_companion_command(Some(resolved), "hammond-mcp-companion.exe"),
             r"C:\Program Files\Hammond\hammond-mcp-companion.exe"
         );
+    }
+}
+
+/// HAM3-014 owner-crash regression: exercises the *actual* production spawn boundary
+/// (`start_listener`, unmodified — not a reduced copy) from a plain `#[test]` thread that never
+/// entered a Tokio runtime, exactly matching the real native call site: `agent_access_enable` is
+/// a synchronous (`body_blocking`) `#[tauri::command]`, so Tauri dispatches it inline on whatever
+/// native thread delivers IPC, which never has an entered Tokio runtime on its own.
+///
+/// Before the fix, `start_listener` called a bare `tokio::spawn`, which panics under exactly
+/// this condition (`Handle::current()` finds nothing). On Windows that panic unwinds into the
+/// WebView2/tao native callback boundary and aborts the process
+/// (`__fastfail(FAST_FAIL_FATAL_APP_EXIT)`), which is exactly the WER signature the owner
+/// reported (`EventType BEX64`, exception `c0000409`, exception data `7`). A plain
+/// `#[tokio::test]` would hide this entirely, because the test body itself would already be
+/// running inside an entered runtime — the opposite of the real native call site. These tests
+/// call `start_listener` directly (rather than through the full Tauri IPC/command-macro layer)
+/// because the production command signatures are hardcoded to the default `Wry` runtime, not
+/// generic over `tauri::Runtime`, so they cannot be driven through `tauri::test`'s `MockRuntime`
+/// without a broader signature change than this fix's scope; `start_listener` itself needed no
+/// `AppHandle` at all once decoupled from `build_dispatcher`, which is exactly what makes this
+/// direct, unmocked reproduction possible.
+#[cfg(test)]
+mod command_boundary_tests {
+    use super::*;
+
+    fn no_op_dispatcher() -> Dispatcher {
+        Arc::new(|_ctx: FacadeCallContext| {
+            Box::pin(async { FacadeOutcome::Err(FacadeError::new("unused", "unused")) })
+        })
+    }
+
+    /// Reproduces the exact call-site condition that crashed the owner build: no Tokio runtime
+    /// has ever been entered on this thread.
+    fn assert_no_runtime_is_entered() {
+        assert!(
+            tokio::runtime::Handle::try_current().is_err(),
+            "this test must run without an entered Tokio runtime to reproduce the real bug; \
+             a #[tokio::test] here would silently hide the defect"
+        );
+    }
+
+    #[test]
+    fn starting_the_listener_from_a_thread_with_no_entered_tokio_runtime_does_not_panic() {
+        assert_no_runtime_is_entered();
+        let managed = AgentAccessManaged::default();
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            start_listener(
+                &managed,
+                pipe_name_for("ham3-014-regression"),
+                no_op_dispatcher(),
+            )
+        }));
+
+        assert!(
+            outcome.is_ok(),
+            "start_listener panicked when called from a thread with no entered Tokio runtime — \
+             this is the HAM3-014 native crash (a bare tokio::spawn call with no entered runtime \
+             context)"
+        );
+    }
+
+    /// This platform (`cfg(not(windows))`) has no named-pipe transport, so the bind inside
+    /// `start_listener` always fails. That failure must come back as the existing structured
+    /// `Transport` error — not a panic, and not a silent "succeeded" with no listener behind it —
+    /// and must leave no `RunningListener` behind, proving there is no orphaned listener task to
+    /// leak on a real (Windows) bind failure either.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_failed_bind_reports_a_structured_error_and_leaves_no_running_listener() {
+        assert_no_runtime_is_entered();
+        let managed = AgentAccessManaged::default();
+
+        let result = start_listener(
+            &managed,
+            pipe_name_for("ham3-014-regression"),
+            no_op_dispatcher(),
+        );
+        assert!(
+            matches!(result, Err(AgentAccessCommandError::Transport(_))),
+            "expected a structured Transport error from this platform's unsupported pipe \
+             transport, got {result:?}"
+        );
+        assert!(
+            managed
+                .listener
+                .lock()
+                .expect("agent access listener lock poisoned")
+                .is_none(),
+            "a failed bind must not leave a RunningListener behind"
+        );
+
+        // Restart after a failure must behave identically — no deadlock, no leaked task, no
+        // stale state carried over from the previous attempt.
+        let second = start_listener(
+            &managed,
+            pipe_name_for("ham3-014-regression-2"),
+            no_op_dispatcher(),
+        );
+        assert!(matches!(second, Err(AgentAccessCommandError::Transport(_))));
+        assert!(managed
+            .listener
+            .lock()
+            .expect("agent access listener lock poisoned")
+            .is_none());
     }
 }

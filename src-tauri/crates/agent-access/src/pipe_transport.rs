@@ -136,13 +136,26 @@ mod windows_impl {
     /// Runs until `shutdown` fires. Every accepted client connection is spawned as its own task
     /// running [`handle_connection`] against the live `core`/`dispatcher`, so one slow or
     /// misbehaving client never blocks new connections or other in-flight ones.
+    ///
+    /// `ready` fires exactly once, right after the first pipe instance is bound (or fails to
+    /// bind): the caller (a synchronous Tauri command) blocks on it to know whether "enable"
+    /// actually stood up a usable listener before reporting success, rather than trusting that a
+    /// spawned task which might still fail is already live.
     pub async fn run_listener(
         pipe_name: String,
         core: Arc<AgentAccessCore>,
         dispatcher: Dispatcher,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
+        ready: tokio::sync::oneshot::Sender<Result<(), String>>,
     ) -> Result<(), ListenerError> {
-        let mut server = create_first_instance(&pipe_name)?;
+        let mut server = match create_first_instance(&pipe_name) {
+            Ok(server) => server,
+            Err(error) => {
+                let _ = ready.send(Err(error.to_string()));
+                return Err(error);
+            }
+        };
+        let _ = ready.send(Ok(()));
         loop {
             tokio::select! {
                 connect_result = server.connect() => {
@@ -197,11 +210,14 @@ mod unsupported {
         _core: Arc<AgentAccessCore>,
         _dispatcher: Dispatcher,
         _shutdown: tokio::sync::watch::Receiver<bool>,
+        ready: tokio::sync::oneshot::Sender<Result<(), String>>,
     ) -> Result<(), ListenerError> {
-        Err(ListenerError(
+        let error = ListenerError(
             "Agent access requires Windows named-pipe support, which this platform does not have."
                 .to_owned(),
-        ))
+        );
+        let _ = ready.send(Err(error.to_string()));
+        Err(error)
     }
 
     pub async fn connect_client(_pipe_name: &str) -> std::io::Result<std::convert::Infallible> {
