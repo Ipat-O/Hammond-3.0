@@ -206,7 +206,8 @@ tasks:
     design_note: D-017 makes effective instructions the default experience and moves composition layers/version mechanics behind Customize and History
   - id: HAM3-008
     title: Project home, directory switching, and resume
-    state: ready_for_development
+    state: merged
+    merge_commit: 379c2cfefb894a5cb94aadc4a9a78e9bde2024ed
     depends_on: [HAM3-003, HAM3-004, HAM3-006]
     worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
@@ -308,8 +309,11 @@ tasks:
     added: after the HAM3-004 human check at the owner's request; extends the foundation plan from twelve tasks to thirteen
   - id: HAM3-014
     title: LLM access to project memory and instruction scopes
-    state: in_design
+    state: ready_for_development
     depends_on: [HAM3-004, HAM3-005, HAM3-006, HAM3-007, HAM3-008, HAM3-013]
     worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
-    design_note: owner-requested implementation plan; local MCP reads and task writes with complete instruction scope/provenance; no dispatch yet
+    assigned_worker_identity: Anthropic / Claude Code / claude-sonnet-5 (recipient must verify)
+    work_order: tracker/work-orders/HAM3-014-WO.md (device-local owner-transfer packet)
+    requested_branch: claude/ham3-014-agent-access
+    design_note: D-022 settles bundled stdio/named-pipe boundary; complete instruction scope/provenance required; packet prepared, worker execution not yet reported

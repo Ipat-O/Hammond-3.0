@@ -6,12 +6,11 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## in_design
 
-- [HAM3-014](./tasks/HAM3-014.md) — LLM access to project memory and instruction scopes (next planned task)
 - [HAM3-012](./tasks/HAM3-012.md) — Integrated desktop release and human QA
 
 ## ready_for_development
 
-None.
+- [HAM3-014](./tasks/HAM3-014.md) — Sonnet implementation packet prepared for owner transfer; exact base bound in the local packet.
 
 ## in_development
 

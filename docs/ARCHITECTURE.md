@@ -1,6 +1,6 @@
 # Hammond 3.0 Architecture
 
-Status: product direction updated 2026-09-09 by D-018 through D-021; see the task board for implementation status. HAM3-014 contains the requested LLM access implementation plan; its proposed transport boundary remains subject to dispatch review.
+Status: product direction updated 2026-09-09 by D-018 through D-022; see the task board for implementation status. HAM3-014 contains the requested LLM access implementation plan; D-022 settles its bundled stdio/named-pipe transport boundary for implementation.
 
 ## Product boundary
 

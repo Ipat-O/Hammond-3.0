@@ -926,3 +926,10 @@
 - Owner authorized publishing the local planning changes after investigation confirmed they had not reached origin/dev.
 - Consolidated HAM3-010/011 cancellations, D-019 through D-021, HAM3-014 with instruction scopes, and HAM3-012 dependencies into one planning update. HAM3-009 remains cancelled and HAM3-013 remains merged.
 - Sonnet branch claude/optimistic-bardeen-gch776 at f565d5f independently recorded substantially the same HAM3-014 plan from older dev adeaec6, but omitted cancellation/dependency updates. This consolidated plan supersedes that incomplete planning snapshot; no feature implementation or dispatch is implied.
+
+## 2026-09-09 — HAM3-014 Sonnet work order prepared
+
+- Owner requested implementation dispatch to Sonnet. Verified dependency merge ancestry on published dev and found no matching HAM3-014 issue or implementation PR; Sonnet's older planning branch has no PR and is not the prescribed base.
+- Settled the bundled stdio/named-pipe exception under D-022, prepared a complete local transfer packet, and moved HAM3-014 to ready_for_development. Packet's exact SHA is bound after publishing these records to avoid a stale handover base.
+- Corrected the index's stale HAM3-008 ready_for_development entry to merged using verified merge 379c2cf; the board and prior delivery evidence already recorded the merge.
+- Sonnet must verify actual identity and implement on a fresh exact-base branch. DeepSeek audits after delivery. No worker execution, feature edit, test result, hosted change, or merge is claimed by the orchestrator.
