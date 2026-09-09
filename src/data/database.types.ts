@@ -511,6 +511,12 @@ export type Database = {
         };
         Returns: Json;
       };
+      agent_request_encode_field: {
+        Args: {
+          p_value: string | null;
+        };
+        Returns: string;
+      };
       agent_request_record: {
         Args: {
           p_operation: string;
@@ -568,6 +574,7 @@ export type Database = {
       tasks_archive_subtree_checked: {
         Args: {
           p_expected_revision: number;
+          p_request_id: string;
           p_root_task_id: string;
         };
         Returns: {

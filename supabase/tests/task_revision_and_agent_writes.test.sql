@@ -1,5 +1,5 @@
 begin;
-select plan(20);
+select plan(32);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures
@@ -71,6 +71,42 @@ select throws_ok(
 );
 
 -- ---------------------------------------------------------------------------
+-- HAM3-014 correction 2 (F4): the payload hash is unambiguous, byte-exact framing --
+-- not a delimiter-joined string a crafted value can shift the boundary of.
+-- ---------------------------------------------------------------------------
+
+-- The exact repro from the audit: title='a'||chr(31)||'b', description='c' and title='a',
+-- description='b'||chr(31)||'c' used to join to the identical chr(31)-separated byte string, so
+-- the second call would have silently "replayed" the first's result instead of being rejected as
+-- a different payload. With length-prefixed framing they must hash differently.
+select t.id from public.tasks_create_checked(
+  '51111111-1111-4111-8111-111111111111', 'a' || chr(31) || 'b', 'c', null, 'ham3014-sep-collision'
+) t \gset sep_
+select is((:'sep_id')::text is not null, true, 'the first half of the boundary-shift repro succeeds');
+
+select throws_ok(
+  $$select public.tasks_create_checked('51111111-1111-4111-8111-111111111111', 'a', 'b' || chr(31) || 'c', null, 'ham3014-sep-collision')$$,
+  '22023',
+  null,
+  'the boundary-shifted payload is correctly rejected as different, not silently replayed (F4)'
+);
+
+-- An absent field (sql null, "not supplied") and an explicit empty string both end up stored as
+-- '' for a create's description, but they are still distinct *inputs* -- the hash must not treat
+-- them as the same payload for dedup purposes.
+select t.id from public.tasks_create_checked(
+  '51111111-1111-4111-8111-111111111111', 'Null vs empty', null, null, 'ham3014-null-vs-empty'
+) t \gset nve_
+select is((:'nve_id')::text is not null, true, 'create with an absent (null) description succeeds');
+
+select throws_ok(
+  $$select public.tasks_create_checked('51111111-1111-4111-8111-111111111111', 'Null vs empty', '', null, 'ham3014-null-vs-empty')$$,
+  '22023',
+  null,
+  'reusing the request id with an explicit empty-string description is a different payload, not a replay (F4)'
+);
+
+-- ---------------------------------------------------------------------------
 -- Hierarchy: create under a live parent, refuse under an archived one.
 -- ---------------------------------------------------------------------------
 
@@ -79,11 +115,30 @@ select t.id, t.parent_task_id from public.tasks_create_checked(
 ) t \gset child_
 select is((:'child_parent_task_id')::text, :'root_id', 'a child create under a live parent succeeds');
 
-select count(*) as n from public.tasks_archive_subtree_checked(:'root_id'::uuid, 3);
+select count(*) as n from public.tasks_archive_subtree_checked(:'root_id'::uuid, 3, 'ham3014-archive-1');
 select is(
   (select count(*)::integer from public.tasks
     where id in (:'root_id'::uuid, :'child_id'::uuid) and archived_at is not null),
   2, 'archive-subtree archives the root and its child in one call'
+);
+
+-- HAM3-014 correction 2 (F4): tasks_archive_subtree_checked now carries the same durable
+-- request-id dedup contract create/update/comment already had (docs/AGENT_ACCESS.md already
+-- claimed this; the implementation had not caught up).
+select count(*) as n from public.tasks_archive_subtree_checked(:'root_id'::uuid, 3, 'ham3014-archive-1') \gset replay_archive_
+select is(
+  (:'replay_archive_n')::integer, 2,
+  'replaying the exact same archive request id + payload returns the original result, not a second mutation'
+);
+
+select throws_ok(
+  format(
+    $$select public.tasks_archive_subtree_checked(%L::uuid, 99, 'ham3014-archive-1')$$,
+    :'root_id'
+  ),
+  '22023',
+  null,
+  'reusing an archive request id with a different expected_revision is rejected'
 );
 
 select throws_ok(
@@ -157,6 +212,54 @@ select is(:'c1r_id'::text, :'c1_id'::text, 'replaying a comment add with the sam
 select is(
   (select count(*)::integer from public.comments where task_id = :'ta_id'::uuid),
   1, 'exactly one comment row exists after the replay'
+);
+
+-- ---------------------------------------------------------------------------
+-- HAM3-014 correction 2 (F4): record identity in replay keys -- the same request id + payload
+-- aimed at a *different* task must never replay the wrong task's result.
+-- ---------------------------------------------------------------------------
+
+select t.id from public.tasks_create_checked(
+  '51111111-1111-4111-8111-111111111111', 'Cross X', '', null, 'ham3014-create-cross-x'
+) t \gset cx_
+select t.id from public.tasks_create_checked(
+  '51111111-1111-4111-8111-111111111111', 'Cross Y', '', null, 'ham3014-create-cross-y'
+) t \gset cy_
+
+select t.revision from public.tasks_update_checked(
+  :'cx_id'::uuid, 1, 'Same title', null, null, 'ham3014-cross-task-update'
+) t \gset cxu_
+select is((:'cxu_revision')::integer, 2, 'the update on the first task succeeds');
+
+select throws_ok(
+  format(
+    $$select public.tasks_update_checked(%L::uuid, 1, 'Same title', null, null, 'ham3014-cross-task-update')$$,
+    :'cy_id'
+  ),
+  '22023',
+  null,
+  'reusing that exact request id + field payload against a DIFFERENT task is rejected, never replaying task X''s result as task Y''s (F4)'
+);
+select is(
+  (select title from public.tasks where id = :'cy_id'::uuid), 'Cross Y',
+  'the rejected cross-task replay attempt left task Y completely untouched'
+);
+
+select c.id from public.comments_add_checked(:'cx_id'::uuid, 'same body', 'ham3014-cross-task-comment') c \gset ccx_
+select is((:'ccx_id')::text is not null, true, 'the comment on the first task succeeds');
+
+select throws_ok(
+  format(
+    $$select public.comments_add_checked(%L::uuid, 'same body', 'ham3014-cross-task-comment')$$,
+    :'cy_id'
+  ),
+  '22023',
+  null,
+  'reusing that exact comment request id + body against a DIFFERENT task is rejected, never attaching task X''s comment to task Y (F4)'
+);
+select is(
+  (select count(*)::integer from public.comments where task_id = :'cy_id'::uuid),
+  0, 'no comment was ever added to task Y from the rejected cross-task replay attempt'
 );
 
 -- ---------------------------------------------------------------------------

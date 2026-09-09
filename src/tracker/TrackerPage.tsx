@@ -15,6 +15,10 @@ import { INSTRUCTION_ROLES } from '../instructions/types';
 import type { ActiveVersionIds, InstructionRole, ProviderFamily } from '../instructions/types';
 import { useFocusTrap } from '../instructions/useFocusTrap';
 import { AgentAccessPanel } from '../agentAccess/AgentAccessPanel';
+import {
+  subscribeAgentWriteNotifications,
+  type AgentWriteNotification,
+} from '../agentAccess/writeNotifications';
 import { DirectoryContextPanel } from '../settings/DirectoryContextPanel';
 import { labelFromPath } from '../settings/directoryContextManager';
 import type { ResumeSelectionPatch } from '../settings/directoryContextManager';
@@ -944,6 +948,17 @@ export function TrackerPage({
   // (not merely cleared) on a mounted owner change, alongside cancelling every old-owner queued
   // request, so nothing owner-scoped survives the boundary (see the owner-change effect below).
   const taskSaveCoordinatorRef = useRef(new TaskSaveCoordinator<Task>());
+  // Kept fresh every render (HAM3-014 F2) so the agent-write notification listener below — a
+  // stable subscription registered once, not re-subscribed on every render — can read the
+  // CURRENT selection/editor state when a notification arrives, instead of whatever was current
+  // when the listener closure was created.
+  const selectedTaskIdRef = useRef<string | null>(null);
+  const taskEditorRef = useRef<'new' | 'edit' | null>(null);
+  const isTaskEditorDirtyRef = useRef(false);
+  // Bumped on every project switch and on unmount (see the task-list effect's cleanup) so an
+  // agent-write refresh already in flight against the PREVIOUS project can never apply its result
+  // after the owner has navigated away — matches `commentsGenRef`'s own pattern.
+  const agentWriteRefreshGenRef = useRef(0);
 
   function taskDraftFieldsEqual(a: typeof emptyTaskDraft, b: typeof emptyTaskDraft): boolean {
     return (
@@ -962,6 +977,7 @@ export function TrackerPage({
     taskEditorGenRef.current += 1;
     taskEditorBaselineRef.current = null;
     setTaskEditor(null);
+    setExternalTaskUpdateId(null);
   }
 
   /** Explicit abandon of the currently open task editor — its OWN Cancel button, or Discard on
@@ -1033,6 +1049,11 @@ export function TrackerPage({
   const [taskSaving, setTaskSaving] = useState(false);
   const [taskSaveError, setTaskSaveError] = useState<string | null>(null);
   const [taskRetry, setTaskRetry] = useState<TaskRetry | null>(null);
+  // The id of a task that changed durably (an agent write, HAM3-014 F2) while its editor was open
+  // AND dirty, so the refresh below deliberately left the live draft untouched rather than
+  // overwriting typed content — surfaced as a banner offering to reload from the new confirmed
+  // state instead of silently discarding either side. Cleared on close/save/reload.
+  const [externalTaskUpdateId, setExternalTaskUpdateId] = useState<string | null>(null);
   const [commentDraft, setCommentDraft] = useState('');
   const [commentSaving, setCommentSaving] = useState(false);
   const [commentSaveError, setCommentSaveError] = useState<string | null>(null);
@@ -1213,6 +1234,9 @@ export function TrackerPage({
   selectedProjectIdRef.current = selectedProjectId;
   projectsRef.current = projects;
   taskDraftRef.current = taskDraft;
+  selectedTaskIdRef.current = selectedTaskId;
+  taskEditorRef.current = taskEditor;
+  isTaskEditorDirtyRef.current = isTaskEditorDirty();
 
   // Kept fresh every render so the resume-persistence effect below always writes against the
   // latest directory-context state without needing it as a dependency (see that effect for why).
@@ -1466,6 +1490,9 @@ export function TrackerPage({
       .catch((error: unknown) => mounted && setContentError(errorMessage(error)));
     return () => {
       mounted = false;
+      // A project switch (or unmount) invalidates any agent-write refresh already in flight
+      // against the project this effect is leaving (HAM3-014 F2).
+      agentWriteRefreshGenRef.current += 1;
     };
   }, [repositories.tasks, selectedProjectId]);
 
@@ -1562,6 +1589,79 @@ export function TrackerPage({
       mounted = false;
     };
   }, [repositories.memory, selectedProjectId]);
+
+  /**
+   * HAM3-014 F2: refreshes the affected task collection/comments after a durable agent write,
+   * scoped to the SAME owner/project/task identity the write actually targeted (`notification`'s
+   * own fields) — never whichever project/task the UI happens to have selected once this runs.
+   * Never overwrites a dirty editor's own typed draft; instead flags `externalTaskUpdateId` so the
+   * owner can explicitly choose to reload it, per the write tools' contract ("refresh visible
+   * records without replacing unsaved drafts").
+   */
+  async function refreshAfterAgentWrite(notification: AgentWriteNotification): Promise<void> {
+    if (notification.ownerId !== ownerId) return;
+    if (notification.projectId !== selectedProjectIdRef.current) return;
+    const gen = agentWriteRefreshGenRef.current;
+
+    let freshTasks: Task[];
+    try {
+      freshTasks = await repositories.tasks.list(notification.projectId, { includeArchived: true });
+    } catch {
+      // Best-effort background refresh: a transient failure here just leaves the UI exactly as it
+      // was — never a user-facing error for a refresh nobody explicitly asked for.
+      return;
+    }
+    // Re-checked after the await: a project switch (or unmount) while this fetch was in flight
+    // must never apply a now-stale result on top of whatever the owner has navigated to since.
+    if (agentWriteRefreshGenRef.current !== gen) return;
+    if (selectedProjectIdRef.current !== notification.projectId) return;
+
+    taskSaveCoordinatorRef.current.upsertConfirmed(freshTasks);
+    const dirtyTaskId =
+      taskEditorRef.current === 'edit' && isTaskEditorDirtyRef.current
+        ? selectedTaskIdRef.current
+        : null;
+    setTasks((current) => {
+      if (!dirtyTaskId) return freshTasks;
+      // The one row the owner is actively typing over is exempt from this refresh entirely —
+      // every other row (including a brand-new agent-created one) still advances to fresh state.
+      const openDirtyRow = current.find((task) => task.id === dirtyTaskId);
+      return freshTasks.map((task) =>
+        task.id === dirtyTaskId && openDirtyRow ? openDirtyRow : task,
+      );
+    });
+    // Only surface the banner when it was THIS write that the open draft is now behind — a dirty
+    // edit on some OTHER task is merely exempted above, not flagged as conflicting.
+    if (dirtyTaskId && dirtyTaskId === notification.taskId) {
+      setExternalTaskUpdateId(dirtyTaskId);
+    }
+
+    if (notification.tool === 'add_comment' && selectedTaskIdRef.current === notification.taskId) {
+      const commentsGen = commentsGenRef.current;
+      try {
+        const freshComments = await repositories.memory.listComments(notification.taskId);
+        if (commentsGenRef.current === commentsGen && selectedTaskIdRef.current === notification.taskId) {
+          setComments(freshComments);
+        }
+      } catch {
+        // Same best-effort reasoning as the task refresh above.
+      }
+    }
+  }
+
+  // Registered once (stable deps): the facade handler runs independent of this page ever having
+  // mounted (see App.tsx), so a write completed while this page was unmounted is simply missed —
+  // there is nothing to catch up on reconnect here, only future notifications while mounted.
+  // `refreshAfterAgentWrite` is intentionally omitted: it closes over no per-render state directly
+  // (every value it reads comes from a ref kept fresh above, or a stable setter/repository), so
+  // including it (a new function identity every render) would re-subscribe on every render
+  // instead of only when one of these actual triggers changes.
+  useEffect(() => {
+    return subscribeAgentWriteNotifications((notification) => {
+      void refreshAfterAgentWrite(notification);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repositories.tasks, repositories.memory, ownerId]);
 
   /**
    * Resolves one role's full Home status: assignment (and, once known, its truthful active
@@ -1856,6 +1956,7 @@ export function TrackerPage({
     // task's save must never leave the currently open, unrelated editor showing "Saving…").
     setTaskSaving(false);
     setTaskEditor('new');
+    setExternalTaskUpdateId(null);
   }
 
   /** Guarded entry point for "New task"/"+ child" — a dirty task edit or unsent comment for
@@ -1900,6 +2001,7 @@ export function TrackerPage({
     // never leave THIS freshly opened editor showing a busy state it never actually entered.
     setTaskSaving(false);
     setTaskEditor('edit');
+    setExternalTaskUpdateId(null);
   }
 
   /** Guarded entry point for selecting a task to edit (outliner rows, "Edit task") — a dirty edit
@@ -1907,6 +2009,26 @@ export function TrackerPage({
    * replaced by the newly clicked task's own fields. */
   function requestEditTask(task: Task) {
     guardedNav(() => openEditTask(task), undefined, true);
+  }
+
+  /** HAM3-014 F2: the external-update banner's explicit "Reload" action — replaces the open
+   * draft with the confirmed row an agent write just produced, without closing the editor. Never
+   * invoked automatically: overwriting typed content is only ever the owner's own explicit
+   * choice, never an auto-refresh. */
+  function reloadTaskEditorFromConfirmed() {
+    if (!selectedTaskId) return;
+    const confirmed = taskSaveCoordinatorRef.current.getConfirmedForKey(selectedTaskId);
+    if (!confirmed) return;
+    const baseline = {
+      title: confirmed.title,
+      description: confirmed.description,
+      status: confirmed.status,
+      priority: confirmed.priority,
+      parent_task_id: confirmed.parent_task_id,
+    };
+    taskEditorBaselineRef.current = baseline;
+    setTaskDraft(baseline);
+    setExternalTaskUpdateId(null);
   }
 
   /**
@@ -2047,6 +2169,9 @@ export function TrackerPage({
     if (selectedProjectIdRef.current === projectIdAtStart) {
       setTasks((current) => current.map((task) => (task.id === key || task.id === saved.id ? saved : task)));
     }
+    // The owner's own save just became the new confirmed state for this task, superseding
+    // whatever agent write the banner (HAM3-014 F2) was flagging — nothing left to reload.
+    setExternalTaskUpdateId((current) => (current === key || current === saved.id ? null : current));
     // Only move the owner's selection/editor onto this saved record if this is still the SAME
     // editing context this save started against — a Cancel, a switch to a different task, or a
     // fresh "new task" opened while this write was in flight must never have the owner's current
@@ -2825,7 +2950,17 @@ export function TrackerPage({
               </section>
             </div>
             <aside className="detail-panel" aria-label="Selected task detail">
-              {taskEditor ? <TaskForm draft={taskDraft} tasks={visibleTasks} taskId={taskEditor === 'edit' ? selectedTask?.id : undefined} saving={taskSaving} error={taskSaveError} isNew={taskEditor === 'new'} onChange={setTaskDraft} onSubmit={(event) => void saveTask(event)} onCancel={cancelTaskEditor} onRetry={() => void saveTask()} /> : selectedTask ? <>
+              {taskEditor ? <>
+                {taskEditor === 'edit' && externalTaskUpdateId === selectedTask?.id && (
+                  <div className="external-update-banner" role="status">
+                    <span>This task was updated elsewhere (e.g. by a connected agent) while you were editing. Your unsaved changes are untouched — reload to see the latest, or Save to keep your changes and overwrite it.</span>
+                    <button className="button button-small" type="button" onClick={reloadTaskEditorFromConfirmed}>
+                      Reload latest
+                    </button>
+                  </div>
+                )}
+                <TaskForm draft={taskDraft} tasks={visibleTasks} taskId={taskEditor === 'edit' ? selectedTask?.id : undefined} saving={taskSaving} error={taskSaveError} isNew={taskEditor === 'new'} onChange={setTaskDraft} onSubmit={(event) => void saveTask(event)} onCancel={cancelTaskEditor} onRetry={() => void saveTask()} />
+              </> : selectedTask ? <>
                 <div className="task-summary"><p className="eyebrow">Selected task</p><h2>{selectedTask.title}</h2><p>{selectedTask.description || 'No task description yet.'}</p><button className="button button-secondary" type="button" onClick={() => requestEditTask(selectedTask)}>Edit task</button></div>
                 <CommentPanel task={selectedTask} comments={comments} draft={commentDraft} saving={commentSaving} loading={commentsLoading} error={commentSaveError} onDraftChange={setCommentDraft} onSubmit={(event) => void addComment(event)} onRetry={retryComment} />
               </> : <div className="detail-placeholder"><span className="placeholder-mark">✦</span><h2>Task detail</h2><p>Select a task to inspect its context, hierarchy, and comments.</p></div>}

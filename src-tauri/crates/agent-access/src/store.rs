@@ -73,10 +73,9 @@ pub fn clear_profile(base_dir: &Path) -> Result<(), StoreError> {
 }
 
 /// Best-effort defense in depth on top of the per-user AppData/XDG directory the file already
-/// lives in: on Unix, drop group/other read access. Windows relies on the profile directory's
-/// inherited per-user NTFS ACL (the same protection `local_settings.rs` relies on); this file
-/// carries no additional Windows-specific hardening beyond that today (see docs/AGENT_ACCESS.md
-/// "Credential protection" for the disclosed limitation and DPAPI as a follow-up).
+/// lives in: on Unix, drop group/other read access. See the `cfg(windows)` implementation below
+/// for the Windows equivalent (HAM3-014 correction F6) — see docs/AGENT_ACCESS.md "Credential
+/// protection" for what is and isn't verified about either.
 #[cfg(unix)]
 fn restrict_to_owner(path: &Path) {
     use std::os::unix::fs::PermissionsExt;
@@ -87,7 +86,71 @@ fn restrict_to_owner(path: &Path) {
     }
 }
 
-#[cfg(not(unix))]
+/// HAM3-014 correction F6: an explicit, current-user-only DACL set directly on the profile file —
+/// the same `ConvertStringSecurityDescriptorToSecurityDescriptorW` SDDL technique
+/// `pipe_transport.rs` already uses for the named pipe itself (`D:P(A;;FA;;;OW)`: full access to
+/// the file's OWNER only, `P`rotected so no ACE is inherited from the parent directory). This
+/// replaces the prior round's reliance on the profile directory's *inherited* per-user AppData
+/// ACL, which was never itself verified (see docs/AGENT_ACCESS.md "Credential protection") — an
+/// inherited ACL depends on how that directory was created and by what, which this code does not
+/// control, whereas this DACL is set unconditionally by this function on every write, regardless
+/// of the directory's own permissions. Best-effort: a failure to convert or apply the descriptor
+/// leaves the file exactly as `fs::write` above left it (still only reachable through whatever
+/// protection the directory itself provides) rather than treating a hardening failure as a reason
+/// to fail the write outright.
+#[cfg(windows)]
+fn restrict_to_owner(path: &Path) {
+    use std::ffi::c_void;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr;
+
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
+    use windows_sys::Win32::Security::{
+        SetFileSecurityW, DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+    };
+
+    const RESTRICTED_TO_OWNER_SDDL: &str = "D:P(A;;FA;;;OW)";
+
+    let wide_path: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let sddl: Vec<u16> = RESTRICTED_TO_OWNER_SDDL
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let mut descriptor: *mut c_void = ptr::null_mut();
+    // SAFETY: `sddl` is a valid, NUL-terminated wide string alive for the duration of this call;
+    // `descriptor` is a valid out-pointer. On success this allocates memory freed via `LocalFree`
+    // below, mirroring `OwnedSecurityDescriptor::drop` in `pipe_transport.rs`.
+    let converted = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.as_ptr(),
+            1, // SDDL_REVISION_1
+            &mut descriptor,
+            ptr::null_mut(),
+        )
+    };
+    if converted == 0 || descriptor.is_null() {
+        return;
+    }
+    // SAFETY: `wide_path` is a valid NUL-terminated wide string for the file just written;
+    // `descriptor` was produced by the successful conversion immediately above and is freed right
+    // after this call, so it stays valid for the entire `SetFileSecurityW` call.
+    unsafe {
+        SetFileSecurityW(
+            wide_path.as_ptr(),
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            descriptor,
+        );
+        LocalFree(descriptor);
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 fn restrict_to_owner(_path: &Path) {}
 
 #[cfg(test)]

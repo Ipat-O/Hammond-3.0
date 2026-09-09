@@ -177,6 +177,12 @@ export function createFakeInstructionRepository(
         .filter((v): v is InstructionVersion => v !== undefined);
     },
 
+    async getTemplate(id) {
+      const template = store.templates.get(id);
+      if (!template) throw new Error('template not found');
+      return template;
+    },
+
     async getSelection({ projectId, role, provider }) {
       return store.selections.get(selectionKey(projectId, role, provider)) ?? null;
     },

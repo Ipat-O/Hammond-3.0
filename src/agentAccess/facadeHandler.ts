@@ -6,6 +6,37 @@ import {
   type FacadeResponsePayload,
 } from './nativeBridge';
 import { FacadeToolError, type FacadeContext } from './types';
+import { publishAgentWriteNotification, type AgentWriteNotification } from './writeNotifications';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+/** Extracts the identity a UI refresh needs from one write tool's own result shape — never from
+ * the request's args, so a caller-supplied taskId can't be substituted for what was actually
+ * written. `null` for anything that doesn't look like a successful write result (defensive only:
+ * `callFacadeTool` already throws well before returning a malformed result). */
+function writeNotificationFor(
+  tool: string,
+  result: unknown,
+): Pick<AgentWriteNotification, 'tool' | 'taskId' | 'parentTaskId'> | null {
+  if (!isRecord(result)) return null;
+  if (tool === 'create_task' || tool === 'update_task') {
+    const task = result.task;
+    if (!isRecord(task) || typeof task.id !== 'string') return null;
+    const parentTaskId =
+      typeof task.parentTaskId === 'string' || task.parentTaskId === null
+        ? task.parentTaskId
+        : undefined;
+    return { tool, taskId: task.id, parentTaskId };
+  }
+  if (tool === 'add_comment') {
+    const comment = result.comment;
+    if (!isRecord(comment) || typeof comment.taskId !== 'string') return null;
+    return { tool, taskId: comment.taskId };
+  }
+  return null;
+}
 
 /**
  * Registers the app's ONE facade handler: independent of which page/route is currently mounted
@@ -75,6 +106,11 @@ async function handleRequest(
 
     const ctx: FacadeContext = { ownerId, projectId, permission };
     const result = await callFacadeTool(services, ctx, tool, args);
+    // Published only for a write that actually succeeded (never speculatively, never for a
+    // request that threw below) — a listener (the tracker UI) refreshes visible reads for
+    // exactly the identity this request targeted, not whatever it has selected right now.
+    const notification = writeNotificationFor(tool, result);
+    if (notification) publishAgentWriteNotification({ ownerId, projectId, ...notification });
     await respond(correlationId, generation, { ok: true, result });
   } catch (error) {
     const facadeError =

@@ -34,11 +34,21 @@ fn host_triple() -> String {
 fn clean_checkout_cargo_check_stages_the_companion_sidecar() {
     let manifest_dir = manifest_dir();
     let triple = host_triple();
+    // Must match build.rs's own suffix rule exactly: it appends `.exe` whenever the target
+    // triple it receives (via cargo's `TARGET` build-script env var) contains "windows", which is
+    // this test's `triple` on a plain, non-cross `cargo check`/`cargo test`. Without this, the
+    // assertion below is only coincidentally correct on a non-Windows host and fails on the
+    // actual Windows product target, where build.rs really does stage a `.exe`.
+    let exe_suffix = if triple.contains("windows") {
+        ".exe"
+    } else {
+        ""
+    };
 
     let sidecar_target_dir = manifest_dir.join("target").join("companion-sidecar");
     let staged_path = manifest_dir
         .join("binaries")
-        .join(format!("hammond-mcp-companion-{triple}"));
+        .join(format!("hammond-mcp-companion-{triple}{exe_suffix}"));
     let _ = std::fs::remove_dir_all(&sidecar_target_dir);
     let _ = std::fs::remove_file(&staged_path);
     assert!(

@@ -50,6 +50,11 @@ export interface InstructionRepository {
   getVersion(id: string): Promise<InstructionVersion>;
   getVersionsByIds(ids: readonly string[]): Promise<InstructionVersion[]>;
 
+  /** The template a version belongs to — its scope (role/provider/layer/projectId/ownerId), not
+   * its content. Callers that must authorize a caller-supplied version id against a connection's
+   * bound scope (e.g. the agent-access facade) resolve this before trusting the version's content. */
+  getTemplate(id: string): Promise<InstructionTemplate>;
+
   getSelection(params: {
     projectId: string;
     role: InstructionRole;

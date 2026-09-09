@@ -162,11 +162,19 @@ source layer, its provenance, and selection fingerprint.",
         ),
         tool(
             "get_instruction_version",
-            "Immutable content and provenance for one scoped instruction version.",
+            "Immutable content and provenance for one scoped instruction version. `role`/`layer`/ \
+`provider` must match the version's own scope (the same values used to find it via \
+`list_instruction_versions`); a mismatch, or a version outside the connection's bound project, is \
+rejected as not found.",
             json!({
                 "type": "object",
-                "properties": { "versionId": { "type": "string" } },
-                "required": ["versionId"],
+                "properties": {
+                    "versionId": { "type": "string" },
+                    "role": { "type": "string", "enum": ["orchestrator", "worker", "auditor"] },
+                    "provider": { "type": ["string", "null"], "enum": ["codex", "claude_code", "kilo_code", null] },
+                    "layer": { "type": "string", "enum": ["shared_role", "provider", "project_override"] },
+                },
+                "required": ["versionId", "role", "layer"],
                 "additionalProperties": false,
             }),
             true,

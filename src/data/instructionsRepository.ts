@@ -184,6 +184,14 @@ export class SupabaseInstructionRepository implements InstructionRepository {
     return rows.map(toVersion);
   }
 
+  async getTemplate(id: string): Promise<InstructionTemplate> {
+    return toTemplate(
+      dataOrThrow(
+        await this.client.from('instruction_templates').select('*').eq('id', id).single(),
+      ),
+    );
+  }
+
   async getSelection(params: {
     projectId: string;
     role: InstructionRole;

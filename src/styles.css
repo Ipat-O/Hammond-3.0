@@ -661,6 +661,20 @@ label {
   margin-top: 27px;
 }
 
+.external-update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid rgba(199, 168, 90, 0.28);
+  border-radius: 9px;
+  background: rgba(151, 120, 40, 0.14);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .workspace-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

@@ -81,6 +81,31 @@ revoke all on public.agent_request_log from authenticated;
 -- deletion cascade, never edited or removed through the client.
 grant select, insert on public.agent_request_log to authenticated;
 
+-- Encodes one field for a payload hash so that concatenating several of these can never collide
+-- across different field groupings, unlike a plain `chr(31)`-joined string: a value containing the
+-- separator byte itself (or any other byte) shifts where the "next field" appears to start,  so
+-- e.g. title='a'||chr(31)||'b', description='c' and title='a', description='b'||chr(31)||'c'
+-- previously hashed identically. Netstring-style framing (`<byte-length>:<payload>`, `N` for sql
+-- null) is self-delimiting: the length prefix is measured in bytes, so no content of the payload
+-- -- however it is chosen -- can ever be mistaken for the boundary that follows it, and `N` cannot
+-- collide with a length prefix because a length is always all-digits. Two distinct field tuples
+-- (differing in any value, including null-vs-empty-vs-absent) therefore always encode to distinct
+-- concatenated strings.
+create function public.agent_request_encode_field(p_value text)
+returns text
+language sql
+immutable
+set search_path = ''
+as $$
+  select case
+    when p_value is null then 'N'
+    else octet_length(p_value)::text || ':' || p_value
+  end;
+$$;
+
+revoke all on function public.agent_request_encode_field(text) from public, anon;
+grant execute on function public.agent_request_encode_field(text) to authenticated;
+
 -- Looks up an existing log entry for (owner, project, operation, request_id):
 --  - not found: returns null (caller proceeds with the real mutation, then records it via
 --    `agent_request_record`);
@@ -190,8 +215,13 @@ begin
     raise exception 'tasks_create_checked requires an authenticated caller' using errcode = '42501';
   end if;
 
-  v_payload_hash := md5(coalesce(p_title, '') || chr(31) || coalesce(p_description, '') || chr(31)
-    || coalesce(p_parent_task_id::text, ''));
+  -- Every semantic input the create actually varies on, in a fixed order: target project is
+  -- already part of the agent_request_log key itself, not the hash, so it is not repeated here.
+  v_payload_hash := md5(
+    public.agent_request_encode_field(p_title) ||
+    public.agent_request_encode_field(p_description) ||
+    public.agent_request_encode_field(p_parent_task_id::text)
+  );
 
   v_cached := public.agent_request_dedupe_check(
     v_owner, p_project_id, 'tasks_create', p_request_id, v_payload_hash
@@ -269,11 +299,21 @@ begin
     raise exception 'task not found' using errcode = 'P0002';
   end if;
 
-  -- chr(1) (SOH) marks "this field was not supplied" -- distinct from an explicit empty string or
-  -- any real value, and (unlike chr(0)/NUL) legal inside a Postgres `text` value.
-  v_payload_hash := md5(coalesce(p_title, chr(1)) || chr(31) || coalesce(p_description, chr(1))
-    || chr(31) || coalesce(p_status::text, chr(1)) || chr(31) || p_expected_revision::text
-    || chr(31) || p_change_parent::text || chr(31) || coalesce(p_parent_task_id::text, chr(1)));
+  -- Every semantic input the update actually varies on, in a fixed order -- including the target
+  -- task's own id, so the exact same request id + field values aimed at a *different* task can
+  -- never be mistaken for a replay of this one and hand back this task's result instead. `null`
+  -- (encoded as `N`) already means exactly "not supplied, leave unchanged" for title/description/
+  -- status -- distinct from an explicit value via the length-prefixed encoding below, including an
+  -- explicit empty string -- so no separate not-supplied marker is needed.
+  v_payload_hash := md5(
+    public.agent_request_encode_field(p_task_id::text) ||
+    public.agent_request_encode_field(p_title) ||
+    public.agent_request_encode_field(p_description) ||
+    public.agent_request_encode_field(p_status::text) ||
+    public.agent_request_encode_field(p_expected_revision::text) ||
+    public.agent_request_encode_field(p_change_parent::text) ||
+    public.agent_request_encode_field(p_parent_task_id::text)
+  );
 
   v_cached := public.agent_request_dedupe_check(
     v_owner, v_project_id, 'tasks_update', p_request_id, v_payload_hash
@@ -347,7 +387,8 @@ grant execute on function public.tasks_update_checked(
 
 create function public.tasks_archive_subtree_checked(
   p_root_task_id uuid,
-  p_expected_revision integer
+  p_expected_revision integer,
+  p_request_id text
 )
 returns setof public.tasks
 language plpgsql
@@ -359,6 +400,9 @@ declare
   v_project_id uuid;
   v_current_revision integer;
   v_archived_at timestamptz := now();
+  v_payload_hash text;
+  v_cached jsonb;
+  v_archived_rows public.tasks[];
 begin
   if v_owner is null then
     raise exception 'tasks_archive_subtree_checked requires an authenticated caller' using errcode = '42501';
@@ -368,6 +412,25 @@ begin
     from public.tasks where id = p_root_task_id and owner_id = v_owner;
   if not found then
     raise exception 'task not found' using errcode = 'P0002';
+  end if;
+
+  -- Includes the root task's own id (a request id + expected_revision aimed at a *different*
+  -- root must never replay this root's result) -- same reasoning as tasks_update_checked/
+  -- comments_add_checked above.
+  v_payload_hash := md5(
+    public.agent_request_encode_field(p_root_task_id::text) ||
+    public.agent_request_encode_field(p_expected_revision::text)
+  );
+
+  v_cached := public.agent_request_dedupe_check(
+    v_owner, v_project_id, 'tasks_archive_subtree', p_request_id, v_payload_hash
+  );
+  if v_cached is not null then
+    -- `return query` alone only appends rows to the eventual result set; it does not exit a
+    -- set-returning function the way a plain `return <value>` would -- the bare `return` below is
+    -- required, or execution falls through into the live archive path and re-runs it.
+    return query select * from jsonb_populate_recordset(null::public.tasks, v_cached);
+    return;
   end if;
 
   -- Same per-project hierarchy lock `tasks_create_checked` takes: whichever transaction acquires
@@ -384,23 +447,35 @@ begin
       using errcode = '40001';
   end if;
 
-  return query
-    with recursive subtree as (
-      select t.id from public.tasks t where t.id = p_root_task_id and t.owner_id = v_owner
-      union all
-      select t.id from public.tasks t
-      join subtree s on t.parent_task_id = s.id
-      where t.owner_id = v_owner
-    )
+  -- Captured into an array (rather than `return query` straight off the CTE) so the recorded
+  -- result and the row set returned to the caller are provably the same rows, computed once --
+  -- not two separately-evaluated references to a data-modifying CTE.
+  with recursive subtree as (
+    select t.id from public.tasks t where t.id = p_root_task_id and t.owner_id = v_owner
+    union all
+    select t.id from public.tasks t
+    join subtree s on t.parent_task_id = s.id
+    where t.owner_id = v_owner
+  ),
+  archived as (
     update public.tasks
     set archived_at = v_archived_at
     where id in (select id from subtree)
-    returning *;
+    returning *
+  )
+  select array_agg(archived) into v_archived_rows from archived;
+
+  perform public.agent_request_record(
+    v_owner, v_project_id, 'tasks_archive_subtree', p_request_id, v_payload_hash,
+    to_jsonb(v_archived_rows)
+  );
+
+  return query select * from unnest(v_archived_rows);
 end;
 $$;
 
-revoke all on function public.tasks_archive_subtree_checked(uuid, integer) from public, anon;
-grant execute on function public.tasks_archive_subtree_checked(uuid, integer) to authenticated;
+revoke all on function public.tasks_archive_subtree_checked(uuid, integer, text) from public, anon;
+grant execute on function public.tasks_archive_subtree_checked(uuid, integer, text) to authenticated;
 
 create function public.comments_add_checked(
   p_task_id uuid,
@@ -428,7 +503,12 @@ begin
     raise exception 'task not found' using errcode = 'P0002';
   end if;
 
-  v_payload_hash := md5(coalesce(p_body, ''));
+  -- Includes the target task's own id, for the same reason tasks_update_checked now does: the
+  -- same request id + body aimed at a *different* task must never replay as this task's comment.
+  v_payload_hash := md5(
+    public.agent_request_encode_field(p_task_id::text) ||
+    public.agent_request_encode_field(p_body)
+  );
 
   v_cached := public.agent_request_dedupe_check(
     v_owner, v_project_id, 'comments_add', p_request_id, v_payload_hash

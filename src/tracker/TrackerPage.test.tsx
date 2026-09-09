@@ -13,6 +13,7 @@ import type { DirectoryContextServices } from '../settings/contracts';
 import { DirectoryContextManager } from '../settings/directoryContextManager';
 import { LOCAL_SETTINGS_KEY, LOCAL_SETTINGS_VERSION, type LocalSettingsStateV2 } from '../settings/state';
 import { createFakeDirectoryContextServices, createFakeFilesystem, createFakeLocalSettings } from '../settings/testFakes';
+import { publishAgentWriteNotification } from '../agentAccess/writeNotifications';
 import type { TrackerRepositories, TrackerServices } from './contracts';
 import { TrackerPage } from './TrackerPage';
 import { createFakeWindowLifecycle } from './windowLifecycle';
@@ -4358,5 +4359,265 @@ describe('Correction 10 — synthetic-row Move display reconciles by real id; Re
     expect(screen.getByRole('alert').textContent).toContain('bravo blew up');
     expect(screen.getByRole('button', { name: /^Task Bravo/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Task Alpha/ })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * HAM3-014 correction 2 (F2): the facade handler publishes an `AgentWriteNotification` (see
+ * `src/agentAccess/writeNotifications.ts`) after a create_task/update_task/add_comment write
+ * actually succeeds; `TrackerPage` subscribes to it directly (no polling, no realtime
+ * subsystem) and refreshes exactly the affected task collection/comments, scoped to the
+ * notification's own owner/project/task identity. These tests publish directly to that same
+ * module-level bus — precisely the seam the facade handler itself uses — with persisted fake
+ * repository state standing in for the durable write a real agent connection would have already
+ * committed.
+ */
+describe('HAM3-014 F2 — agent write notifications refresh the tracker UI', () => {
+  it('a completed create_task notification adds the new task to the outliner without navigation or reload', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const existing = task({ id: 'existing', project_id: 'project-a', title: 'Existing task' });
+    const tasksByProject: Record<string, Task[]> = { 'project-a': [existing] };
+    const { services } = makeServices([projectA], { tasksByProject });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    await screen.findByRole('button', { name: /^Existing task/ });
+
+    const created = task({ id: 'agent-created', project_id: 'project-a', title: 'Agent created task' });
+    tasksByProject['project-a'] = [existing, created];
+    publishAgentWriteNotification({
+      ownerId,
+      projectId: 'project-a',
+      tool: 'create_task',
+      taskId: created.id,
+      parentTaskId: null,
+    });
+
+    expect(await screen.findByRole('button', { name: /^Agent created task/ })).toBeInTheDocument();
+  });
+
+  it('a completed update_task notification updates the outliner row for a task not currently open for edit', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const target = task({ id: 'target', project_id: 'project-a', title: 'Original title' });
+    const tasksByProject: Record<string, Task[]> = { 'project-a': [target] };
+    const { services } = makeServices([projectA], { tasksByProject });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    await screen.findByRole('button', { name: /^Original title/ });
+
+    tasksByProject['project-a'] = [{ ...target, title: 'Updated by agent', revision: 2 }];
+    publishAgentWriteNotification({ ownerId, projectId: 'project-a', tool: 'update_task', taskId: target.id });
+
+    expect(await screen.findByRole('button', { name: /^Updated by agent/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Original title/ })).not.toBeInTheDocument();
+  });
+
+  it('a completed add_comment notification refreshes the open comment thread', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const target = task({ id: 'target', project_id: 'project-a', title: 'Target task' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [target] } });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Target task/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByRole('button', { name: 'Add comment' });
+    expect(screen.queryByText('a note from the agent')).not.toBeInTheDocument();
+
+    (services.repositories.memory.listComments as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: 'agent-comment',
+        owner_id: ownerId,
+        project_id: 'project-a',
+        task_id: 'target',
+        body: 'a note from the agent',
+        created_at: '2026-09-09T00:00:00.000Z',
+        updated_at: '2026-09-09T00:00:00.000Z',
+      },
+    ]);
+    publishAgentWriteNotification({ ownerId, projectId: 'project-a', tool: 'add_comment', taskId: 'target' });
+
+    expect(await screen.findByText('a note from the agent')).toBeInTheDocument();
+  });
+
+  it('a durable agent update to the task currently open (and dirty) for edit never overwrites the unsaved draft, and offers an explicit reload', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const target = task({ id: 'target', project_id: 'project-a', title: 'Original title' });
+    const tasksByProject: Record<string, Task[]> = { 'project-a': [target] };
+    const { services } = makeServices([projectA], { tasksByProject });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Original title/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'my unsaved edit' } });
+
+    tasksByProject['project-a'] = [{ ...target, title: 'Agent renamed this', revision: 2 }];
+    publishAgentWriteNotification({ ownerId, projectId: 'project-a', tool: 'update_task', taskId: 'target' });
+
+    await screen.findByText(/updated elsewhere/i);
+    // The owner's own unsaved draft is completely untouched by the refresh.
+    expect(screen.getByLabelText('Task title')).toHaveValue('my unsaved edit');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload latest' }));
+    expect(screen.getByLabelText('Task title')).toHaveValue('Agent renamed this');
+    expect(screen.queryByText(/updated elsewhere/i)).not.toBeInTheDocument();
+  });
+
+  it('a dirty edit for a DIFFERENT task is left alone by a notification for the task actually open, and no banner is shown for it', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const editing = task({ id: 'editing', project_id: 'project-a', title: 'Being edited' });
+    const other = task({ id: 'other', project_id: 'project-a', title: 'Other task' });
+    const tasksByProject: Record<string, Task[]> = { 'project-a': [editing, other] };
+    const { services } = makeServices([projectA], { tasksByProject });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Being edited/ }));
+    fireEvent.change(screen.getByLabelText('Task title'), { target: { value: 'my unsaved edit' } });
+
+    tasksByProject['project-a'] = [editing, { ...other, title: 'Other task renamed', revision: 2 }];
+    publishAgentWriteNotification({ ownerId, projectId: 'project-a', tool: 'update_task', taskId: 'other' });
+
+    await waitFor(() =>
+      expect(services.repositories.tasks.list).toHaveBeenLastCalledWith('project-a', {
+        includeArchived: true,
+      }),
+    );
+    expect(screen.getByLabelText('Task title')).toHaveValue('my unsaved edit');
+    expect(screen.queryByText(/updated elsewhere/i)).not.toBeInTheDocument();
+  });
+
+  it('a stale agent-write notification for a project the owner has already left is ignored, never applied to the newly selected project', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task in A' });
+    const taskB = task({ id: 'task-b', project_id: 'project-b', title: 'Task in B' });
+    const { services } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [taskA], 'project-b': [taskB] },
+    });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    await screen.findByRole('button', { name: /^Task in A/ });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    await screen.findByRole('button', { name: /^Task in B/ });
+
+    const listCallsBefore = (services.repositories.tasks.list as ReturnType<typeof vi.fn>).mock.calls
+      .length;
+    publishAgentWriteNotification({
+      ownerId,
+      projectId: 'project-a', // the project the owner has already left
+      tool: 'update_task',
+      taskId: 'task-a',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // The guard rejects it before ever re-fetching — a stale write for the abandoned project
+    // triggers no refetch at all, let alone one that could land under the new project.
+    expect((services.repositories.tasks.list as ReturnType<typeof vi.fn>).mock.calls.length).toBe(
+      listCallsBefore,
+    );
+    expect(screen.getByRole('button', { name: /^Task in B/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Task in A/ })).not.toBeInTheDocument();
+  });
+
+  it('a notification whose own refresh fetch fails leaves the UI exactly as it was, with no user-facing error', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const target = task({ id: 'target', project_id: 'project-a', title: 'Target task' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [target] } });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    await screen.findByRole('button', { name: /^Target task/ });
+
+    (services.repositories.tasks.list as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('transient refresh failure'),
+    );
+    publishAgentWriteNotification({ ownerId, projectId: 'project-a', tool: 'update_task', taskId: 'target' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Target task/ })).toBeInTheDocument();
+  });
+
+  it('the same notification delivered twice (a replayed facade response after a lost reply) is harmless and never duplicates the refreshed content', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const target = task({ id: 'target', project_id: 'project-a', title: 'Target task' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [target] } });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Target task/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByRole('button', { name: 'Add comment' });
+
+    (services.repositories.memory.listComments as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: 'agent-comment',
+        owner_id: ownerId,
+        project_id: 'project-a',
+        task_id: 'target',
+        body: 'replayed comment',
+        created_at: '2026-09-09T00:00:00.000Z',
+        updated_at: '2026-09-09T00:00:00.000Z',
+      },
+    ]);
+    const notification = {
+      ownerId,
+      projectId: 'project-a',
+      tool: 'add_comment' as const,
+      taskId: 'target',
+    };
+    publishAgentWriteNotification(notification);
+    await screen.findByText('replayed comment');
+    publishAgentWriteNotification(notification);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(screen.getAllByText('replayed comment')).toHaveLength(1);
+  });
+
+  it('a notification for a different owner is ignored', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const target = task({ id: 'target', project_id: 'project-a', title: 'Target task' });
+    const tasksByProject: Record<string, Task[]> = { 'project-a': [target] };
+    const { services } = makeServices([projectA], { tasksByProject });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    await screen.findByRole('button', { name: /^Target task/ });
+
+    tasksByProject['project-a'] = [{ ...target, title: 'Should never appear' }];
+    publishAgentWriteNotification({
+      ownerId: 'some-other-owner',
+      projectId: 'project-a',
+      tool: 'update_task',
+      taskId: 'target',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(screen.getByRole('button', { name: /^Target task/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Should never appear/ })).not.toBeInTheDocument();
+  });
+
+  it('unmounting while a notification refresh is still in flight resolves safely with no crash', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const target = task({ id: 'target', project_id: 'project-a', title: 'Target task' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [target] } });
+
+    const { unmount } = render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    await screen.findByRole('button', { name: /^Target task/ });
+
+    let resolveList!: (rows: Task[]) => void;
+    (services.repositories.tasks.list as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => new Promise<Task[]>((resolve) => { resolveList = resolve; }),
+    );
+    publishAgentWriteNotification({ ownerId, projectId: 'project-a', tool: 'update_task', taskId: 'target' });
+    unmount();
+
+    expect(() => resolveList([{ ...target, title: 'late' }])).not.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 20));
   });
 });

@@ -1,9 +1,11 @@
 import {
   composeInstructions,
+  INSTRUCTION_LAYERS,
   INSTRUCTION_ROLES,
   PROVIDER_FAMILIES,
   type InstructionLayer,
   type InstructionRole,
+  type InstructionTemplate,
   type InstructionVersion,
   type ProviderFamily,
 } from '../instructions';
@@ -97,6 +99,34 @@ function optionalProvider(
     );
   }
   return value as ProviderFamily;
+}
+
+function requireLayer(args: Record<string, unknown>): InstructionLayer {
+  const value = requireString(args, 'layer');
+  if (!(INSTRUCTION_LAYERS as readonly string[]).includes(value)) {
+    throw new FacadeToolError(
+      'invalid_params',
+      `'layer' must be one of ${INSTRUCTION_LAYERS.join(', ')}.`,
+    );
+  }
+  return value as InstructionLayer;
+}
+
+/** `provider` is required for the `provider` and `project_override` layers (both are provider-
+ * keyed); optional for `shared_role`, which has none. Shared by `list_instruction_versions` and
+ * `get_instruction_version` so both apply the identical scope rule. */
+function requireProviderForLayer(
+  args: Record<string, unknown>,
+  layer: InstructionLayer,
+): ProviderFamily | undefined {
+  const provider = optionalProvider(args);
+  if (layer !== 'shared_role' && provider === undefined) {
+    throw new FacadeToolError(
+      'invalid_params',
+      "'provider' is required for the provider and project_override layers.",
+    );
+  }
+  return provider;
 }
 
 /** Verifies `taskId` both exists and belongs to `ctx.projectId` — RLS already confines it to the
@@ -461,20 +491,8 @@ async function listInstructionVersions(
   args: Record<string, unknown>,
 ) {
   const role = requireRole(args);
-  const layer = requireString(args, 'layer') as InstructionLayer;
-  if (!['shared_role', 'provider', 'project_override'].includes(layer)) {
-    throw new FacadeToolError(
-      'invalid_params',
-      "'layer' must be one of shared_role, provider, project_override.",
-    );
-  }
-  const provider = optionalProvider(args);
-  if (layer !== 'shared_role' && provider === undefined) {
-    throw new FacadeToolError(
-      'invalid_params',
-      "'provider' is required for the provider and project_override layers.",
-    );
-  }
+  const layer = requireLayer(args);
+  const provider = requireProviderForLayer(args, layer);
   const projectId = layer === 'project_override' ? ctx.projectId : null;
   const limit = clampLimit(optionalNumber(args, 'limit'));
   const cursor = optionalString(args, 'cursor');
@@ -508,18 +526,68 @@ async function listInstructionVersions(
   };
 }
 
+/** Whether `template` — the version's own scope, never the caller's say-so — falls within what
+ * `ctx`'s bound project and the caller's asserted `role`/`layer`/`provider` are actually allowed to
+ * see: a legitimate seeded base or the owner's own global shared-role/provider template (no
+ * project restriction — those apply across all of the owner's projects), or that project's own
+ * override template. Anything else (another owner, another project's override, a template whose
+ * real role/layer/provider disagrees with what the caller asserted) does not match. */
+function instructionVersionInScope(
+  template: InstructionTemplate,
+  ctx: FacadeContext,
+  role: InstructionRole,
+  layer: InstructionLayer,
+  provider: ProviderFamily | undefined,
+): boolean {
+  if (template.role !== role || template.layer !== layer) return false;
+  if (layer === 'shared_role') {
+    if (template.provider !== null) return false;
+  } else if (template.provider !== provider) {
+    return false;
+  }
+  if (layer === 'project_override') {
+    if (template.projectId !== ctx.projectId) return false;
+  } else if (template.projectId !== null) {
+    return false;
+  }
+  if (!template.isBase && template.ownerId !== ctx.ownerId) return false;
+  return true;
+}
+
 async function getInstructionVersion(
   services: TrackerServices,
-  _ctx: FacadeContext,
+  ctx: FacadeContext,
   args: Record<string, unknown>,
 ) {
   const versionId = requireString(args, 'versionId');
+  const role = requireRole(args);
+  const layer = requireLayer(args);
+  const provider = requireProviderForLayer(args, layer);
+
+  const notFound = () =>
+    new FacadeToolError('not_found', `No instruction version '${versionId}' in that scope.`);
+
   let version: InstructionVersion;
   try {
     version = await services.instructions.getVersion(versionId);
   } catch {
-    throw new FacadeToolError('not_found', `No instruction version '${versionId}'.`);
+    throw notFound();
   }
+
+  let template: InstructionTemplate;
+  try {
+    template = await services.instructions.getTemplate(version.templateId);
+  } catch {
+    throw notFound();
+  }
+
+  // The version's own template scope is what is authorized, never the caller-supplied versionId
+  // in isolation: this is what stops an agent bound to one project from reading another project's
+  // override, or asserting a role/layer/provider the version does not actually belong to.
+  if (!instructionVersionInScope(template, ctx, role, layer, provider)) {
+    throw notFound();
+  }
+
   return {
     id: version.id,
     templateId: version.templateId,

@@ -86,7 +86,7 @@ hiding tools:
 | `get_task`                  | read   | Persisted fields + revision, parent, paginated children, all comments.                                                           |
 | `get_instructions`          | read   | See "Instruction scope" below.                                                                                                   |
 | `list_instruction_versions` | read   | Authorized version history for one scoped template, cursor pagination, active-version marker.                                    |
-| `get_instruction_version`   | read   | One immutable version's content and provenance.                                                                                  |
+| `get_instruction_version`   | read   | One immutable version's content and provenance; `role`/`layer`/`provider` must match the version's own scope (see below).       |
 | `create_task`               | write  | Starts in `backlog`; optional `parentTaskId` (validated same-project, not archived).                                             |
 | `update_task`               | write  | title/description/status only; requires `expectedRevision`. Owner-only statuses (`merged`, `shipped`, `cancelled`) are rejected. |
 | `add_comment`               | write  | Appends one durable comment.                                                                                                     |
@@ -125,6 +125,17 @@ disagree about what "the effective saved content" is for a given project/role/pr
   rather than ever mixing ids from one selection with content from another.
 - A referenced version that cannot be found is a `missing_reference` error, never silently treated
   as empty content.
+- **`list_instruction_versions`/`get_instruction_version` scope**: both take the same
+  `role`/`layer`/`provider` triple (RLS confines rows to the caller's own owner, but not to the
+  connection's bound project, so the facade enforces that boundary itself). `list_instruction_versions`
+  only ever lists the *owner's own* template for that exact scope, so it cannot return another
+  project's override. `get_instruction_version` additionally requires the target version's own
+  template to match that asserted `role`/`layer`/`provider` — and, for `project_override`, the
+  connection's bound `projectId` — before returning content; `shared_role`/`provider` versions
+  (base or the owner's own) are project-independent by design and readable from any project bound
+  to that owner. A `versionId` whose template disagrees with the asserted scope, or whose project
+  or owner doesn't match, is rejected as `not_found` — identical to an unknown id, never
+  distinguishing the two.
 
 ## Writes and persistence
 
@@ -185,6 +196,32 @@ automatic, silent retry.
 
 Revoking or disabling in the panel takes effect immediately; the companion surfaces this as a
 clear `invalidated`/`app_unavailable` tool error rather than hanging or silently retrying forever.
+
+## Credential protection
+
+The `AgentAccessProfile` — including the connection `secret` the companion authenticates with —
+is persisted as plaintext JSON at `<app-data-dir>/agent-access-profile.json` (see
+`src-tauri/crates/agent-access/src/store.rs`). It is never sent to the frontend, never logged, and
+never appears in the copied launch config (that carries only the opaque `profileId`; the companion
+reads the secret itself from the profile file via its own `--profile` lookup). The contract is a
+**current-Windows-account-only** boundary, the same one the named pipe itself enforces (see "Trust
+boundary" and `pipe_transport.rs`) — not encryption, and DPAPI is not required to meet it.
+
+- **Unix** (dev/CI only — there is no Unix production build of this feature): the file's mode is
+  set to `0o600` (owner read/write only) on every write.
+- **Windows** (the real target): `write_profile` sets an explicit, protected DACL on the file
+  itself — full access to the file's owner only, no ACEs inherited from the parent directory
+  (`D:P(A;;FA;;;OW)` via `SetFileSecurityW`, the same SDDL technique `pipe_transport.rs` already
+  uses for the pipe's own security descriptor). This replaced an earlier round's reliance on the
+  app-data directory's own *inherited* ACL, which depends on how and by what that directory was
+  created — this DACL is instead set unconditionally by this code, independent of the directory's
+  own permissions.
+- **Not verified**: like everything else under "Verification status" below, this DACL has been
+  checked to compile and apply the descriptor correctly against a real Windows API surface only via
+  cross-compilation to `x86_64-pc-windows-gnu` from this environment — it has never actually run on
+  Windows, so a real second Windows account being refused read access to the file has never been
+  observed. Disclosure of that gap is not proof it holds; treat it as pending the same real-Windows
+  recheck every other native claim in this document is pending.
 
 ## Errors
 

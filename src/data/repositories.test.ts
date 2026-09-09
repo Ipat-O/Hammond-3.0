@@ -101,6 +101,7 @@ describe('tracker repository write guards', () => {
     expect(rpcSpy).toHaveBeenCalledWith('tasks_archive_subtree_checked', {
       p_root_task_id: 'task-1',
       p_expected_revision: 5,
+      p_request_id: expect.any(String),
     });
   });
 

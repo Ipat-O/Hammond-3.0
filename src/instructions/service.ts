@@ -131,6 +131,12 @@ export class InstructionsService {
     return this.repo.getVersionsByIds(ids);
   }
 
+  /** The scope (role/provider/layer/projectId/ownerId) a version's template carries — see
+   * `InstructionRepository.getTemplate`. */
+  async getTemplate(id: string) {
+    return this.repo.getTemplate(id);
+  }
+
   /** Throws `missing_selection` instead of returning null, for callers that require an active selection. */
   async requireSelection(params: {
     projectId: string;

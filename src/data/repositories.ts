@@ -137,14 +137,21 @@ export class TaskRepository {
    * trusting a client-supplied snapshot — so a still-active child created concurrently under any
    * task in this subtree is either included in the archive or, if created after this archive
    * already committed, correctly refused by `create`'s own archived-parent check. A stale
-   * `expectedRevision` throws `TaskRevisionConflictError`, same as `update`.
+   * `expectedRevision` throws `TaskRevisionConflictError`, same as `update`. `requestId` is the
+   * same durable-dedup idempotency key `create`/`update`/`addComment` take: defaults to a fresh id
+   * per call for callers that do not need to survive a lost-response retry themselves.
    */
-  async archive(id: string, expectedRevision: number): Promise<Tables['tasks']['Row'][]> {
+  async archive(
+    id: string,
+    expectedRevision: number,
+    requestId: string = crypto.randomUUID(),
+  ): Promise<Tables['tasks']['Row'][]> {
     try {
       return dataOrThrow(
         await this.client.rpc('tasks_archive_subtree_checked', {
           p_root_task_id: id,
           p_expected_revision: expectedRevision,
+          p_request_id: requestId,
         }),
       );
     } catch (error) {

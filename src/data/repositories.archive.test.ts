@@ -26,16 +26,28 @@ function createRpcClientMock(options: { result?: unknown; error?: unknown } = {}
 }
 
 describe('TaskRepository.archive', () => {
-  it('calls tasks_archive_subtree_checked with the root id and expected revision', async () => {
+  it('calls tasks_archive_subtree_checked with the root id, expected revision, and a request id', async () => {
+    const { client, rpcSpy } = createRpcClientMock({ result: [] });
+    const repository = new TaskRepository(client);
+
+    await repository.archive('root', 4, 'req-1');
+
+    expect(rpcSpy).toHaveBeenCalledWith('tasks_archive_subtree_checked', {
+      p_root_task_id: 'root',
+      p_expected_revision: 4,
+      p_request_id: 'req-1',
+    });
+  });
+
+  it('defaults to a fresh request id per call when none is supplied', async () => {
     const { client, rpcSpy } = createRpcClientMock({ result: [] });
     const repository = new TaskRepository(client);
 
     await repository.archive('root', 4);
 
-    expect(rpcSpy).toHaveBeenCalledWith('tasks_archive_subtree_checked', {
-      p_root_task_id: 'root',
-      p_expected_revision: 4,
-    });
+    const call = rpcSpy.mock.calls[0] as unknown as [string, { p_request_id: string }];
+    expect(typeof call[1].p_request_id).toBe('string');
+    expect(call[1].p_request_id.length).toBeGreaterThan(0);
   });
 
   it('returns every archived row the RPC reports, unmodified', async () => {

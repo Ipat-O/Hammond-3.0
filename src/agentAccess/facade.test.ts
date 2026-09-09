@@ -460,6 +460,9 @@ describe('agentAccess facade', () => {
       });
       const result = (await callFacadeTool(services, ctx(), 'get_instruction_version', {
         versionId: version.id,
+        role: 'worker',
+        layer: 'project_override',
+        provider: 'claude_code',
       })) as { content: string; source: string };
       expect(result.content).toBe('hello');
       expect(result.source).toBe('owner');
@@ -468,7 +471,152 @@ describe('agentAccess facade', () => {
     it('throws not_found for an unrelated version id', async () => {
       const { services } = buildServices();
       await expect(
-        callFacadeTool(services, ctx(), 'get_instruction_version', { versionId: 'nonexistent' }),
+        callFacadeTool(services, ctx(), 'get_instruction_version', {
+          versionId: 'nonexistent',
+          role: 'worker',
+          layer: 'shared_role',
+        }),
+      ).rejects.toMatchObject({ code: 'not_found' });
+    });
+
+    it('allows a seeded base version for the asserted shared_role/provider scope', async () => {
+      const { services } = buildServices();
+      const active = await services.instructions.resolveActiveVersionIds({
+        projectId: PROJECT_ID,
+        role: 'worker',
+        provider: 'claude_code',
+      });
+      const shared = (await callFacadeTool(services, ctx(), 'get_instruction_version', {
+        versionId: active.sharedRoleVersionId,
+        role: 'worker',
+        layer: 'shared_role',
+      })) as { source: string };
+      expect(shared.source).toBe('base');
+
+      const provider = (await callFacadeTool(services, ctx(), 'get_instruction_version', {
+        versionId: active.providerVersionId,
+        role: 'worker',
+        layer: 'provider',
+        provider: 'claude_code',
+      })) as { source: string };
+      expect(provider.source).toBe('base');
+    });
+
+    it("allows the owner's own global shared_role version from any of the owner's projects", async () => {
+      const { services } = buildServices();
+      const { version } = await services.instructions.saveAndActivate({
+        projectId: PROJECT_ID,
+        role: 'worker',
+        provider: 'claude_code',
+        layer: 'shared_role',
+        content: 'global shared guidance',
+      });
+      // A different project bound to the SAME owner: shared_role/provider layers carry no
+      // project_id, so they are readable from any of the owner's projects, not just the one the
+      // version happened to be saved through.
+      const result = (await callFacadeTool(
+        services,
+        ctx({ projectId: 'other-project-same-owner' }),
+        'get_instruction_version',
+        { versionId: version.id, role: 'worker', layer: 'shared_role' },
+      )) as { content: string };
+      expect(result.content).toBe('global shared guidance');
+    });
+
+    it("rejects another of the owner's projects' override version as not_found", async () => {
+      const { services } = buildServices();
+      const { version } = await services.instructions.saveAndActivate({
+        projectId: PROJECT_ID,
+        role: 'worker',
+        provider: 'claude_code',
+        layer: 'project_override',
+        content: 'project-1 only',
+      });
+      await expect(
+        callFacadeTool(
+          services,
+          ctx({ projectId: 'other-project-same-owner' }),
+          'get_instruction_version',
+          {
+            versionId: version.id,
+            role: 'worker',
+            layer: 'project_override',
+            provider: 'claude_code',
+          },
+        ),
+      ).rejects.toMatchObject({ code: 'not_found' });
+    });
+
+    it("rejects a mismatched role, layer, or provider against the version's real scope", async () => {
+      const { services } = buildServices();
+      const { version } = await services.instructions.saveAndActivate({
+        projectId: PROJECT_ID,
+        role: 'worker',
+        provider: 'claude_code',
+        layer: 'project_override',
+        content: 'worker override',
+      });
+      await expect(
+        callFacadeTool(services, ctx(), 'get_instruction_version', {
+          versionId: version.id,
+          role: 'orchestrator', // wrong role
+          layer: 'project_override',
+          provider: 'claude_code',
+        }),
+      ).rejects.toMatchObject({ code: 'not_found' });
+      await expect(
+        callFacadeTool(services, ctx(), 'get_instruction_version', {
+          versionId: version.id,
+          role: 'worker',
+          layer: 'provider', // wrong layer
+          provider: 'claude_code',
+        }),
+      ).rejects.toMatchObject({ code: 'not_found' });
+      await expect(
+        callFacadeTool(services, ctx(), 'get_instruction_version', {
+          versionId: version.id,
+          role: 'worker',
+          layer: 'project_override',
+          provider: 'codex', // wrong provider
+        }),
+      ).rejects.toMatchObject({ code: 'not_found' });
+    });
+
+    it('rejects a version belonging to a different owner as not_found, even if it were readable \
+(defense in depth independent of RLS)', async () => {
+      const store = createFakeInstructionStore();
+      // A row owned by a different owner, sitting in the same store the connection's own
+      // repository reads from — RLS would normally keep this out of view entirely; this proves
+      // the facade's own ownerId check rejects it too, rather than relying on RLS alone.
+      store.templates.set('foreign-tmpl', {
+        id: 'foreign-tmpl',
+        ownerId: 'owner-2',
+        role: 'worker',
+        provider: null,
+        layer: 'shared_role',
+        projectId: null,
+        name: 'foreign',
+        isBase: false,
+      });
+      store.versions.set('foreign-ver', {
+        id: 'foreign-ver',
+        templateId: 'foreign-tmpl',
+        ownerId: 'owner-2',
+        version: 1,
+        content: 'belongs to owner-2',
+        restoredFromVersionId: null,
+        createdAt: new Date().toISOString(),
+      });
+      const services: TrackerServices = {
+        ...buildServices().services,
+        instructions: new InstructionsService(createFakeInstructionRepository(store, OWNER_ID)),
+      };
+      await expect(
+        callFacadeTool(services, ctx(), 'get_instruction_version', {
+          versionId: 'foreign-ver',
+          role: 'worker',
+          layer: 'shared_role',
+        }),
       ).rejects.toMatchObject({ code: 'not_found' });
     });
   });
