@@ -14,11 +14,11 @@ None.
 
 ## in_development
 
-- [HAM3-014](./tasks/HAM3-014.md) — Owner smoke failed: native crash on Agent access enable; Sonnet Correction 3 prepared.
+None.
 
 ## in_review
 
-None.
+- [HAM3-014](./tasks/HAM3-014.md) — Correction 3 at f64eeb9; V4 Pro runtime/enable-path re-audit prepared after owner crash.
 
 ## testing
 

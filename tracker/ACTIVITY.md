@@ -976,3 +976,10 @@
 - Live PR #12 unchanged open/draft. Historical V4 Pro APPROVE retained as evidence but does not supersede failed live owner smoke. HAM3-014 returns to in_development, not ready to merge.
 - Prepared local HAM3-014-CORRECTION-3.md for original Sonnet/branch/head: capture actual native cause, fix bounded enable/runtime integration and truthful listener readiness/failure state, add production-command regression and repeat live Windows app/companion flow. Strong source hypothesis: synchronous Tauri command reaches tokio::spawn outside entered runtime; official Tokio docs confirm that usage panics. No stack-level causal proof yet; ACL/FFI not presumed cause.
 - Orchestrator performed read-only evidence/source intake, no feature fixes, debugger reproduction, hosted changes or merge. New head requires independent V4 Pro assessment and owner smoke; type-generation/advisor residuals remain separate.
+
+## 2026-09-09 — HAM3-014 Correction 3 intake; bounded round-3 audit
+
+- Verified worker comment 5607225616 and matching open/draft PR #12 head f64eeb9b397c85892098f55ae3ddf8086aa994fe, direct child of 6f92b2e, same branch. Three changed native/docs files, correction whitespace clean.
+- Worker reports traced/reproduced sync-command bare-Tokio-spawn panic, Tauri-runtime spawn replacement, readiness handshake and failed-start rollback, 121 Linux Rust tests plus clippy/Windows cross-compile. No live Windows signed-in app enable test; cause/fix proof remains attributed until independent new-head review.
+- Prepared local HAM3-014-AUDIT-3.md for actual V4 Pro, bounded runtime/command/startup/lifecycle regression plus actual Windows app enable and companion call. Old F1-F4/F6 evidence retained; types parity/advisor/owner gates remain explicit. Prior installer still contains old crash; no rebuilt new-head artifact claimed.
+- HAM3-014 moves to in_review; no new-head audit verdict, native owner smoke, code edits/checks by orchestrator, hosted change, readiness or merge.

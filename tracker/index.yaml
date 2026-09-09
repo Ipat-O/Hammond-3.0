@@ -309,7 +309,7 @@ tasks:
     added: after the HAM3-004 human check at the owner's request; extends the foundation plan from twelve tasks to thirteen
   - id: HAM3-014
     title: LLM access to project memory and instruction scopes
-    state: in_development
+    state: in_review
     depends_on: [HAM3-004, HAM3-005, HAM3-006, HAM3-007, HAM3-008, HAM3-013]
     worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
@@ -319,18 +319,18 @@ tasks:
     design_note: D-022 settles bundled stdio/named-pipe boundary; complete instruction scope/provenance required
     branch: claude/sleepy-fermat-8180q8
     base_sha: ab265e93475b7b3b3a7c36e02b6eb26df987153a
-    current_head_sha: 6f92b2e248ee87d7118e7f80638523f0d3ce9b65
+    current_head_sha: f64eeb9b397c85892098f55ae3ddf8086aa994fe
     pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/12
-    worker_report: https://github.com/Ipat-O/Hammond-3.0/pull/12#issuecomment-5601627260
-    worker_report_provenance: published Correction 2 top-level report verified at delivered head
+    worker_report: https://github.com/Ipat-O/Hammond-3.0/pull/12#issuecomment-5607225616
+    worker_report_provenance: published Correction 3 top-level report verified at delivered head
     correction_packet: tracker/work-orders/HAM3-014-CORRECTION-3.md (device-local)
-    audit_packet: tracker/work-orders/HAM3-014-AUDIT-2.md (device-local)
+    audit_packet: tracker/work-orders/HAM3-014-AUDIT-3.md (device-local)
     audit_verdict: APPROVE
     audited_head_sha: 6f92b2e248ee87d7118e7f80638523f0d3ce9b65
     audit_report: https://github.com/Ipat-O/Hammond-3.0/pull/12#issuecomment-5603003352
     actual_auditor_identity: DeepSeek / Kilo Code / deepseek-v4-pro (runtime deepseek/deepseek-v4-pro)
     auditor_identity_deviation: round-1 Flash Vision deviation historical; round-2 identity matches assignment
-    current_audit_status: historical exact-head APPROVE retained; subsequent owner smoke failed with native enable crash; not merge-ready
+    current_audit_status: no verdict at f64eeb9; historical 6f92b2e approval followed by failed owner smoke; independent changed-path audit prepared
     owner_test_packet: tracker/work-orders/HAM3-014-OWNER-TEST.md (device-local)
     owner_smoke: FAILED at 6f92b2e; enable Agent access terminates process; WER BEX64/c0000409 data 7 offset 0x67f536
-    outstanding: diagnose/fix native enable crash; new-head independent audit and live owner smoke; generated-types parity resolution or explicit owner acceptance; advisor evidence; owner merge authorization
+    outstanding: independent crash/runtime/readiness closure at f64eeb9 and live Windows owner smoke; generated-types parity resolution or explicit owner acceptance; advisor evidence; owner merge authorization
