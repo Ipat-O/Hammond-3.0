@@ -48,6 +48,36 @@ export type Database = {
           },
         ];
       };
+      agent_request_log: {
+        Row: {
+          created_at: string;
+          operation: string;
+          owner_id: string;
+          payload_hash: string;
+          project_id: string;
+          request_id: string;
+          result: Json;
+        };
+        Insert: {
+          created_at?: string;
+          operation: string;
+          owner_id?: string;
+          payload_hash: string;
+          project_id: string;
+          request_id: string;
+          result: Json;
+        };
+        Update: {
+          created_at?: string;
+          operation?: string;
+          owner_id?: string;
+          payload_hash?: string;
+          project_id?: string;
+          request_id?: string;
+          result?: Json;
+        };
+        Relationships: [];
+      };
       comments: {
         Row: {
           body: string;
@@ -414,6 +444,7 @@ export type Database = {
           parent_task_id: string | null;
           priority: number;
           project_id: string;
+          revision: number;
           status: Database['public']['Enums']['task_status'];
           title: string;
           updated_at: string;
@@ -428,6 +459,7 @@ export type Database = {
           parent_task_id?: string | null;
           priority?: number;
           project_id: string;
+          revision?: number;
           status?: Database['public']['Enums']['task_status'];
           title: string;
           updated_at?: string;
@@ -442,6 +474,7 @@ export type Database = {
           parent_task_id?: string | null;
           priority?: number;
           project_id?: string;
+          revision?: number;
           status?: Database['public']['Enums']['task_status'];
           title?: string;
           updated_at?: string;
@@ -468,6 +501,43 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      agent_request_dedupe_check: {
+        Args: {
+          p_operation: string;
+          p_owner: string;
+          p_payload_hash: string;
+          p_project_id: string;
+          p_request_id: string;
+        };
+        Returns: Json;
+      };
+      agent_request_record: {
+        Args: {
+          p_operation: string;
+          p_owner: string;
+          p_payload_hash: string;
+          p_project_id: string;
+          p_request_id: string;
+          p_result: Json;
+        };
+        Returns: undefined;
+      };
+      comments_add_checked: {
+        Args: {
+          p_body: string;
+          p_request_id: string;
+          p_task_id: string;
+        };
+        Returns: {
+          body: string;
+          created_at: string;
+          id: string;
+          owner_id: string;
+          project_id: string;
+          task_id: string;
+          updated_at: string;
+        };
+      };
       instructions_save_and_activate: {
         Args: {
           p_content?: string;
@@ -494,6 +564,78 @@ export type Database = {
           version_restored_from_version_id: string;
           version_template_id: string;
         }[];
+      };
+      tasks_archive_subtree_checked: {
+        Args: {
+          p_expected_revision: number;
+          p_root_task_id: string;
+        };
+        Returns: {
+          archived_at: string | null;
+          created_at: string;
+          description: string;
+          due_at: string | null;
+          id: string;
+          owner_id: string;
+          parent_task_id: string | null;
+          priority: number;
+          project_id: string;
+          revision: number;
+          status: Database['public']['Enums']['task_status'];
+          title: string;
+          updated_at: string;
+        }[];
+      };
+      tasks_create_checked: {
+        Args: {
+          p_description: string | null;
+          p_parent_task_id: string | null;
+          p_project_id: string;
+          p_request_id: string;
+          p_title: string;
+        };
+        Returns: {
+          archived_at: string | null;
+          created_at: string;
+          description: string;
+          due_at: string | null;
+          id: string;
+          owner_id: string;
+          parent_task_id: string | null;
+          priority: number;
+          project_id: string;
+          revision: number;
+          status: Database['public']['Enums']['task_status'];
+          title: string;
+          updated_at: string;
+        };
+      };
+      tasks_update_checked: {
+        Args: {
+          p_change_parent?: boolean;
+          p_description: string | null;
+          p_expected_revision: number;
+          p_parent_task_id?: string | null;
+          p_request_id: string;
+          p_status: Database['public']['Enums']['task_status'] | null;
+          p_task_id: string;
+          p_title: string | null;
+        };
+        Returns: {
+          archived_at: string | null;
+          created_at: string;
+          description: string;
+          due_at: string | null;
+          id: string;
+          owner_id: string;
+          parent_task_id: string | null;
+          priority: number;
+          project_id: string;
+          revision: number;
+          status: Database['public']['Enums']['task_status'];
+          title: string;
+          updated_at: string;
+        };
       };
     };
     Enums: {

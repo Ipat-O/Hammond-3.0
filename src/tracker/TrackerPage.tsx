@@ -5,6 +5,7 @@ import {
   getTaskAncestorIds,
   getTaskSubtreeIds,
   TASK_STATUSES,
+  TaskRevisionConflictError,
   type Database,
 } from '../data';
 import type { HarnessClassification, InjectionPreview } from '../harness/types';
@@ -1965,6 +1966,9 @@ export function TrackerPage({
       archived_at: editingTask?.archived_at ?? null,
       created_at: editingTask?.created_at ?? existingTaskDraft?.created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString(),
+      // A display-only placeholder for a not-yet-durable row; the coordinator's `confirmed` store
+      // (never this optimistic object) is the source of truth `expectedRevision` reads from below.
+      revision: editingTask?.revision ?? 1,
     };
     setTasks((current) => {
       const existing = current.some((task) => task.id === key);
@@ -1991,7 +1995,15 @@ export function TrackerPage({
       key,
       ({ durableId }) => {
         const targetId = initiallyDurableId ?? durableId;
-        return targetId ? repositories.tasks.update(targetId, input) : repositories.tasks.create(input);
+        if (!targetId) return repositories.tasks.create(input);
+        // The coordinator's own `confirmed` store is the freshest revision this UI knows about
+        // for the row, updated by every successful dispatch for it regardless of which editor is
+        // open (HAM3-008 Correction 8) — reading it here, at dispatch time rather than submit
+        // time, catches a revision an earlier queued write (or an agent connection) already
+        // advanced past `editingTask`'s own snapshot.
+        const expectedRevision =
+          taskSaveCoordinatorRef.current.getConfirmed(targetId)?.revision ?? editingTask?.revision ?? 1;
+        return repositories.tasks.update(targetId, input, expectedRevision);
       },
       dedupeToken,
       'editor',
@@ -2015,7 +2027,14 @@ export function TrackerPage({
         taskEditorGenRef.current === editorGenAtStart &&
         !taskSaveCoordinatorRef.current.hasPending(key)
       ) {
-        setTaskSaveError(errorMessage(outcome.error));
+        if (outcome.error instanceof TaskRevisionConflictError) {
+          await reconcileRevisionConflict(key, selectedProject.id, projectIdAtStart);
+          setTaskSaveError(
+            'This task changed elsewhere while you were editing. The latest version has been loaded — review it, then Save again to reapply your changes.',
+          );
+        } else {
+          setTaskSaveError(errorMessage(outcome.error));
+        }
       }
       return false;
     }
@@ -2055,6 +2074,34 @@ export function TrackerPage({
       }
     }
     return true;
+  }
+
+  /**
+   * A checked write's `expectedRevision` was stale (HAM3-014): another session or an agent
+   * connection saved a newer version of `taskId` first. Refetches the task's current durable
+   * state and updates BOTH the coordinator's `confirmed` store (so the next attempt for this task
+   * checks against the fresh revision instead of repeating the same conflict) and the visible
+   * `tasks` row — but never touches any open editor's draft, which is what "retain the UI draft"
+   * requires: the owner's unsaved edits stay exactly as they typed them, only the baseline they
+   * are being compared/saved against moves forward. Best-effort: a failed refetch here still
+   * leaves the caller's own conflict message telling the owner what happened.
+   */
+  async function reconcileRevisionConflict(
+    taskId: string,
+    projectId: string,
+    projectIdAtStart: string | null,
+  ) {
+    try {
+      const freshTasks = await repositories.tasks.list(projectId, { includeArchived: true });
+      const freshRow = freshTasks.find((task) => task.id === taskId);
+      if (!freshRow) return;
+      taskSaveCoordinatorRef.current.setConfirmed(freshRow);
+      if (selectedProjectIdRef.current === projectIdAtStart) {
+        setTasks((current) => current.map((task) => (task.id === taskId ? freshRow : task)));
+      }
+    } catch {
+      // Best-effort only; see doc comment above.
+    }
   }
 
   /** `task.id` for an already-durable task; `null` for one that still carries its synthetic
@@ -2104,7 +2151,11 @@ export function TrackerPage({
         if (!targetId) {
           return Promise.reject(new Error('This task was never created, so its status cannot be saved.'));
         }
-        return repositories.tasks.update(targetId, { status });
+        // Freshest known revision at DISPATCH time, same reasoning as `saveTask` (HAM3-014): the
+        // coordinator's own `confirmed` store, falling back to this call's own captured `task`
+        // only when nothing newer has been recorded for it yet.
+        const expectedRevision = coordinator.getConfirmed(targetId)?.revision ?? task.revision;
+        return repositories.tasks.update(targetId, { status }, expectedRevision);
       },
       null,
       'outliner',
@@ -2132,7 +2183,14 @@ export function TrackerPage({
       // rather than a vanished draft id (HAM3-008 Correction 10). `taskRetry` itself keeps the
       // originally-captured id set above; `retryTaskSave` normalizes it the same way at retry time.
       const currentTaskId = coordinator.getDurableId(task.id) ?? task.id;
-      setTaskSaveError(errorMessage(outcome.error));
+      if (outcome.error instanceof TaskRevisionConflictError) {
+        await reconcileRevisionConflict(currentTaskId, task.project_id, projectIdAtStart);
+        setTaskSaveError(
+          'This task changed elsewhere. The latest version has been loaded — choose the status again to reapply your change.',
+        );
+      } else {
+        setTaskSaveError(errorMessage(outcome.error));
+      }
       setSelectedTaskId(currentTaskId);
     }
   }
@@ -2172,7 +2230,9 @@ export function TrackerPage({
         if (!targetId) {
           return Promise.reject(new Error('This task was never created, so it cannot be archived.'));
         }
-        return repositories.tasks.archive(targetId);
+        const expectedRevision =
+          taskSaveCoordinatorRef.current.getConfirmed(targetId)?.revision ?? task.revision;
+        return repositories.tasks.archive(targetId, expectedRevision);
       },
       null,
       'outliner',
@@ -2184,7 +2244,14 @@ export function TrackerPage({
       setTasks((current) => current.map((item) => savedById.get(item.id) ?? item));
       setTaskRetry(null);
     } else if (outcome.status === 'error') {
-      setTaskSaveError(errorMessage(outcome.error));
+      if (outcome.error instanceof TaskRevisionConflictError) {
+        await reconcileRevisionConflict(task.id, task.project_id, projectIdAtStart);
+        setTaskSaveError(
+          'This task changed elsewhere. The latest version has been loaded — archive again to reapply.',
+        );
+      } else {
+        setTaskSaveError(errorMessage(outcome.error));
+      }
     }
   }
 

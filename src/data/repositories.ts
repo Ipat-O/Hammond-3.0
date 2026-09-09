@@ -3,8 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseClient } from './client';
 import type { Database } from './database.types';
 import { assertNoAbsoluteLocalPaths } from './pathGuard';
-import { getTaskSubtreeIds } from './taskSubtree';
-import { assertNoParentCycle, assertValidTaskStatus } from './taskValidation';
+import { assertValidTaskStatus, toTaskWriteError } from './taskValidation';
 
 type Tables = Database['public']['Tables'];
 type ProjectInsert = Tables['projects']['Insert'];
@@ -59,58 +58,98 @@ export class TaskRepository {
     if (!options.includeArchived) query = query.is('archived_at', null);
     return dataOrThrow(await query);
   }
-  async create(input: TaskInsert) {
+
+  /**
+   * Creates a task in `input.project_id`, optionally under `input.parent_task_id`. Routes through
+   * the `tasks_create_checked` RPC (HAM3-014), which validates the parent belongs to the same
+   * project/owner and is not archived, serialized against a concurrent archive of that exact
+   * parent so an active child can never end up under an already-archived one. `requestId` is a
+   * caller-chosen idempotency key: retrying with the exact same id and field values durably
+   * replays the original result instead of creating a second task; the same id with different
+   * values is rejected. Defaults to a fresh id per call for callers (desktop UI paths) that do not
+   * need to survive a lost-response retry themselves.
+   */
+  async create(input: TaskInsert, requestId: string = crypto.randomUUID()) {
     assertNoAbsoluteLocalPaths(input);
     if (input.status !== undefined) assertValidTaskStatus(input.status);
-    if (input.parent_task_id && input.id) {
-      const existingTasks = await this.list(input.project_id, { includeArchived: true });
-      assertNoParentCycle(existingTasks, input.id, input.parent_task_id);
+    try {
+      return dataOrThrow(
+        await this.client.rpc('tasks_create_checked', {
+          p_project_id: input.project_id,
+          p_title: input.title,
+          p_description: input.description ?? null,
+          p_parent_task_id: input.parent_task_id ?? null,
+          p_request_id: requestId,
+        }),
+      );
+    } catch (error) {
+      throw toTaskWriteError(error);
     }
-    return dataOrThrow(await this.client.from('tasks').insert(input).select().single());
   }
-  async update(id: string, input: TaskUpdate) {
+
+  /**
+   * Updates title/description/status (whichever of those keys are present in `input`) on an
+   * existing task, atomically checked against `expectedRevision` — the revision the caller last
+   * read. A stale `expectedRevision` throws `TaskRevisionConflictError` (HAM3-014) instead of
+   * silently overwriting a newer write from another session or an agent connection; callers
+   * should reload the current row (revision + fields) and let the owner decide whether to reapply
+   * their draft. Including `parent_task_id` in `input` (even as explicit `null`, to clear it)
+   * reparents the task — checked server-side for cycles and archived/foreign parents, serialized
+   * against a concurrent archive the same way `create` is; omitting the key entirely leaves the
+   * current parent untouched, which is what every MCP `update_task` call does (reparenting is
+   * outside that tool's first version).
+   */
+  async update(
+    id: string,
+    input: TaskUpdate,
+    expectedRevision: number,
+    requestId: string = crypto.randomUUID(),
+  ) {
     assertNoAbsoluteLocalPaths(input);
     if (input.status !== undefined) assertValidTaskStatus(input.status);
-    if (input.parent_task_id !== undefined || input.project_id !== undefined) {
-      const projectId = input.project_id ?? (await this.findProjectId(id));
-      const existingTasks = await this.list(projectId, { includeArchived: true });
-      const currentTask = existingTasks.find((task) => task.id === id);
-      const parentTaskId =
-        input.parent_task_id !== undefined
-          ? input.parent_task_id
-          : (currentTask?.parent_task_id ?? null);
-      assertNoParentCycle(existingTasks, id, parentTaskId);
+    const changeParent = Object.hasOwn(input, 'parent_task_id');
+    try {
+      return dataOrThrow(
+        await this.client.rpc('tasks_update_checked', {
+          p_task_id: id,
+          p_expected_revision: expectedRevision,
+          p_title: input.title ?? null,
+          p_description: input.description ?? null,
+          p_status: input.status ?? null,
+          p_request_id: requestId,
+          p_change_parent: changeParent,
+          p_parent_task_id: changeParent ? (input.parent_task_id ?? null) : null,
+        }),
+      );
+    } catch (error) {
+      throw toTaskWriteError(error);
     }
-    return dataOrThrow(
-      await this.client.from('tasks').update(input).eq('id', id).select().single(),
-    );
   }
+
   async remove(id: string) {
     return dataOrThrow(await this.client.from('tasks').delete().eq('id', id).select('id').single());
   }
 
   /**
-   * Archives id plus every transitive descendant in one bulk write so a
-   * still-active child can never be orphaned as a top-level row once the
-   * normal view filters archived tasks out.
+   * Archives id plus every transitive descendant, atomically checked against `expectedRevision`
+   * for the root. Routes through `tasks_archive_subtree_checked` (HAM3-014), which recomputes the
+   * subtree from durable state under the same hierarchy lock `create`/`update` use, rather than
+   * trusting a client-supplied snapshot — so a still-active child created concurrently under any
+   * task in this subtree is either included in the archive or, if created after this archive
+   * already committed, correctly refused by `create`'s own archived-parent check. A stale
+   * `expectedRevision` throws `TaskRevisionConflictError`, same as `update`.
    */
-  async archive(id: string): Promise<Tables['tasks']['Row'][]> {
-    const projectId = await this.findProjectId(id);
-    const projectTasks = await this.list(projectId, { includeArchived: true });
-    const subtreeIds = Array.from(getTaskSubtreeIds(projectTasks, id));
-    const archivedAt = new Date().toISOString();
-    return dataOrThrow(
-      await this.client
-        .from('tasks')
-        .update({ archived_at: archivedAt })
-        .in('id', subtreeIds)
-        .select(),
-    );
-  }
-
-  private async findProjectId(id: string): Promise<string> {
-    return dataOrThrow(await this.client.from('tasks').select('project_id').eq('id', id).single())
-      .project_id;
+  async archive(id: string, expectedRevision: number): Promise<Tables['tasks']['Row'][]> {
+    try {
+      return dataOrThrow(
+        await this.client.rpc('tasks_archive_subtree_checked', {
+          p_root_task_id: id,
+          p_expected_revision: expectedRevision,
+        }),
+      );
+    } catch (error) {
+      throw toTaskWriteError(error);
+    }
   }
 }
 
@@ -133,9 +172,26 @@ export class ProjectMemoryRepository {
         .limit(limit),
     );
   }
-  async addComment(input: Tables['comments']['Insert']) {
+  /**
+   * Appends one durable comment. Routes through the `comments_add_checked` RPC (HAM3-014) for the
+   * same durable request-id deduplication `TaskRepository.create`/`update` use: retrying with the
+   * exact same `requestId` and body replays the original comment instead of creating a duplicate.
+   * `requestId` defaults to a fresh id per call for callers that do not need to survive a
+   * lost-response retry themselves.
+   */
+  async addComment(input: Tables['comments']['Insert'], requestId: string = crypto.randomUUID()) {
     assertNoAbsoluteLocalPaths(input);
-    return dataOrThrow(await this.client.from('comments').insert(input).select().single());
+    try {
+      return dataOrThrow(
+        await this.client.rpc('comments_add_checked', {
+          p_task_id: input.task_id,
+          p_body: input.body,
+          p_request_id: requestId,
+        }),
+      );
+    } catch (error) {
+      throw toTaskWriteError(error);
+    }
   }
   async addRelation(input: Tables['task_relations']['Insert']) {
     return dataOrThrow(await this.client.from('task_relations').insert(input).select().single());

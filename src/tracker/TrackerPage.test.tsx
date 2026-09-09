@@ -67,6 +67,7 @@ function task(overrides: Partial<Task> & Pick<Task, 'id' | 'project_id'>): Task 
     archived_at: null,
     created_at: '2026-08-13T08:00:00.000Z',
     updated_at: '2026-08-13T08:00:00.000Z',
+    revision: 1,
     ...overrides,
   };
 }
@@ -1677,6 +1678,7 @@ describe('Independent-audit Correction 2 — F2: unsaved task edits and unsent c
       expect(services.repositories.tasks.update).toHaveBeenCalledWith(
         'existing-task',
         expect.objectContaining({ title: 'Edited and saved' }),
+        existingTask.revision,
       ),
     );
     await waitFor(() => expect(screen.getAllByRole('heading', { name: 'Project B' }).length).toBeGreaterThan(0));
@@ -1876,6 +1878,7 @@ describe('Correction 4 — F2a: every dirty context affected by a transition is 
       expect(services.repositories.tasks.update).toHaveBeenCalledWith(
         'existing-task',
         expect.objectContaining({ title: 'saved via save-all' }),
+        existingTask.revision,
       ),
     );
     const versions = await instructions.listOwnerVersions({
@@ -2315,6 +2318,7 @@ describe('Correction 4 — F2b: the task-editor dirty baseline reflects durable 
       2,
       'existing-task',
       expect.objectContaining({ title: 'edited then retried' }),
+      existingTask.revision,
     );
     await waitFor(() => expect(screen.getAllByRole('heading', { name: 'Project B' }).length).toBeGreaterThan(0));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -2616,11 +2620,13 @@ describe('Correction 6 — a delayed task-save completion must never steal a new
       1,
       'task-a',
       expect.objectContaining({ title: 'Task Alpha edited' }),
+      taskA.revision,
     );
     expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(
       2,
       'task-b',
       expect.objectContaining({ title: 'Task Bravo edited' }),
+      taskB.revision,
     );
 
     // Task A retains only its own legitimate first-save content — never contaminated by B's
@@ -2679,6 +2685,7 @@ describe('Correction 6 — a delayed task-save completion must never steal a new
       2,
       'task-b',
       expect.objectContaining({ title: 'Task Bravo edited' }),
+      taskB.revision,
     );
   });
 
@@ -2881,6 +2888,7 @@ describe('Correction 7/8 — task state stays consistent across overlapping save
       1,
       'task-a',
       expect.objectContaining({ title: 'v1' }),
+      taskA.revision,
     );
     expect(screen.getByRole('dialog', { name: 'Unsaved changes' })).toBeInTheDocument();
 
@@ -2892,6 +2900,7 @@ describe('Correction 7/8 — task state stays consistent across overlapping save
       2,
       'task-a',
       expect.objectContaining({ title: 'v2' }),
+      taskA.revision,
     );
 
     // v2 now succeeds — the guard's Save-all completes and navigates to B.
@@ -2931,7 +2940,12 @@ describe('Correction 7/8 — task state stays consistent across overlapping save
     // task A's own unrelated activity (different tasks save independently).
     fireEvent.change(screen.getByLabelText('Move Task Bravo'), { target: { value: 'done' } });
     await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
-    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(2, 'task-b', { status: 'done' });
+    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(
+      2,
+      'task-b',
+      { status: 'done' },
+      taskB.revision,
+    );
 
     const taskBCall = resolvers.find((entry) => entry.id === 'task-b')!;
     taskBCall.resolve({ ...taskB, status: 'done' });
@@ -2989,6 +3003,7 @@ describe('Correction 7/8 — task state stays consistent across overlapping save
       2,
       'task-a',
       expect.objectContaining({ title: 'v2' }),
+      taskA.revision,
     );
 
     // v2 — the only request now outstanding — rejects. Its error surfaces (shown in both the
@@ -3468,6 +3483,7 @@ describe('Correction 8 — remaining per-task save coordinator matrix rows', () 
       2,
       'task-a',
       expect.objectContaining({ title: 'v2' }),
+      taskA.revision,
     );
     expect(screen.queryByText('v1 rejected')).not.toBeInTheDocument();
 
@@ -3601,6 +3617,7 @@ describe('Correction 8 — remaining per-task save coordinator matrix rows', () 
     expect(services.repositories.tasks.update).toHaveBeenCalledWith(
       'new-task-real-id',
       expect.objectContaining({ title: 'v2' }),
+      otherTask.revision,
     );
     // Still exactly one create — the queued save became an update, never a second create.
     expect(services.repositories.tasks.create).toHaveBeenCalledTimes(1);
@@ -3847,6 +3864,7 @@ describe('Correction 9 — canonical queue identity (F1) and scoped cancellation
     expect(services.repositories.tasks.update).toHaveBeenCalledWith(
       'new-task-real-id',
       expect.objectContaining({ title: 'v2' }),
+      otherTask.revision,
     );
 
     // 4. Cancel the navigation guard; the outliner now displays the real-id row.
@@ -3863,7 +3881,7 @@ describe('Correction 9 — canonical queue identity (F1) and scoped cancellation
     // Settling v2 lets the archive dispatch next, against the real id it produced.
     resolveV2({ ...otherTask, id: 'new-task-real-id', title: 'v2', parent_task_id: null });
     await waitFor(() => expect(archiveCalled).toBe(true));
-    expect(services.repositories.tasks.archive).toHaveBeenCalledWith('new-task-real-id');
+    expect(services.repositories.tasks.archive).toHaveBeenCalledWith('new-task-real-id', otherTask.revision);
     await waitFor(() => {
       const row = screen.getByRole('button', { name: /^v2/ }).closest('li')!;
       expect(within(row).getByText('Archived')).toBeInTheDocument();
@@ -3912,7 +3930,12 @@ describe('Correction 9 — canonical queue identity (F1) and scoped cancellation
 
     updateResolvers[0]({ ...otherTask, id: 'new-task-real-id', title: 'v2', parent_task_id: null });
     await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
-    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(2, 'new-task-real-id', { status: 'done' });
+    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(
+      2,
+      'new-task-real-id',
+      { status: 'done' },
+      otherTask.revision,
+    );
 
     updateResolvers[1]({ ...otherTask, id: 'new-task-real-id', title: 'v2', status: 'done', parent_task_id: null });
     await waitFor(() => {
@@ -3950,9 +3973,9 @@ describe('Correction 9 — canonical queue identity (F1) and scoped cancellation
     expect(archiveCalled).toBe(false);
     expect(services.repositories.tasks.archive).not.toHaveBeenCalledWith(expect.stringMatching(/^draft-task-/));
 
-    resolveCreate({ owner_id: ownerId, id: 'new-task-real-id', project_id: 'project-a', title: 'v1', description: '', status: 'backlog', priority: 0, parent_task_id: null, due_at: null, archived_at: null, created_at: '2026-08-13T08:00:00.000Z', updated_at: '2026-08-13T08:00:00.000Z' });
+    resolveCreate({ owner_id: ownerId, id: 'new-task-real-id', project_id: 'project-a', title: 'v1', description: '', status: 'backlog', priority: 0, parent_task_id: null, due_at: null, archived_at: null, created_at: '2026-08-13T08:00:00.000Z', updated_at: '2026-08-13T08:00:00.000Z', revision: 1 });
     await waitFor(() => expect(archiveCalled).toBe(true));
-    expect(services.repositories.tasks.archive).toHaveBeenCalledWith('new-task-real-id');
+    expect(services.repositories.tasks.archive).toHaveBeenCalledWith('new-task-real-id', 1);
     expect(services.repositories.tasks.create).toHaveBeenCalledTimes(1);
   });
 
@@ -4016,7 +4039,12 @@ describe('Correction 9 — canonical queue identity (F1) and scoped cancellation
 
     resolvers[0]({ ...taskA, title: 'v1' });
     await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
-    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(2, 'task-a', { status: 'done' });
+    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(
+      2,
+      'task-a',
+      { status: 'done' },
+      taskA.revision,
+    );
 
     resolvers[1]({ ...taskA, title: 'v1', status: 'done' });
     await waitFor(() => {
@@ -4118,7 +4146,7 @@ describe('Correction 9 — canonical queue identity (F1) and scoped cancellation
     // The independently queued archive survives, dispatches against the REAL id the create
     // produced (never the synthetic draft id), and its result is what ends up rendered.
     await waitFor(() => expect(services.repositories.tasks.archive).toHaveBeenCalledTimes(1));
-    expect(services.repositories.tasks.archive).toHaveBeenCalledWith('new-task-real-id');
+    expect(services.repositories.tasks.archive).toHaveBeenCalledWith('new-task-real-id', 1);
     await waitFor(() => {
       const row = screen.getByRole('button', { name: /^v1/ }).closest('li')!;
       expect(within(row).getByText('Archived')).toBeInTheDocument();
@@ -4138,6 +4166,7 @@ describe('Correction 10 — synthetic-row Move display reconciles by real id; Re
     archived_at: null,
     created_at: '2026-08-13T08:00:00.000Z',
     updated_at: '2026-08-13T08:00:00.000Z',
+    revision: 1,
     ...overrides,
   });
 
@@ -4175,7 +4204,7 @@ describe('Correction 10 — synthetic-row Move display reconciles by real id; Re
     // The queued move dispatches against the REAL id the create produced, with the requested
     // status — never a bogus request against the synthetic draft id.
     await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
-    expect(services.repositories.tasks.update).toHaveBeenCalledWith('new-task-real-id', { status: 'done' });
+    expect(services.repositories.tasks.update).toHaveBeenCalledWith('new-task-real-id', { status: 'done' }, 1);
     expect(services.repositories.tasks.create).toHaveBeenCalledTimes(1);
     expect(services.repositories.tasks.update).not.toHaveBeenCalledWith(
       expect.stringMatching(/^draft-task-/),
@@ -4226,7 +4255,7 @@ describe('Correction 10 — synthetic-row Move display reconciles by real id; Re
 
     resolveCreate(realTask({ id: 'new-task-real-id', project_id: 'project-a', title: 'v1' }));
     await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(1));
-    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(1, 'new-task-real-id', { status: 'done' });
+    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(1, 'new-task-real-id', { status: 'done' }, 1);
 
     updateRejecters[0](new Error('move blew up'));
     const alert = await screen.findByRole('alert');
@@ -4239,7 +4268,7 @@ describe('Correction 10 — synthetic-row Move display reconciles by real id; Re
     // status. At baseline, the retry target still names the vanished synthetic draft id, `tasks`
     // no longer contains it, and this click is a silent no-op — no second call is ever made.
     await waitFor(() => expect(services.repositories.tasks.update).toHaveBeenCalledTimes(2));
-    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(2, 'new-task-real-id', { status: 'done' });
+    expect(services.repositories.tasks.update).toHaveBeenNthCalledWith(2, 'new-task-real-id', { status: 'done' }, 1);
 
     updateResolvers[1](realTask({ id: 'new-task-real-id', project_id: 'project-a', title: 'v1', status: 'done' }));
 

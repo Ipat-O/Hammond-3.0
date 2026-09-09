@@ -53,6 +53,7 @@ function task(overrides: Partial<Task> = {}): Task {
     archived_at: null,
     created_at: '2026-08-13T08:00:00.000Z',
     updated_at: '2026-08-13T08:00:00.000Z',
+    revision: 1,
     ...overrides,
   };
 }
@@ -377,6 +378,7 @@ describe('Hammond tracker workspace', () => {
     expect(update).toHaveBeenCalledWith(
       'new-task',
       expect.objectContaining({ parent_task_id: 'level-4' }),
+      newTopLevel.revision,
     );
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
@@ -491,7 +493,7 @@ describe('task archive cascades to the complete subtree', () => {
     fireEvent.click(parentRow.getByRole('button', { name: 'Archive' }));
 
     await waitFor(() => expect(archive).toHaveBeenCalledTimes(1));
-    expect(archive).toHaveBeenCalledWith('parent');
+    expect(archive).toHaveBeenCalledWith('parent', parent.revision);
 
     fireEvent.click(screen.getByLabelText('Show archived'));
     const revealedParentTitle = await screen.findByText('Parent task', {
@@ -536,7 +538,7 @@ describe('task archive cascades to the complete subtree', () => {
     const grandchildRow = within(grandchildTitle.closest('.outliner-row') as HTMLElement);
     fireEvent.click(grandchildRow.getByRole('button', { name: 'Archive' }));
 
-    await waitFor(() => expect(archive).toHaveBeenCalledWith('grandchild'));
+    await waitFor(() => expect(archive).toHaveBeenCalledWith('grandchild', grandchild.revision));
     expect(screen.queryByText('Grandchild task')).not.toBeInTheDocument();
     expect(
       screen.getByText('Parent task', { selector: '.outliner-task-title' }),
@@ -580,8 +582,8 @@ describe('task archive cascades to the complete subtree', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry save' }));
 
     await waitFor(() => expect(archive).toHaveBeenCalledTimes(2));
-    expect(archive).toHaveBeenNthCalledWith(1, 'parent');
-    expect(archive).toHaveBeenNthCalledWith(2, 'parent');
+    expect(archive).toHaveBeenNthCalledWith(1, 'parent', parent.revision);
+    expect(archive).toHaveBeenNthCalledWith(2, 'parent', parent.revision);
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
   });
 

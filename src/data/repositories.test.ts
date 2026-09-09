@@ -2,46 +2,25 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { vi } from 'vitest';
 
 import { ProjectRepository, TaskRepository } from './repositories';
+import { TaskRevisionConflictError } from './taskValidation';
 import type { Database } from './database.types';
 
-type TaskRow = Pick<Database['public']['Tables']['tasks']['Row'], 'id' | 'parent_task_id'>;
-
 /**
- * Builds a fake Supabase client whose `tasks` table chain resolves
- * `listResult` for read chains (select/eq/order) and records every
- * insert/update payload, resolving `writeResult` for the final `.single()`.
+ * Builds a fake Supabase client whose `.rpc(name, args)` records every call and resolves
+ * `result` (or rejects with `error` if given) — `TaskRepository`'s checked writes (HAM3-014) go
+ * through `tasks_create_checked`/`tasks_update_checked`/`tasks_archive_subtree_checked` rather
+ * than plain `.from().insert()/.update()`, so this is the boundary these tests mock.
  */
-function createTaskClientMock(options: { listResult: TaskRow[]; writeResult?: unknown }) {
-  const insertSpy = vi.fn();
-  const updateSpy = vi.fn();
-
-  function awaitable(data: unknown): unknown {
-    const node = {
-      select: () => awaitable(data),
-      eq: () => awaitable(data),
-      order: () => awaitable(data),
-      single: () => Promise.resolve({ data, error: null }),
-      then: (resolve: (value: { data: unknown; error: null }) => void) =>
-        resolve({ data, error: null }),
-    };
-    return node;
-  }
-
-  const client = {
-    from: vi.fn(() => ({
-      select: () => awaitable(options.listResult),
-      insert: (input: unknown) => {
-        insertSpy(input);
-        return awaitable(options.writeResult ?? input);
-      },
-      update: (input: unknown) => {
-        updateSpy(input);
-        return awaitable(options.writeResult ?? input);
-      },
-    })),
-  } as unknown as SupabaseClient<Database>;
-
-  return { client, insertSpy, updateSpy };
+function createRpcClientMock(options: { result?: unknown; error?: unknown } = {}) {
+  const rpcSpy = vi.fn(() =>
+    Promise.resolve(
+      options.error
+        ? { data: null, error: options.error }
+        : { data: options.result ?? null, error: null },
+    ),
+  );
+  const client = { rpc: rpcSpy } as unknown as SupabaseClient<Database>;
+  return { client, rpcSpy };
 }
 
 describe('tracker repository write guards', () => {
@@ -56,77 +35,91 @@ describe('tracker repository write guards', () => {
   });
 
   it('rejects invalid task statuses before a task write reaches Supabase', async () => {
-    const client = { from: vi.fn() } as unknown as SupabaseClient<Database>;
+    const { client, rpcSpy } = createRpcClientMock();
     const repository = new TaskRepository(client);
 
-    await expect(repository.update('task-1', { status: 'queued' as never })).rejects.toThrow(
+    await expect(repository.update('task-1', { status: 'queued' as never }, 1)).rejects.toThrow(
       'Invalid task status: queued',
     );
-    expect(client.from).not.toHaveBeenCalled();
+    expect(rpcSpy).not.toHaveBeenCalled();
   });
 
-  it('persists a newly created task nested at least four levels deep', async () => {
-    const existingTasks: TaskRow[] = [
-      { id: 'l1', parent_task_id: null },
-      { id: 'l2', parent_task_id: 'l1' },
-      { id: 'l3', parent_task_id: 'l2' },
-      { id: 'l4', parent_task_id: 'l3' },
-    ];
-    const { client, insertSpy } = createTaskClientMock({ listResult: existingTasks });
+  it('creates a task via tasks_create_checked with the parent it was given', async () => {
+    const { client, rpcSpy } = createRpcClientMock({ result: { id: 'l5' } });
     const repository = new TaskRepository(client);
 
-    await repository.create({
-      id: 'l5',
-      project_id: 'project-1',
-      title: 'Fifth level task',
-      parent_task_id: 'l4',
+    await repository.create(
+      { project_id: 'project-1', title: 'Fifth level task', parent_task_id: 'l4' },
+      'req-1',
+    );
+
+    expect(rpcSpy).toHaveBeenCalledWith('tasks_create_checked', {
+      p_project_id: 'project-1',
+      p_title: 'Fifth level task',
+      p_description: null,
+      p_parent_task_id: 'l4',
+      p_request_id: 'req-1',
     });
-
-    expect(insertSpy).toHaveBeenCalledTimes(1);
-    expect(insertSpy).toHaveBeenCalledWith(expect.objectContaining({ parent_task_id: 'l4' }));
   });
 
-  it('persists re-parenting a task at least four levels deep under a legal ancestor', async () => {
-    const existingTasks: TaskRow[] = [
-      { id: 'l1', parent_task_id: null },
-      { id: 'l2', parent_task_id: 'l1' },
-      { id: 'l3', parent_task_id: 'l2' },
-      { id: 'l4', parent_task_id: 'l3' },
-      { id: 'l5', parent_task_id: null },
-    ];
-    const { client, updateSpy } = createTaskClientMock({ listResult: existingTasks });
+  it('updates a task via tasks_update_checked with the given expected revision', async () => {
+    const { client, rpcSpy } = createRpcClientMock({ result: { id: 'task-1' } });
     const repository = new TaskRepository(client);
 
-    await repository.update('l5', { project_id: 'project-1', parent_task_id: 'l4' });
+    await repository.update('task-1', { title: 'Renamed' }, 3, 'req-2');
 
-    expect(updateSpy).toHaveBeenCalledTimes(1);
-    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ parent_task_id: 'l4' }));
+    expect(rpcSpy).toHaveBeenCalledWith('tasks_update_checked', {
+      p_task_id: 'task-1',
+      p_expected_revision: 3,
+      p_title: 'Renamed',
+      p_description: null,
+      p_status: null,
+      p_request_id: 'req-2',
+      p_change_parent: false,
+      p_parent_task_id: null,
+    });
   });
 
-  it('rejects a task re-parented to itself before the write reaches Supabase', async () => {
-    const existingTasks: TaskRow[] = [{ id: 'task-1', parent_task_id: null }];
-    const { client, updateSpy } = createTaskClientMock({ listResult: existingTasks });
+  it('reparents a task via tasks_update_checked only when parent_task_id is explicitly given', async () => {
+    const { client, rpcSpy } = createRpcClientMock({ result: { id: 'task-1' } });
     const repository = new TaskRepository(client);
 
-    await expect(
-      repository.update('task-1', { project_id: 'project-1', parent_task_id: 'task-1' }),
-    ).rejects.toThrow(/own parent/);
-    expect(updateSpy).not.toHaveBeenCalled();
+    await repository.update('task-1', { parent_task_id: null }, 3, 'req-3');
+
+    expect(rpcSpy).toHaveBeenCalledWith(
+      'tasks_update_checked',
+      expect.objectContaining({ p_change_parent: true, p_parent_task_id: null }),
+    );
   });
 
-  it('rejects re-parenting a task under its own descendant before the write reaches Supabase', async () => {
-    const existingTasks: TaskRow[] = [
-      { id: 'l1', parent_task_id: null },
-      { id: 'l2', parent_task_id: 'l1' },
-      { id: 'l3', parent_task_id: 'l2' },
-      { id: 'l4', parent_task_id: 'l3' },
-    ];
-    const { client, updateSpy } = createTaskClientMock({ listResult: existingTasks });
+  it('archives a task via tasks_archive_subtree_checked with the given expected revision', async () => {
+    const { client, rpcSpy } = createRpcClientMock({ result: [{ id: 'task-1' }] });
     const repository = new TaskRepository(client);
 
-    await expect(
-      repository.update('l1', { project_id: 'project-1', parent_task_id: 'l4' }),
-    ).rejects.toThrow(/cycle/);
-    expect(updateSpy).not.toHaveBeenCalled();
+    await repository.archive('task-1', 5);
+
+    expect(rpcSpy).toHaveBeenCalledWith('tasks_archive_subtree_checked', {
+      p_root_task_id: 'task-1',
+      p_expected_revision: 5,
+    });
+  });
+
+  it('maps a stale-revision (40001) error into TaskRevisionConflictError', async () => {
+    const { client } = createRpcClientMock({ error: { code: '40001', message: 'stale' } });
+    const repository = new TaskRepository(client);
+
+    await expect(repository.update('task-1', { title: 'x' }, 1, 'req-4')).rejects.toBeInstanceOf(
+      TaskRevisionConflictError,
+    );
+  });
+
+  it('leaves an unrelated write error unchanged', async () => {
+    const { client } = createRpcClientMock({ error: { code: '23514', message: 'nope' } });
+    const repository = new TaskRepository(client);
+
+    const error = await repository
+      .update('task-1', { title: 'x' }, 1, 'req-5')
+      .catch((caught: unknown) => caught);
+    expect(error).not.toBeInstanceOf(TaskRevisionConflictError);
   });
 });

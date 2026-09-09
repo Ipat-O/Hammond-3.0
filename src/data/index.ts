@@ -7,6 +7,7 @@ export {
   assertValidTaskStatus,
   isTaskStatus,
   TASK_STATUSES,
+  TaskRevisionConflictError,
   type TaskStatus,
 } from './taskValidation';
 export { ProjectMemoryRepository, ProjectRepository, TaskRepository } from './repositories';
