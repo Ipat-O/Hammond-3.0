@@ -309,11 +309,18 @@ tasks:
     added: after the HAM3-004 human check at the owner's request; extends the foundation plan from twelve tasks to thirteen
   - id: HAM3-014
     title: LLM access to project memory and instruction scopes
-    state: ready_for_development
+    state: in_development
     depends_on: [HAM3-004, HAM3-005, HAM3-006, HAM3-007, HAM3-008, HAM3-013]
     worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
     assigned_worker_identity: Anthropic / Claude Code / claude-sonnet-5 (recipient must verify)
     work_order: tracker/work-orders/HAM3-014-WO.md (device-local owner-transfer packet)
     requested_branch: claude/ham3-014-agent-access
-    design_note: D-022 settles bundled stdio/named-pipe boundary; complete instruction scope/provenance required; packet prepared, worker execution not yet reported
+    design_note: D-022 settles bundled stdio/named-pipe boundary; complete instruction scope/provenance required
+    branch: claude/sleepy-fermat-8180q8
+    base_sha: ab265e93475b7b3b3a7c36e02b6eb26df987153a
+    current_head_sha: 5d70501c95576082c0e7e7057726664dc568fe40
+    pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/12
+    worker_report_provenance: owner-pasted report preserved locally; PR body verified; no top-level GitHub worker report yet
+    correction_packet: tracker/work-orders/HAM3-014-CORRECTION-1.md (device-local)
+    outstanding: bundled companion implementation; official Supabase generated types and checks; real Windows pipe/package/host evidence; corrected report; independent full-PR audit
