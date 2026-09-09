@@ -130,4 +130,20 @@ The preview-only work-order field is labeled **Test a task-specific instruction*
 
 ## D-018 — Remove in-app work orders
 
-On 2026-09-09 the owner cancelled HAM3-009 and chose the post-HAM3-008 app. PR #11 is closed unmerged; its branch/history are retained for reference. Work-order generation, dispatch snapshots and returned-report UI from HAM3-009 are not part of the product/release. External repository work orders remain an orchestration practice. HAM3-011/012 no longer depend on HAM3-009; their remaining scope and HAM3-010 are not otherwise cancelled. This supersedes earlier product statements requiring in-app packet generation.
+On 2026-09-09 the owner cancelled HAM3-009 and chose the post-HAM3-008 app. PR #11 is closed unmerged; its branch/history are retained for reference. Work-order generation, dispatch snapshots and returned-report UI from HAM3-009 are not part of the product/release. External repository work orders remain an orchestration practice. HAM3-011/012 no longer depend on HAM3-009; their remaining scope and HAM3-010 were not otherwise cancelled by this decision (see subsequent D-019). This supersedes earlier product statements requiring in-app packet generation.
+
+## D-019 — Drop in-app approval workflow; expand tracker depth
+
+On 2026-09-09 the owner dropped HAM3-010 and requested an expanded HAM3-011. Structured worker/auditor evidence input, SHA comparison, approval validation, and derived readiness are removed from product/release scope. External delivery governance, independent audits, and owner merge authority remain unchanged.
+
+HAM3-011 is next in design, depends on HAM3-004, and covers blockers/relations, labeled reference URLs, meaningful activity, project-scoped search/filters, board/list views alongside the existing outliner, and project archive/restore with Markdown/JSON export. Ordinary report/PR links are references only. No binary uploads or export import are added. Its expanded task definition provides acceptance and bounded delivery slices; it is not a worker dispatch. HAM3-012 drops HAM3-010 as a dependency and validates the revised release boundary. This supersedes earlier in-app evidence/approval requirements.
+
+## D-020 — Cancel tracker expansion; explore LLM access
+
+On 2026-09-09 the owner dropped HAM3-011 and asked how to make Hammond usable by LLMs. Its expanded tracker scope is cancelled before dispatch, and HAM3-012 no longer depends on it or requires its features. D-019 remains valid for HAM3-010 cancellation; D-020 supersedes its proposed HAM3-011 direction. Direct agent access is a design discussion, not authorization to implement an MCP server, CLI, new authentication flow, or replacement task yet.
+
+## D-021 — Plan LLM access with explicit instruction scopes
+
+On 2026-09-09 the owner requested an implementation task plan for LLM access and explicitly required instruction scope availability. HAM3-014 records the plan for project/task reads, composed instructions and source-layer/version provenance, task creation/updates, and comments. Instruction mutation remains outside this first version; shared-role, provider, and project override scopes must all be readable, with task context clearly separated from instructions.
+
+The proposed design uses a bundled stdio MCP companion and local authenticated Windows IPC to the running signed-in app. It avoids session export and a second database client/auth lifecycle. This is a proposed narrow exception to D-001's no-bridge wording, to settle at dispatch review; it is not permission to install a separate bridge or introduce remote HTTP. HAM3-014 remains in_design, ahead of HAM3-012 release integration. The plan adds guarded writes and retry deduplication because agents introduce concurrent writers; cancelled HAM3-009/010/011 remain cancelled. No implementation or worker dispatch is claimed.

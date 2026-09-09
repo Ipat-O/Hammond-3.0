@@ -6,8 +6,7 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## in_design
 
-- [HAM3-010](./tasks/HAM3-010.md) — Exact-SHA evidence and approval workflow
-- [HAM3-011](./tasks/HAM3-011.md) — Tracker depth, activity, search, and export
+- [HAM3-014](./tasks/HAM3-014.md) — LLM access to project memory and instruction scopes (next planned task)
 - [HAM3-012](./tasks/HAM3-012.md) — Integrated desktop release and human QA
 
 ## ready_for_development
@@ -29,6 +28,8 @@ None.
 ## cancelled
 
 - [HAM3-009](./tasks/HAM3-009.md) — Removed from product scope by owner; PR #11 closed unmerged.
+- [HAM3-010](./tasks/HAM3-010.md) — In-app evidence and approval workflow removed from product scope by owner.
+- [HAM3-011](./tasks/HAM3-011.md) — Tracker expansion cancelled by owner; LLM access is planned in HAM3-014.
 
 ## merged
 
@@ -62,6 +63,9 @@ None.
 2. HAM3-002 and HAM3-003
 3. HAM3-004 and HAM3-005
 4. HAM3-006
-5. HAM3-007, HAM3-008, HAM3-009, and HAM3-010
-6. HAM3-011
-7. HAM3-012
+5. HAM3-007 and HAM3-008 (HAM3-009/010 cancelled)
+6. HAM3-011 cancelled
+7. HAM3-014 (LLM access and instruction scopes)
+8. HAM3-012 (integrated release after HAM3-014)
+
+HAM3-013 was added after HAM3-004 and is already merged; its hierarchy outliner is a dependency of HAM3-014.

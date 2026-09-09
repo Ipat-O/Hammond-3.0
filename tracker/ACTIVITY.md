@@ -901,3 +901,28 @@
 - Owner requested reverting to after HAM3-008 because in-app work orders are no longer wanted. Verified dev application source matches HAM3-008 merge 379c2cf exactly; subsequent dev changes were planning only. No source revert/history reset needed.
 - Closed PR #11 unmerged, retaining implementation branch and historical evidence. HAM3-009 cancelled; removed it from HAM3-011/012 dependencies and release smoke scope. Decision D-018 supersedes in-app work-order product requirements.
 - Launching owner dev to restore the HAM3-008 application experience. Existing local QA data and implementation checkouts preserved; no cleanup/deletion or rewriting of history implied.
+
+## 2026-09-09 — Owner dropped HAM3-010 and expanded HAM3-011
+
+- HAM3-010 cancelled by owner direction; removed from HAM3-011/012 dependencies. External exact-SHA delivery governance remains unchanged under D-019.
+- Expanded HAM3-011 into six defined product areas with acceptance, exclusions, bounded implementation slices, and a human check. It remains in_design; no worker dispatch or feature implementation performed.
+- Updated board, index, release QA scope, README, and architecture to remove cancelled in-app work-order/approval requirements. HAM3-011 is next, followed by HAM3-012 packaging and integrated QA.
+
+## 2026-09-09 — Owner cancelled HAM3-011; LLM access discussion
+
+- Cancelled HAM3-011 before dispatch and retained its expanded scope as historical context.
+- Removed HAM3-011 from release dependencies and requirements; updated board, index, README, and architecture under D-020.
+- Inspected existing repository and instruction service boundaries to inform a proposed agent interface. No feature implementation or replacement dispatch performed.
+
+## 2026-09-09 — HAM3-014 implementation plan prepared
+
+- Created HAM3-014 for local LLM access to project/task memory, instruction scopes and effective content, task creation/updates, and comments, as requested by the owner.
+- Grounded the plan in current repositories, instruction composition/selection, role/provider assignments, owner auth, native commands, and save coordination. Added explicit scope/provenance/history requirements and excluded fabricated task-instruction persistence.
+- Defined four implementation slices, proposed bundled stdio/IPC architecture, owner/project connection grants, concurrent edit and retry guarantees, expected files, acceptance, independent verification, and owner smoke.
+- Updated board/index and HAM3-012 release dependency. Task remains in_design; no feature edits, database changes, host configuration, exact-base packet, or dispatch performed. Documentation diff check passed.
+
+## 2026-09-09 — Publish consolidated planning on owner instruction
+
+- Owner authorized publishing the local planning changes after investigation confirmed they had not reached origin/dev.
+- Consolidated HAM3-010/011 cancellations, D-019 through D-021, HAM3-014 with instruction scopes, and HAM3-012 dependencies into one planning update. HAM3-009 remains cancelled and HAM3-013 remains merged.
+- Sonnet branch claude/optimistic-bardeen-gch776 at f565d5f independently recorded substantially the same HAM3-014 plan from older dev adeaec6, but omitted cancellation/dependency updates. This consolidated plan supersedes that incomplete planning snapshot; no feature implementation or dispatch is implied.

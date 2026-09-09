@@ -1,6 +1,6 @@
 # Hammond 3.0 Architecture
 
-Status: approved product direction; implementation not started.
+Status: product direction updated 2026-09-09 by D-018 through D-021; see the task board for implementation status. HAM3-014 contains the requested LLM access implementation plan; its proposed transport boundary remains subject to dispatch review.
 
 ## Product boundary
 
@@ -10,7 +10,7 @@ Hammond is a native desktop UI for:
 2. remembering the Hammond project and task context associated with it;
 3. managing versioned orchestrator, worker, and auditor instruction templates;
 4. injecting exactly one selected instruction document per supported agent harness;
-5. tracking tasks, comments, reports, current head SHA, reviewed SHA, approval, merge, and shipped state.
+5. managing nested tasks, comments, and owner-controlled task statuses.
 
 Hammond is not a Git client, GitHub client, provider runtime, remote bridge, or distributed control plane.
 
@@ -23,8 +23,7 @@ flowchart LR
     App --> Docs["Managed harness instructions"]
     Docs --> Agents["Codex / Claude / Kilo"]
     Agents --> Git["Git issues, branches, PRs and reports"]
-    Git --> Evidence["URLs, SHAs and verdicts"]
-    Evidence --> App
+    Git --> Evidence["External delivery records and review"]
 ```
 
 ## Technology direction
@@ -46,7 +45,7 @@ flowchart LR
 - Instruction template
 - Instruction version
 - Project instruction selection
-- Task evidence
+- Project/task reference
 - Local directory binding
 - Lightweight resume session
 
@@ -81,7 +80,7 @@ Each role and provider template is versioned in Supabase. Project and optional t
 
 If an unmanaged target file already exists, Hammond must never silently overwrite it. It asks the owner to import, replace, or cancel.
 
-Stable project instructions may be Git-tracked. Personal active-role state and generated work orders are local by default and may be excluded through `.git/info/exclude` without changing shared `.gitignore`.
+Stable project instructions may be Git-tracked. Personal active-role state is local by default. External repository work orders are an orchestration practice, not app-generated content.
 
 ## Git and branches
 
@@ -90,11 +89,11 @@ Hammond does not inspect or synchronize Git.
 - Same directory, different checked-out branch: same local directory context.
 - Separate Git worktree: separate directory context that can link to the same Hammond project.
 - Agents create branches, commits, PRs, reviews, and Git comments through their own harnesses.
-- Agent reports supply URLs and exact SHAs to Hammond.
+- Agent reports, exact-SHA approvals, and merge authorization remain in external delivery records. Hammond may hold ordinary reference links without deriving approval or readiness.
 
 ## Supabase boundary
 
-Supabase stores projects, tasks, relations, comments, instruction templates and versions, instruction selections, evidence, and activity.
+Durable project memory supports projects, tasks, comments, instruction templates and versions, and instruction selections. Existing schema scaffolding does not make cancelled HAM3-009/010/011 capabilities release requirements.
 
 Supabase does not store absolute local paths. Exposed tables use owner-scoped row-level policies. The desktop app uses a persistent owner identity; there is no multi-user administration or GitHub authentication.
 
@@ -113,4 +112,4 @@ Supabase does not store absolute local paths. Exposed tables use owner-scoped ro
 
 ## First-release boundary
 
-The release is useful when the owner can open a directory, link a project, manage tasks, edit and restore instruction versions, inject or replace the selected harness instructions, resume later, generate worker/auditor work orders, record exact-SHA reports, identify stale approval, and record merge/shipped state.
+The release is useful when the owner can open a directory, link a project, manage nested tasks and comments, edit and restore instruction versions, inject or replace the selected harness instructions, and resume later. HAM3-009/010/011 work-order, approval, and tracker expansion scopes are cancelled. HAM3-014 is planned before integrated release to add local agent reads of project/task context and scoped instructions, plus permitted task updates/comments. The proposed bundled stdio/IPC companion requires the running signed-in app; instruction edits and final delivery statuses remain owner-controlled. See HAM3-014 for the implementation plan and dispatch boundary.

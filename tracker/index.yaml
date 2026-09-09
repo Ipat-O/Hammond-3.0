@@ -218,20 +218,20 @@ tasks:
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-010
     title: Exact-SHA evidence and approval workflow
-    state: in_design
+    state: cancelled
     depends_on: [HAM3-004]
     worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-011
     title: Tracker depth, activity, search, and export
-    state: in_design
-    depends_on: [HAM3-004, HAM3-010]
+    state: cancelled
+    depends_on: [HAM3-004]
     worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-012
     title: Integrated desktop release and human QA
     state: in_design
-    depends_on: [HAM3-007, HAM3-008, HAM3-010, HAM3-011]
+    depends_on: [HAM3-007, HAM3-008, HAM3-014]
     worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-013
@@ -306,3 +306,10 @@ tasks:
     design_decision: D-015 and D-016; D-016 requires task archive to cover the complete descendant subtree
     round_3_approval_status: historical exact-SHA approval at b3cd2653ccc937e58a639d6028dda1837187c019; not merge-valid for the owner-revised D-015 requirements
     added: after the HAM3-004 human check at the owner's request; extends the foundation plan from twelve tasks to thirteen
+  - id: HAM3-014
+    title: LLM access to project memory and instruction scopes
+    state: in_design
+    depends_on: [HAM3-004, HAM3-005, HAM3-006, HAM3-007, HAM3-008, HAM3-013]
+    worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
+    auditor: Kilo Code / DeepSeek V4 Pro
+    design_note: owner-requested implementation plan; local MCP reads and task writes with complete instruction scope/provenance; no dispatch yet
