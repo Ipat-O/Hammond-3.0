@@ -969,3 +969,10 @@
 - Generated types actually differ from official output (33 insertions/18 deletions per report), despite its NOT VERIFIED/non-blocking classification. Keep generation-parity check unresolved before merge unless fixed and re-audited or explicitly accepted by owner. Advisor unrun; low format/latent subscriber/write-before-ACL residuals recorded without new code edits.
 - Avoid conflating worker PG16 sandbox evidence with auditor PG17 stack or correction-only formatting scope with entire PR; report/platform differences do not alone establish false worker provenance.
 - HAM3-014 moves to testing; prepared local HAM3-014-OWNER-TEST.md for approved-head package, scratch local backend, instruction scopes, live writes, dirty draft/conflict, restart and revoke. No broad test reruns, owner pass, hosted migration, ready transition or merge by orchestrator.
+
+## 2026-09-09 — HAM3-014 owner smoke crash; Correction 3 prepared
+
+- Owner reports startup/local loading succeeds, enabling Agent access terminates native app. Read WER: BEX64, c0000409, exception data 7, module offset 0x67f536. WER AppPath is HAM3-014-build-6f92 release exe; that checkout verified clean at 6f92b2e, matching symbols present. Raw WER preserved locally, no public dump upload.
+- Live PR #12 unchanged open/draft. Historical V4 Pro APPROVE retained as evidence but does not supersede failed live owner smoke. HAM3-014 returns to in_development, not ready to merge.
+- Prepared local HAM3-014-CORRECTION-3.md for original Sonnet/branch/head: capture actual native cause, fix bounded enable/runtime integration and truthful listener readiness/failure state, add production-command regression and repeat live Windows app/companion flow. Strong source hypothesis: synchronous Tauri command reaches tokio::spawn outside entered runtime; official Tokio docs confirm that usage panics. No stack-level causal proof yet; ACL/FFI not presumed cause.
+- Orchestrator performed read-only evidence/source intake, no feature fixes, debugger reproduction, hosted changes or merge. New head requires independent V4 Pro assessment and owner smoke; type-generation/advisor residuals remain separate.

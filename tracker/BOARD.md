@@ -14,7 +14,7 @@ None.
 
 ## in_development
 
-None.
+- [HAM3-014](./tasks/HAM3-014.md) — Owner smoke failed: native crash on Agent access enable; Sonnet Correction 3 prepared.
 
 ## in_review
 
@@ -22,7 +22,7 @@ None.
 
 ## testing
 
-- [HAM3-014](./tasks/HAM3-014.md) — V4 Pro APPROVE at 6f92b2e; owner smoke and generated-types check disposition pending.
+None.
 
 ## cancelled
 
