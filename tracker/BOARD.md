@@ -9,6 +9,7 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 - [HAM3-010](./tasks/HAM3-010.md) — Exact-SHA evidence and approval workflow
 - [HAM3-011](./tasks/HAM3-011.md) — Tracker depth, activity, search, and export
 - [HAM3-012](./tasks/HAM3-012.md) — Integrated desktop release and human QA
+- [HAM3-014](./tasks/HAM3-014.md) — LLM access to project memory and instruction scopes
 
 ## ready_for_development
 
@@ -62,6 +63,7 @@ None.
 2. HAM3-002 and HAM3-003
 3. HAM3-004 and HAM3-005
 4. HAM3-006
-5. HAM3-007, HAM3-008, HAM3-009, and HAM3-010
+5. HAM3-007, HAM3-008, HAM3-009 (cancelled), and HAM3-010
 6. HAM3-011
 7. HAM3-012
+8. HAM3-013 and HAM3-014 — added ad hoc after HAM3-004 and HAM3-008 respectively; both depend only on already-merged tasks and are not otherwise constrained by the numbered waves above
