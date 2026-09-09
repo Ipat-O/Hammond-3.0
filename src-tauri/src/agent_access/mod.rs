@@ -1,31 +1,17 @@
-//! HAM3-014 agent access: a bundled MCP stdio companion (`src/bin/hammond_mcp_companion.rs`)
-//! connects to this running, signed-in app over an authenticated Windows named pipe (D-022). See
+//! HAM3-014 agent access: a bundled MCP stdio companion (`../../crates/companion`) connects to
+//! this running, signed-in app over an authenticated Windows named pipe (D-022). See
 //! `docs/AGENT_ACCESS.md` for the full architecture, tool contract, and disclosed verification
 //! limitations (this crate cannot run or package a real Windows build).
 //!
-//! Module map:
-//! - [`types`] / [`credential`] / [`framing`] — wire types, secrets, and frame I/O; no `tauri`
-//!   dependency, shared with the companion binary.
-//! - [`store`] — persistence of the single active connection profile.
-//! - [`core`] — the in-memory source of truth (`AgentAccessCore`) `server::handle_connection`
-//!   validates every call against; independently testable.
-//! - [`server`] — the transport-agnostic protocol: handshake, call loop, permission/generation
-//!   checks. Exercised directly against `tokio::io::duplex()` in tests.
-//! - [`pipe_transport`] — the real Windows named-pipe listener, `cfg(windows)`-gated.
-//! - [`pending`] — the bounded table of calls relayed to the frontend and awaiting
-//!   `agent_access_respond`.
-//! - [`commands`] — the Tauri command surface and the production `Dispatcher` that wires the
-//!   pieces above to a running `AppHandle`.
+//! [`commands`] is the only module that lives here rather than in the shared
+//! `hammond-agent-access` crate (`../../crates/agent-access`): it is the Tauri command surface
+//! and the only piece of agent access that touches `tauri::AppHandle`/`State`. Every other
+//! module — `core`, `credential`, `framing`, `mcp`, `pending`, `pipe_transport`, `server`,
+//! `store` — is re-exported here unchanged from that shared crate, which the standalone
+//! `hammond-mcp-companion` binary also depends on directly, so `commands.rs`'s existing
+//! `super::core::...`-style imports keep working without a second copy of any of this logic.
 
 pub mod commands;
-pub mod core;
-pub mod credential;
-pub mod framing;
-pub mod mcp;
-pub mod pending;
-pub mod pipe_transport;
-pub mod server;
-pub mod store;
-pub mod types;
 
 pub use commands::AgentAccessManaged;
+pub use hammond_agent_access::{core, credential, framing, mcp, pending, pipe_transport, server, store, types};

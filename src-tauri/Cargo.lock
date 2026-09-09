@@ -1424,11 +1424,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "hammond-agent-access"
+version = "0.1.0"
+dependencies = [
+ "rand",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "hammond-desktop"
 version = "0.1.0"
 dependencies = [
  "dunce",
- "rand",
+ "hammond-agent-access",
  "serde",
  "serde_json",
  "tauri",
@@ -1437,7 +1449,15 @@ dependencies = [
  "tauri-plugin-opener",
  "tempfile",
  "tokio",
- "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "hammond-mcp-companion"
+version = "0.1.0"
+dependencies = [
+ "hammond-agent-access",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

@@ -289,7 +289,7 @@ mod tests {
         for tool in result["tools"].as_array().unwrap() {
             let name = tool["name"].as_str().unwrap();
             let read_only = tool["annotations"]["readOnlyHint"].as_bool().unwrap();
-            let expected = !crate::agent_access::types::tool_requires_write(name);
+            let expected = !crate::types::tool_requires_write(name);
             assert_eq!(
                 read_only, expected,
                 "tool {name} has the wrong readOnlyHint"

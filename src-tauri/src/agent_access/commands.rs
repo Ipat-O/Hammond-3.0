@@ -55,7 +55,7 @@ pub struct ConnectionInfoDto {
     pub launch_config: serde_json::Value,
 }
 
-fn to_dto(profile: &AgentAccessProfile) -> ConnectionInfoDto {
+fn to_dto(app: &AppHandle, profile: &AgentAccessProfile) -> ConnectionInfoDto {
     ConnectionInfoDto {
         profile_id: profile.profile_id.clone(),
         project_id: profile.project_id.clone(),
@@ -63,28 +63,56 @@ fn to_dto(profile: &AgentAccessProfile) -> ConnectionInfoDto {
         permission: profile.permission,
         generation: profile.generation,
         created_at: profile.created_at.clone(),
-        launch_config: launch_config_for(&profile.profile_id),
+        launch_config: launch_config_for(app, &profile.profile_id),
     }
 }
 
-/// The copyable MCP host config snippet. `command` assumes the companion binary is installed as
-/// a sibling of Hammond's own executable (wired by the packaging step — see
-/// docs/AGENT_ACCESS.md "Packaging"); if that resolution fails for any reason this falls back to
-/// the bare binary name and the owner is expected to adjust the path themselves. Deliberately
-/// carries only the opaque `profile_id`, never the connection secret (D-022: "Config contains an
-/// opaque profile identifier, not a password/token or project content").
-fn launch_config_for(profile_id: &str) -> serde_json::Value {
-    let companion_name = if cfg!(windows) {
+fn companion_binary_name() -> &'static str {
+    if cfg!(windows) {
         "hammond-mcp-companion.exe"
     } else {
         "hammond-mcp-companion"
-    };
-    let command = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|dir| dir.join(companion_name)))
-        .and_then(|p| p.to_str().map(str::to_owned))
-        .unwrap_or_else(|| companion_name.to_owned());
+    }
+}
 
+/// Resolves where the installed companion binary actually lives. Prefers Tauri's own resource
+/// resolver (`BaseDirectory::Resource`) — the documented, versioned API for locating a resource
+/// `build.rs` staged via `tauri.conf.json`'s `externalBin` (see `build.rs`'s module doc), rather
+/// than this file re-deriving Tauri's resource-directory rules itself. Falls back to "next to
+/// Hammond's own executable" if the resolver errors (`tauri_utils::platform::resource_dir_from`
+/// resolves `BaseDirectory::Resource` to exactly that directory on Windows today, so this
+/// fallback agrees with the primary path whenever both are reachable), and finally to the bare
+/// binary name so the owner can adjust the copied config themselves.
+fn resolve_companion_command(app: &AppHandle) -> String {
+    let name = companion_binary_name();
+    let resolved = app
+        .path()
+        .resolve(name, tauri::path::BaseDirectory::Resource)
+        .ok()
+        .or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
+        });
+    build_companion_command(resolved.as_deref(), name)
+}
+
+fn build_companion_command(resolved: Option<&std::path::Path>, fallback_name: &str) -> String {
+    resolved
+        .and_then(|path| path.to_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| fallback_name.to_owned())
+}
+
+/// The copyable MCP host config snippet. Deliberately carries only the opaque `profile_id`,
+/// never the connection secret (D-022: "Config contains an opaque profile identifier, not a
+/// password/token or project content").
+fn launch_config_for(app: &AppHandle, profile_id: &str) -> serde_json::Value {
+    let command = resolve_companion_command(app);
+    build_launch_config(&command, profile_id)
+}
+
+fn build_launch_config(command: &str, profile_id: &str) -> serde_json::Value {
     serde_json::json!({
         "mcpServers": {
             "hammond": {
@@ -226,7 +254,7 @@ pub fn agent_access_enable(
     state.core.set(Some(profile.clone()));
     start_listener(&app, &state, pipe_name);
 
-    Ok(to_dto(&profile))
+    Ok(to_dto(&app, &profile))
 }
 
 #[tauri::command]
@@ -245,8 +273,11 @@ pub fn agent_access_disable(
 }
 
 #[tauri::command]
-pub fn agent_access_status(state: State<'_, AgentAccessManaged>) -> Option<ConnectionInfoDto> {
-    state.core.current().as_ref().map(to_dto)
+pub fn agent_access_status(
+    app: AppHandle,
+    state: State<'_, AgentAccessManaged>,
+) -> Option<ConnectionInfoDto> {
+    state.core.current().as_ref().map(|profile| to_dto(&app, profile))
 }
 
 /// Mints a fresh generation (and, since a pipe connection is validated against the exact
@@ -256,6 +287,7 @@ pub fn agent_access_status(state: State<'_, AgentAccessManaged>) -> Option<Conne
 /// project/permission.
 #[tauri::command]
 pub fn agent_access_revoke(
+    app: AppHandle,
     state: State<'_, AgentAccessManaged>,
 ) -> Result<ConnectionInfoDto, AgentAccessCommandError> {
     let Some(previous_generation) = state.core.current().map(|p| p.generation) else {
@@ -269,7 +301,7 @@ pub fn agent_access_revoke(
         .expect("checked non-None above");
     state.pending.invalidate_generation(previous_generation);
     let profile = state.core.current().expect("just set above");
-    Ok(to_dto(&profile))
+    Ok(to_dto(&app, &profile))
 }
 
 #[tauri::command]
@@ -342,10 +374,40 @@ mod tests {
 
     #[test]
     fn launch_config_never_embeds_a_secret_and_is_keyed_by_profile_id() {
-        let config = launch_config_for("profile-xyz");
+        let config = build_launch_config("/opt/hammond/hammond-mcp-companion", "profile-xyz");
         let serialized = config.to_string();
         assert!(serialized.contains("profile-xyz"));
         assert!(serialized.contains("hammond-mcp-companion"));
         assert!(!serialized.to_lowercase().contains("secret"));
+    }
+
+    #[test]
+    fn launch_config_command_preserves_spaces_in_a_windows_install_path() {
+        // A real install-directory shape: Windows installers commonly land under
+        // `C:\Program Files\...`, and the copied command must round-trip through JSON exactly —
+        // no truncation at the space, no shell-style escaping that would corrupt it.
+        let command = r"C:\Program Files\Hammond\hammond-mcp-companion.exe";
+        let config = build_launch_config(command, "profile-xyz");
+        assert_eq!(
+            config["mcpServers"]["hammond"]["command"],
+            serde_json::Value::String(command.to_owned())
+        );
+    }
+
+    #[test]
+    fn companion_command_falls_back_to_the_bare_name_when_nothing_resolves() {
+        assert_eq!(
+            build_companion_command(None, "hammond-mcp-companion.exe"),
+            "hammond-mcp-companion.exe"
+        );
+    }
+
+    #[test]
+    fn companion_command_prefers_a_resolved_path_with_spaces_over_the_bare_name() {
+        let resolved = std::path::Path::new(r"C:\Program Files\Hammond\hammond-mcp-companion.exe");
+        assert_eq!(
+            build_companion_command(Some(resolved), "hammond-mcp-companion.exe"),
+            r"C:\Program Files\Hammond\hammond-mcp-companion.exe"
+        );
     }
 }

@@ -34,8 +34,8 @@ mod windows_impl {
     use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 
-    use crate::agent_access::core::AgentAccessCore;
-    use crate::agent_access::server::{handle_connection, Dispatcher};
+    use crate::core::AgentAccessCore;
+    use crate::server::{handle_connection, Dispatcher};
 
     #[derive(Debug)]
     pub enum ListenerError {
@@ -177,8 +177,8 @@ mod windows_impl {
 mod unsupported {
     use std::sync::Arc;
 
-    use crate::agent_access::core::AgentAccessCore;
-    use crate::agent_access::server::Dispatcher;
+    use crate::core::AgentAccessCore;
+    use crate::server::Dispatcher;
 
     #[derive(Debug)]
     pub struct ListenerError(pub String);

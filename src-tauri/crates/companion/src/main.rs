@@ -1,15 +1,18 @@
 //! The bundled MCP stdio companion (D-022): a small, standalone process an agent host (Claude
 //! Desktop, Codex, etc.) launches directly. It speaks MCP JSON-RPC 2.0 over stdio to the host and
 //! relays `tools/call` over an authenticated Windows named pipe to the running, signed-in
-//! Hammond app; `initialize` and `tools/list` are answered locally (see `agent_access::mcp`).
+//! Hammond app; `initialize` and `tools/list` are answered locally (see `hammond_agent_access::mcp`).
 //!
-//! Deliberately depends only on `hammond_lib::agent_access::{framing, mcp, credential, types}` —
-//! never on `tauri` — so this binary starts instantly and needs no webview/GTK/WebView2 runtime
-//! of its own. See docs/AGENT_ACCESS.md "Packaging" for how this binary reaches an installed
-//! Hammond's side-by-side directory, and "Verification status" for what has not been run against
-//! a real Windows named pipe.
+//! This is its own Cargo package (a workspace member of `src-tauri`, not a `[[bin]]` inside the
+//! `hammond-desktop` package) so it has no build script and no `tauri` dependency: it depends
+//! only on the shared `hammond-agent-access` library crate (`../agent-access`), which also holds
+//! everything `hammond-desktop`'s own `agent_access` module re-exports. Splitting it out this way
+//! is what lets `hammond-desktop`'s build script build and stage this binary as a Tauri
+//! `externalBin` sidecar before Tauri's own resource validation runs — see
+//! `src-tauri/build.rs` and docs/AGENT_ACCESS.md "Packaging" for why that ordering matters and
+//! "Verification status" for what has not been run against a real Windows named pipe.
 
-use hammond_lib::agent_access::{framing, mcp, types};
+use hammond_agent_access::{framing, mcp, types};
 use tokio::io::BufReader;
 
 const APP_IDENTIFIER: &str = "com.ipat-o.hammond";
@@ -156,7 +159,7 @@ async fn handle_tools_call(
 /// module doc for the same boundary on the server side).
 #[cfg(windows)]
 mod pipe_client {
-    use hammond_lib::agent_access::{credential, framing, pipe_transport, store, types};
+    use hammond_agent_access::{credential, framing, pipe_transport, store, types};
     use tokio::io::{AsyncRead, AsyncWrite, BufReader, ReadHalf, WriteHalf};
     use tokio::net::windows::named_pipe::NamedPipeClient;
 

@@ -5,6 +5,15 @@ description = "Hammond desktop application"
 authors = ["Ipat-O"]
 edition = "2021"
 
+# `hammond-desktop` doubles as the workspace root so `src-tauri/Cargo.toml` stays the path every
+# existing tool (Tauri CLI, `cargo check --manifest-path src-tauri/Cargo.toml`, CI) already
+# expects, while `crates/companion` — the bundled MCP stdio companion (D-022) — and its shared
+# `crates/agent-access` library get their own packages with no build script and no `tauri`
+# dependency. `build.rs` builds and stages the companion sidecar into `binaries/` before Tauri's
+# own resource validation runs; see `build.rs` and docs/AGENT_ACCESS.md "Packaging".
+[workspace]
+members = ["crates/agent-access", "crates/companion"]
+
 [lib]
 name = "hammond_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -16,26 +25,15 @@ tauri-build = { version = "2", features = [] }
 name = "hammond-desktop"
 path = "src/main.rs"
 
-[[bin]]
-name = "hammond-mcp-companion"
-path = "src/bin/hammond_mcp_companion.rs"
-
 [dependencies]
 dunce = "1"
-rand = "0.8"
+hammond-agent-access = { path = "crates/agent-access" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tokio = { version = "1", features = ["sync", "net", "rt", "rt-multi-thread", "io-util", "io-std", "time", "macros"] }
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
-  "Win32_Foundation",
-  "Win32_Security",
-  "Win32_Security_Authorization",
-] }
 
 [dev-dependencies]
 tempfile = "3"

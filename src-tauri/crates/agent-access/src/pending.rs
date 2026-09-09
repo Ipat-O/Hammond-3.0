@@ -93,7 +93,7 @@ impl PendingRequests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_access::types::MAX_PENDING_REQUESTS;
+    use crate::types::MAX_PENDING_REQUESTS;
 
     #[tokio::test]
     async fn resolve_delivers_the_outcome_to_the_matching_receiver() {

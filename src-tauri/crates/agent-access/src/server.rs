@@ -222,7 +222,7 @@ async fn send<W: AsyncWrite + Unpin>(writer: &mut W, frame: ServerFrame) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_access::store::AgentAccessProfile;
+    use crate::store::AgentAccessProfile;
     use tokio::io::{duplex, AsyncWriteExt};
 
     fn profile(generation: u64, permission: Permission) -> AgentAccessProfile {
