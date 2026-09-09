@@ -14,11 +14,11 @@ None.
 
 ## in_development
 
-- [HAM3-014](./tasks/HAM3-014.md) — PR #12 initial intake; Sonnet completion packet for bundled companion delivery before independent audit.
+None.
 
 ## in_review
 
-None.
+- [HAM3-014](./tasks/HAM3-014.md) — PR #12 Correction 1 intake; DeepSeek full-PR audit packet prepared at 95b6c78.
 
 ## testing
 
