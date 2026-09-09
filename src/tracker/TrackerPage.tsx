@@ -14,6 +14,7 @@ import type { InstructionStudioHandle } from '../instructions/InstructionStudio'
 import { INSTRUCTION_ROLES } from '../instructions/types';
 import type { ActiveVersionIds, InstructionRole, ProviderFamily } from '../instructions/types';
 import { useFocusTrap } from '../instructions/useFocusTrap';
+import { AgentAccessPanel } from '../agentAccess/AgentAccessPanel';
 import { DirectoryContextPanel } from '../settings/DirectoryContextPanel';
 import { labelFromPath } from '../settings/directoryContextManager';
 import type { ResumeSelectionPatch } from '../settings/directoryContextManager';
@@ -2768,6 +2769,7 @@ export function TrackerPage({
                   beforeChange={guardedNav}
                 />
               )}
+              <AgentAccessPanel projectId={selectedProject.id} projectName={selectedProject.name} />
               <section className="outliner-section" aria-labelledby="outliner-heading">
                 <div className="section-heading">
                   <div>

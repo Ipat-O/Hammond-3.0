@@ -794,6 +794,52 @@ label {
   gap: 6px;
 }
 
+.agent-access-section {
+  margin-top: 20px;
+  border: 1px solid rgba(145, 162, 214, 0.16);
+  border-radius: 15px;
+  background: rgba(16, 23, 46, 0.64);
+  padding: 21px 22px;
+}
+
+.agent-access-status {
+  margin: 4px 0 0;
+  color: #cbd4e9;
+  font-size: 11px;
+}
+
+.agent-access-permission {
+  display: grid;
+  gap: 8px;
+  margin: 15px 0;
+  border: none;
+  padding: 0;
+}
+
+.agent-access-permission legend {
+  margin-bottom: 4px;
+  color: #8e9bb9;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.agent-access-permission label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #cbd4e9;
+  font-size: 11px;
+}
+
+.agent-access-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
 .board-section {
   margin-top: 30px;
 }
