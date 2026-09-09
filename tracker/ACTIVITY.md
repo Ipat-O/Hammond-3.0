@@ -895,3 +895,9 @@
 - Recorded owner's explicit scope override: one lifecycle fix, no worker checks, bounded follow-up only. Delivered head 9a3cdb3763a34c60556cfa088c79e43d90aefef2 directly follows b2828a8 per verified published audit; one effect hunk resets mount flag at setup, cleanup/dependencies unchanged.
 - Verified live open/draft mergeable PR #11 head matches round-5 APPROVE https://github.com/Ipat-O/Hammond-3.0/pull/11#issuecomment-5590107743. Two targeted StrictMode recovery/unmount probes passed, restored/removed. Scope is Correction 4 only, not fresh full-PR audit; earlier broad evidence and deferrals retained. No new broad checks run by orchestrator.
 - HAM3-009 moved to testing. Prepared device-local tracker/work-orders/HAM3-009-OWNER-TEST.md for short real-app smoke. No ready/merge action; owner smoke/authorization pending.
+
+## 2026-09-09 — Owner cancelled HAM3-009; post-HAM3-008 app retained
+
+- Owner requested reverting to after HAM3-008 because in-app work orders are no longer wanted. Verified dev application source matches HAM3-008 merge 379c2cf exactly; subsequent dev changes were planning only. No source revert/history reset needed.
+- Closed PR #11 unmerged, retaining implementation branch and historical evidence. HAM3-009 cancelled; removed it from HAM3-011/012 dependencies and release smoke scope. Decision D-018 supersedes in-app work-order product requirements.
+- Launching owner dev to restore the HAM3-008 application experience. Existing local QA data and implementation checkouts preserved; no cleanup/deletion or rewriting of history implied.

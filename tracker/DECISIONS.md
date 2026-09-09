@@ -127,3 +127,7 @@ For the selected role it presents one primary view: “Worker instructions for C
 Ordinary persistence uses **Save changes** while continuing to create immutable versions automatically. History appears in a drawer or modal, labels the active version and restore provenance, and uses **Restore this version** with a one-time explanation that restoration creates a new version and keeps all history. The ordinary UI does not expose ambiguous “Select” versus “Restore” actions.
 
 The preview-only work-order field is labeled **Test a task-specific instruction**, with explicit text that it is preview-only and will not be saved. These rules replace HAM3-007's earlier equal role/provider-tab emphasis; the layered administration view remains available only as an advanced workflow.
+
+## D-018 — Remove in-app work orders
+
+On 2026-09-09 the owner cancelled HAM3-009 and chose the post-HAM3-008 app. PR #11 is closed unmerged; its branch/history are retained for reference. Work-order generation, dispatch snapshots and returned-report UI from HAM3-009 are not part of the product/release. External repository work orders remain an orchestration practice. HAM3-011/012 no longer depend on HAM3-009; their remaining scope and HAM3-010 are not otherwise cancelled. This supersedes earlier product statements requiring in-app packet generation.

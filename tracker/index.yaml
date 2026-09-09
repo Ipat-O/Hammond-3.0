@@ -212,7 +212,7 @@ tasks:
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-009
     title: Work-order generation and dispatch records
-    state: in_design
+    state: cancelled
     depends_on: [HAM3-004, HAM3-005]
     worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
@@ -225,13 +225,13 @@ tasks:
   - id: HAM3-011
     title: Tracker depth, activity, search, and export
     state: in_design
-    depends_on: [HAM3-004, HAM3-009, HAM3-010]
+    depends_on: [HAM3-004, HAM3-010]
     worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-012
     title: Integrated desktop release and human QA
     state: in_design
-    depends_on: [HAM3-007, HAM3-008, HAM3-009, HAM3-010, HAM3-011]
+    depends_on: [HAM3-007, HAM3-008, HAM3-010, HAM3-011]
     worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-013

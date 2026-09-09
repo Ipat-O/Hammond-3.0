@@ -24,8 +24,11 @@ None.
 
 ## testing
 
-- [HAM3-009](./tasks/HAM3-009.md) — Work-order generation and dispatch records
-  PR #11 at `9a3cdb3`; bounded Correction 4 APPROVE verified, owner smoke pending.
+None.
+
+## cancelled
+
+- [HAM3-009](./tasks/HAM3-009.md) — Removed from product scope by owner; PR #11 closed unmerged.
 
 ## merged
 
