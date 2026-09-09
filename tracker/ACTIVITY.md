@@ -961,3 +961,11 @@
 - Worker reports F1 Windows suffix, F2 notification/UI reconciliation, F3 instruction-version scope, F4 framed full-payload/target/archive retry identity, and F6 explicit Windows credential DACL. Attributed verification: 119 Rust, 448 frontend, 118 pgTAP on native PG16; official generated types/stack and real Windows/pipe/ACL/installed/MCP execution remain unverified.
 - Prepared local HAM3-014-AUDIT-2.md for full new-head review with an explicit actual V4 Pro identity gate, separate F1-F4/F6 dispositions, F5 retained observation, and current-head runtime/database evidence. Existing CHANGES at 95b6c78 is historical; no new-head verdict exists.
 - HAM3-014 moves to in_review. No orchestrator feature tests/fixes, owner smoke, ready transition, hosted changes or merge.
+
+## 2026-09-09 — HAM3-014 V4 Pro approval; owner testing
+
+- Verified published round-2 report 5603003352 and live open/draft mergeable PR #12 at unchanged 6f92b2e248ee87d7118e7f80638523f0d3ce9b65. Assigned V4 Pro identity verified. F1-F4/F6 CLOSED, F5 retained; exact-head APPROVE recorded.
+- Auditor independently reports native Rust 116, frontend 448, official local PG17.6.1 pgTAP 118, typecheck/lint, real Windows credential DACL/pipe and staged companion stdio. Signed-in app/installed current-head/host workflow and owner smoke not performed. Prior installer evidence remains old-head.
+- Generated types actually differ from official output (33 insertions/18 deletions per report), despite its NOT VERIFIED/non-blocking classification. Keep generation-parity check unresolved before merge unless fixed and re-audited or explicitly accepted by owner. Advisor unrun; low format/latent subscriber/write-before-ACL residuals recorded without new code edits.
+- Avoid conflating worker PG16 sandbox evidence with auditor PG17 stack or correction-only formatting scope with entire PR; report/platform differences do not alone establish false worker provenance.
+- HAM3-014 moves to testing; prepared local HAM3-014-OWNER-TEST.md for approved-head package, scratch local backend, instruction scopes, live writes, dirty draft/conflict, restart and revoke. No broad test reruns, owner pass, hosted migration, ready transition or merge by orchestrator.
