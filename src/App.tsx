@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 
+import { registerAgentAccessFacadeHandler } from './agentAccess/facadeHandler';
 import { nativeFilesystem, nativeHarness, nativeLocalSettings } from './api/native';
 import {
   ownerAuth,
@@ -183,6 +184,12 @@ function App({ services, initialSession }: AppProps) {
       data.subscription.unsubscribe();
     };
   }, [activeServices, initialSession]);
+
+  // Registered once, here at the app root — independent of whether the auth screen or
+  // TrackerPage is currently mounted, so an agent connection keeps answering across navigation
+  // and while signed out (with a clear `signed_out` error, rather than silently having nowhere to
+  // land) instead of only while a particular page happens to be showing.
+  useEffect(() => registerAgentAccessFacadeHandler(activeServices), [activeServices]);
 
   if (authLoading || session === undefined) {
     return <main className="loading-shell">Restoring your Hammond workspace…</main>;

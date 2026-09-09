@@ -119,6 +119,18 @@ export class InstructionsService {
     return this.repo.getSelection(params);
   }
 
+  /** Raw version rows (id, templateId, ownerId, version number, content, provenance) for
+   * exact-selection reporting — e.g. the agent-access facade's `get_instructions`, which needs
+   * each layer's own version metadata, not just composed content. `ownerId === null` marks a base
+   * (seeded) version; a non-null `ownerId` marks owner-authored content. */
+  async getVersion(id: string): Promise<InstructionVersion> {
+    return this.repo.getVersion(id);
+  }
+
+  async getVersionsByIds(ids: readonly string[]): Promise<InstructionVersion[]> {
+    return this.repo.getVersionsByIds(ids);
+  }
+
   /** Throws `missing_selection` instead of returning null, for callers that require an active selection. */
   async requireSelection(params: {
     projectId: string;
