@@ -309,7 +309,7 @@ tasks:
     added: after the HAM3-004 human check at the owner's request; extends the foundation plan from twelve tasks to thirteen
   - id: HAM3-014
     title: LLM access to project memory and instruction scopes
-    state: in_review
+    state: in_development
     depends_on: [HAM3-004, HAM3-005, HAM3-006, HAM3-007, HAM3-008, HAM3-013]
     worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
@@ -323,6 +323,11 @@ tasks:
     pull_request: https://github.com/Ipat-O/Hammond-3.0/pull/12
     worker_report: https://github.com/Ipat-O/Hammond-3.0/pull/12#issuecomment-5599016149
     worker_report_provenance: published Correction 1 top-level report verified at delivered head
-    correction_packet: tracker/work-orders/HAM3-014-CORRECTION-1.md (device-local)
+    correction_packet: tracker/work-orders/HAM3-014-CORRECTION-2.md (device-local)
     audit_packet: tracker/work-orders/HAM3-014-AUDIT-1.md (device-local)
-    outstanding: independent full-PR audit including packaging closure; official Supabase generated types and checks; real Windows pipe/package/host evidence; owner smoke
+    audit_verdict: CHANGES
+    audited_head_sha: 95b6c78451e0495efaf59bb0c72de7409c2b833a
+    audit_report: https://github.com/Ipat-O/Hammond-3.0/pull/12#issuecomment-5599404930
+    actual_auditor_identity: DeepSeek / Kilo Code / deepseek/deepseek-v4-flash-vision-exp
+    auditor_identity_deviation: actual model differs from assigned deepseek-v4-pro; no owner waiver recorded; retain findings, next audit remains assigned to V4 Pro
+    outstanding: F1-F4 corrections; credential protection evidence; official Supabase generated types/checks; real Windows pipe/ACL/installed execution/MCP host evidence; new-head independent audit; owner smoke
