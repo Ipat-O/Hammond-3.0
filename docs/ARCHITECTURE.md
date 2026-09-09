@@ -1,6 +1,6 @@
 # Hammond 3.0 Architecture
 
-Status: product direction updated 2026-09-09 by D-018 through D-022; see the task board for implementation status. HAM3-014 contains the requested LLM access implementation plan; D-022 settles its bundled stdio/named-pipe transport boundary for implementation.
+Status: product direction updated 2026-09-09 by D-018 through D-022; see the task board for implementation status. HAM3-014 implements local agent access per D-022's bundled stdio/named-pipe transport boundary — see `docs/AGENT_ACCESS.md` for the tool contract and verification status (packaging into a real Windows installer, and any true multi-user/multi-machine testing, remain pending a real Windows host).
 
 ## Product boundary
 
@@ -112,4 +112,4 @@ Supabase does not store absolute local paths. Exposed tables use owner-scoped ro
 
 ## First-release boundary
 
-The release is useful when the owner can open a directory, link a project, manage nested tasks and comments, edit and restore instruction versions, inject or replace the selected harness instructions, and resume later. HAM3-009/010/011 work-order, approval, and tracker expansion scopes are cancelled. HAM3-014 is planned before integrated release to add local agent reads of project/task context and scoped instructions, plus permitted task updates/comments. The proposed bundled stdio/IPC companion requires the running signed-in app; instruction edits and final delivery statuses remain owner-controlled. See HAM3-014 for the implementation plan and dispatch boundary.
+The release is useful when the owner can open a directory, link a project, manage nested tasks and comments, edit and restore instruction versions, inject or replace the selected harness instructions, and resume later. HAM3-009/010/011 work-order, approval, and tracker expansion scopes are cancelled. HAM3-014 adds local agent reads of project/task context and scoped instructions, plus permitted task creates/updates/comments, through the bundled stdio/IPC companion described in `docs/AGENT_ACCESS.md`; it requires the running signed-in app. Instruction edits and final delivery statuses remain owner-controlled. Real Windows named-pipe/installer verification is still pending — see `docs/AGENT_ACCESS.md`'s verification status before treating this as owner-tested.

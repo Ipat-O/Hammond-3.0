@@ -51,3 +51,14 @@ React UI
 The foundation does not add a browser server, bridge, provider launcher, Git integration, or
 background worker. Vite exists only as the development/build input for the embedded Tauri webview;
 the packaged app loads its built frontend directly.
+
+## Agent access (`src/agentAccess/`, `src-tauri/src/agent_access/`) — HAM3-014
+
+The one deliberate exception to "native commands stay pure request/response, no second data
+layer": the named-pipe server in `src-tauri/src/agent_access/` relays a validated request
+description to the frontend via a Tauri event and waits for a response, rather than answering it
+itself. `src/agentAccess/facade.ts` is where a relayed call actually executes, over the same
+`TrackerServices` (and therefore the same live Supabase session and RLS) every other screen uses —
+it must never grow its own Supabase client, its own copy of `composeInstructions`, or any other
+parallel implementation of logic that already lives in `src/instructions/`, `src/assignments/`, or
+`src/data/`. See `docs/AGENT_ACCESS.md` for the full architecture and trust boundary.

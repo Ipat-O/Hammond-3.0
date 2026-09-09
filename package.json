@@ -21,7 +21,8 @@
     "supabase:types:check": "npm run supabase:types && git diff --exit-code -- src/data/database.types.ts",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "companion:build": "cargo build --release --manifest-path src-tauri/Cargo.toml --bin hammond-mcp-companion"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.112.3",
