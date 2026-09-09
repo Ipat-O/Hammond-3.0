@@ -1,3 +1,4 @@
+pub mod agent_access;
 mod commands;
 mod fs_commands;
 mod fs_guard;
@@ -13,6 +14,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(local_settings::LocalSettingsState::default())
+        .manage(agent_access::AgentAccessManaged::default())
         .invoke_handler(tauri::generate_handler![
             commands::get_app_info,
             fs_commands::select_directory,
@@ -29,6 +31,11 @@ pub fn run() {
             harness_commands::harness_inject,
             harness_commands::harness_remove,
             harness_commands::harness_render_preview,
+            agent_access::commands::agent_access_enable,
+            agent_access::commands::agent_access_disable,
+            agent_access::commands::agent_access_status,
+            agent_access::commands::agent_access_revoke,
+            agent_access::commands::agent_access_respond,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hammond");

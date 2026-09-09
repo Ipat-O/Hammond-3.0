@@ -12,14 +12,30 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[[bin]]
+name = "hammond-desktop"
+path = "src/main.rs"
+
+[[bin]]
+name = "hammond-mcp-companion"
+path = "src/bin/hammond_mcp_companion.rs"
+
 [dependencies]
 dunce = "1"
+rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
-tokio = { version = "1", features = ["sync"] }
+tokio = { version = "1", features = ["sync", "net", "rt", "rt-multi-thread", "io-util", "io-std", "time", "macros"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+] }
 
 [dev-dependencies]
 tempfile = "3"
