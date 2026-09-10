@@ -303,3 +303,27 @@ export class DirectoryContextManager {
     return this.services.filesystem.selectDirectory();
   }
 }
+
+/**
+ * One `DirectoryContextManager` per distinct `DirectoryContextServices` object identity, shared
+ * across every consumer (the UI's `useDirectoryContextState` and the agent-access operation
+ * registry alike). Two independent manager instances wrapping the same underlying settings store
+ * would each keep their own `latestState`/`writeChain` cache, so a mutation through one would not
+ * be visible to the other until its next `loadState()` — and a mutation computed from that stale
+ * cache could silently drop a concurrent change the other instance already committed. Since
+ * `createDefaultServices()` builds the app's `directoryContext` ports exactly once per session,
+ * keying on that object's identity is sufficient to give the whole app exactly one authoritative
+ * manager without threading it through every constructor explicitly.
+ */
+const sharedManagers = new WeakMap<DirectoryContextServices, DirectoryContextManager>();
+
+export function getSharedDirectoryContextManager(
+  services: DirectoryContextServices,
+): DirectoryContextManager {
+  let manager = sharedManagers.get(services);
+  if (!manager) {
+    manager = new DirectoryContextManager(services);
+    sharedManagers.set(services, manager);
+  }
+  return manager;
+}

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { AgentAccessPanel } from '../agentAccess/AgentAccessPanel';
 import {
   assertNoParentCycle,
   getTaskAncestorIds,
@@ -1011,6 +1012,9 @@ export function TrackerPage({
   // still-null because the saved task turned out invalid) and so would not otherwise re-render.
   const [taskResumePendingProjectId, setTaskResumePendingProjectId] = useState<string | null>(null);
   const [primaryView, setPrimaryView] = useState<PrimaryView>('home');
+  // Deliberately not part of `PrimaryView`/`ResumeScreen`: this is a transient overlay, never a
+  // device-local resume position, so it never needs to persist across a relaunch.
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -2538,7 +2542,9 @@ export function TrackerPage({
           >
             <span className="nav-icon" aria-hidden="true">▤</span>Instructions
           </button>
-          <span className="nav-item nav-item-muted"><span className="nav-icon" aria-hidden="true">⚙</span>Settings</span>
+          <button type="button" className="nav-item" onClick={() => setSettingsOpen(true)}>
+            <span className="nav-icon" aria-hidden="true">⚙</span>Settings
+          </button>
         </nav>
         <button
           className="button button-secondary sidebar-open-directory"
@@ -3079,6 +3085,7 @@ export function TrackerPage({
           </div>
         </div>
       )}
+      {settingsOpen && <AgentAccessPanel onClose={() => setSettingsOpen(false)} />}
     </main>
   );
 }

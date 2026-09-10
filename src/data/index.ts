@@ -10,6 +10,13 @@ export {
   type TaskStatus,
 } from './taskValidation';
 export { ProjectMemoryRepository, ProjectRepository, TaskRepository } from './repositories';
+export {
+  clampLimit,
+  DEFAULT_PAGE_LIMIT,
+  MAX_PAGE_LIMIT,
+  type Page,
+  type PageParams,
+} from './pagination';
 export { getTaskAncestorIds, getTaskSubtreeIds } from './taskSubtree';
 export { SupabaseInstructionRepository } from './instructionsRepository';
 export { SupabaseAssignmentRepository } from './assignmentsRepository';

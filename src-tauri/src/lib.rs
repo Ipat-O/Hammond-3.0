@@ -1,3 +1,4 @@
+mod agent_access;
 mod commands;
 mod fs_commands;
 mod fs_guard;
@@ -13,6 +14,19 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(local_settings::LocalSettingsState::default())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            // Binds the local-API listener and installs `AgentAccessState` before the event loop
+            // starts, so the local API and its credentials file exist the moment Hammond is
+            // running — never gated behind the owner navigating to a particular screen. This
+            // blocks startup only long enough for a TCP bind and a small file read/write.
+            if let Err(error) =
+                tauri::async_runtime::block_on(agent_access::server::bootstrap(handle))
+            {
+                eprintln!("failed to start local agent-access API: {error}");
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::get_app_info,
             fs_commands::select_directory,
@@ -29,6 +43,13 @@ pub fn run() {
             harness_commands::harness_inject,
             harness_commands::harness_remove,
             harness_commands::harness_render_preview,
+            agent_access::commands::agent_access_respond,
+            agent_access::commands::agent_access_disconnect,
+            agent_access::commands::agent_access_set_signed_in,
+            agent_access::commands::agent_access_get_status,
+            agent_access::commands::agent_access_reveal_token,
+            agent_access::commands::agent_access_rotate_token,
+            agent_access::commands::agent_access_revoke_token,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hammond");

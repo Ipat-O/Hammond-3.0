@@ -3,6 +3,14 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseClient } from './client';
 import type { Database } from './database.types';
 import { assertNoAbsoluteLocalPaths } from './pathGuard';
+import {
+  clampLimit,
+  decodeCursor,
+  keysetPredicate,
+  toPage,
+  type Page,
+  type PageParams,
+} from './pagination';
 import { getTaskSubtreeIds } from './taskSubtree';
 import { assertNoParentCycle, assertValidTaskStatus } from './taskValidation';
 
@@ -26,6 +34,28 @@ export class ProjectRepository {
     if (!options.includeArchived) query = query.is('archived_at', null);
     return dataOrThrow(await query);
   }
+
+  /** Bounded, deterministically-ordered page of projects (`created_at`/`id` keyset — never `updated_at`, which can change out from under a page boundary). */
+  async listPage(
+    options: { includeArchived?: boolean } & PageParams = {},
+  ): Promise<Page<Tables['projects']['Row']>> {
+    const limit = clampLimit(options.limit);
+    const after = decodeCursor(options.cursor);
+    let query = this.client
+      .from('projects')
+      .select('*')
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true });
+    if (!options.includeArchived) query = query.is('archived_at', null);
+    if (after) query = query.or(keysetPredicate(after, true));
+    const rows = dataOrThrow(await query.limit(limit + 1));
+    return toPage(rows, limit);
+  }
+
+  async getById(id: string) {
+    return dataOrThrow(await this.client.from('projects').select('*').eq('id', id).single());
+  }
+
   async create(input: ProjectInsert) {
     assertNoAbsoluteLocalPaths(input);
     return dataOrThrow(await this.client.from('projects').insert(input).select().single());
@@ -59,6 +89,30 @@ export class TaskRepository {
     if (!options.includeArchived) query = query.is('archived_at', null);
     return dataOrThrow(await query);
   }
+
+  /** Bounded, deterministically-ordered (`created_at`, `id`) page of one project's tasks. */
+  async listPage(
+    projectId: string,
+    options: { includeArchived?: boolean } & PageParams = {},
+  ): Promise<Page<Tables['tasks']['Row']>> {
+    const limit = clampLimit(options.limit);
+    const after = decodeCursor(options.cursor);
+    let query = this.client
+      .from('tasks')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true });
+    if (!options.includeArchived) query = query.is('archived_at', null);
+    if (after) query = query.or(keysetPredicate(after, true));
+    const rows = dataOrThrow(await query.limit(limit + 1));
+    return toPage(rows, limit);
+  }
+
+  async getById(id: string) {
+    return dataOrThrow(await this.client.from('tasks').select('*').eq('id', id).single());
+  }
+
   async create(input: TaskInsert) {
     assertNoAbsoluteLocalPaths(input);
     if (input.status !== undefined) assertValidTaskStatus(input.status);
@@ -122,6 +176,34 @@ export class ProjectMemoryRepository {
       await this.client.from('comments').select('*').eq('task_id', taskId).order('created_at'),
     );
   }
+
+  /**
+   * Bounded, deterministically-ordered (`created_at`, `id`) page of one task's comments, oldest
+   * first. The `id` tiebreaker is what keeps a page boundary landing between two comments saved
+   * in the same instant from ever dropping or repeating one.
+   */
+  async listCommentsPage(
+    taskId: string,
+    options: PageParams = {},
+  ): Promise<Page<Tables['comments']['Row']>> {
+    const limit = clampLimit(options.limit);
+    const after = decodeCursor(options.cursor);
+    let query = this.client
+      .from('comments')
+      .select('*')
+      .eq('task_id', taskId)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true });
+    if (after) query = query.or(keysetPredicate(after, true));
+    const rows = dataOrThrow(await query.limit(limit + 1));
+    return toPage(rows, limit);
+  }
+
+  /** One comment by id, scoped to the caller's own rows by RLS — a foreign or unknown id fails identically ("not found"), never distinguishably. */
+  async getCommentById(id: string) {
+    return dataOrThrow(await this.client.from('comments').select('*').eq('id', id).single());
+  }
+
   /** Newest-first comments across the whole project, for a project-level recent feed (never task-scoped). */
   async listRecentComments(projectId: string, limit = 5) {
     return dataOrThrow(
@@ -133,6 +215,25 @@ export class ProjectMemoryRepository {
         .limit(limit),
     );
   }
+
+  /** Bounded, deterministically-ordered (`created_at` desc, `id` desc) page of a project's comment feed. */
+  async listRecentCommentsPage(
+    projectId: string,
+    options: PageParams = {},
+  ): Promise<Page<Tables['comments']['Row']>> {
+    const limit = clampLimit(options.limit);
+    const after = decodeCursor(options.cursor);
+    let query = this.client
+      .from('comments')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false });
+    if (after) query = query.or(keysetPredicate(after, false));
+    const rows = dataOrThrow(await query.limit(limit + 1));
+    return toPage(rows, limit);
+  }
+
   async addComment(input: Tables['comments']['Insert']) {
     assertNoAbsoluteLocalPaths(input);
     return dataOrThrow(await this.client.from('comments').insert(input).select().single());
@@ -140,10 +241,35 @@ export class ProjectMemoryRepository {
   async addRelation(input: Tables['task_relations']['Insert']) {
     return dataOrThrow(await this.client.from('task_relations').insert(input).select().single());
   }
+
+  /** Every relation touching `taskId` from either side (as `task_id` or `related_task_id`), oldest first. */
+  async listRelations(taskId: string) {
+    return dataOrThrow(
+      await this.client
+        .from('task_relations')
+        .select('*')
+        .or(`task_id.eq.${taskId},related_task_id.eq.${taskId}`)
+        .order('created_at'),
+    );
+  }
+
   async addEvidence(input: Tables['task_evidence']['Insert']) {
     assertNoAbsoluteLocalPaths(input);
     return dataOrThrow(await this.client.from('task_evidence').insert(input).select().single());
   }
+
+  /** Newest-first evidence for one task (never mixed with the rest of the project's). */
+  async listEvidenceForTask(taskId: string, limit = 20) {
+    return dataOrThrow(
+      await this.client
+        .from('task_evidence')
+        .select('*')
+        .eq('task_id', taskId)
+        .order('created_at', { ascending: false })
+        .limit(limit),
+    );
+  }
+
   /** Newest-first evidence across the whole project, for a project-level recent summary. */
   async listEvidence(projectId: string, limit = 5) {
     return dataOrThrow(
@@ -155,6 +281,25 @@ export class ProjectMemoryRepository {
         .limit(limit),
     );
   }
+
+  /** Bounded, deterministically-ordered (`created_at` desc, `id` desc) page of a project's evidence feed. */
+  async listEvidencePage(
+    projectId: string,
+    options: PageParams = {},
+  ): Promise<Page<Tables['task_evidence']['Row']>> {
+    const limit = clampLimit(options.limit);
+    const after = decodeCursor(options.cursor);
+    let query = this.client
+      .from('task_evidence')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false });
+    if (after) query = query.or(keysetPredicate(after, false));
+    const rows = dataOrThrow(await query.limit(limit + 1));
+    return toPage(rows, limit);
+  }
+
   async recordActivity(input: Tables['activity']['Insert']) {
     assertNoAbsoluteLocalPaths(input);
     return dataOrThrow(await this.client.from('activity').insert(input).select().single());
@@ -167,5 +312,35 @@ export class ProjectMemoryRepository {
       .order('created_at', { ascending: false });
     if (options.limit !== undefined) query = query.limit(options.limit);
     return dataOrThrow(await query);
+  }
+
+  /** Newest-first activity recorded against one specific task. */
+  async listActivityForTask(taskId: string, limit = 20) {
+    return dataOrThrow(
+      await this.client
+        .from('activity')
+        .select('*')
+        .eq('task_id', taskId)
+        .order('created_at', { ascending: false })
+        .limit(limit),
+    );
+  }
+
+  /** Bounded, deterministically-ordered (`created_at` desc, `id` desc) page of a project's activity feed. */
+  async listActivityPage(
+    projectId: string,
+    options: PageParams = {},
+  ): Promise<Page<Tables['activity']['Row']>> {
+    const limit = clampLimit(options.limit);
+    const after = decodeCursor(options.cursor);
+    let query = this.client
+      .from('activity')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false });
+    if (after) query = query.or(keysetPredicate(after, false));
+    const rows = dataOrThrow(await query.limit(limit + 1));
+    return toPage(rows, limit);
   }
 }

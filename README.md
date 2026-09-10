@@ -4,7 +4,16 @@ Hammond 3.0 is a single-owner desktop project tracker and instruction manager.
 
 Hammond stores projects, tasks, comments, versioned instructions and assignments in Supabase. It links projects to local directories and injects selected instructions into harness files. You organize and monitor work manually; work instructions and completion reports can be ordinary task comments. Hammond does not dispatch agents or synchronize the repository tracker with app records.
 
-Development is frozen at the accepted app baseline (D-025). MCP, Docker and disk-only replacement plans are cancelled. Only specifically requested UI improvements may be considered later. The source code, migrations and tests are retained; existing owner data is unchanged.
+Development is frozen at the accepted app baseline (D-025). Docker and disk-only replacement plans are cancelled. Only specifically requested UI improvements may be considered later. The source code, migrations and tests are retained; existing owner data is unchanged.
+
+**HAM3-015 (owner-authorized exception to the freeze above, scoped to this feature only):**
+Hammond exposes a loopback-only local HTTP API and a bundled stdio MCP adapter so a signed-in
+owner's coding-agent harness (Codex, Claude Code, Kilo Code, or any MCP client) can read and act on
+their own workspace without UI navigation. See [Agent access](./docs/AGENT_ACCESS.md) for the full
+contract, security model, and harness setup instructions. This does not reopen the general feature
+freeze or reinstate the cancelled HAM3-014 Docker/MCP replacement plan (a different, incompatible
+architecture) — it is a new, narrower, explicitly requested addition alongside the existing UI and
+Supabase-backed domain, described in [module boundaries](./docs/MODULE_BOUNDARIES.md).
 
 Read the [Hammond user guide](./docs/USER_GUIDE.md) for setup, project workflows, tasks, comments and instruction injection.
 
@@ -16,8 +25,12 @@ do not require a browser server.
 
 ```text
 src/                       React shell and typed frontend command adapters
+src/agentAccess/           HAM3-015 operation registry + Rust/webview bridge (owner-authorized exception)
 src-tauri/                 Rust/Tauri application shell and native command entry points
+src-tauri/src/agent_access Local HTTP API: auth, Host/Origin checks, bridge, token store
+mcp/                       Standalone stdio MCP adapter package (thin client of the local HTTP API)
 docs/MODULE_BOUNDARIES.md  UI, native, Supabase, and local-settings seams
+docs/AGENT_ACCESS.md       HAM3-015 local API/MCP contract, security model, harness setup
 ```
 
 Install dependencies and run the focused checks with:
