@@ -314,8 +314,10 @@ tasks:
     worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
     assigned_worker_identity: Anthropic / Claude Code / claude-sonnet-5 (recipient must verify)
-    work_order: tracker/work-orders/HAM3-014-WO.md (device-local owner-transfer packet)
-    requested_branch: claude/ham3-014-agent-access
+    work_order: tracker/work-orders/HAM3-014-WO-DOCKER.md (device-local owner-transfer packet; replaces native packets)
+    requested_branch: claude/sleepy-fermat-8180q8
+    replacement_start_sha: f64eeb9b397c85892098f55ae3ddf8086aa994fe
+    dispatch_gate: bounded auth/client preflight first; hosted OAuth discovery returned HTTP 404; dependent implementation waits for orchestrator intake; no hosted change authorized
     design_note: D-023 supersedes native transport with standalone local Docker HTTP MCP and hosted Supabase; independent auth/grants and authoritative startup/reconnect/live desktop refresh; revised contract at top of task
     branch: claude/sleepy-fermat-8180q8
     base_sha: ab265e93475b7b3b3a7c36e02b6eb26df987153a
@@ -333,4 +335,4 @@ tasks:
     current_audit_status: historical native-only approval at f64eeb9; superseded design has no implementation or audit yet
     owner_test_packet: tracker/work-orders/HAM3-014-OWNER-TEST-2.md (device-local)
     owner_smoke: FAILED at 6f92b2e; enable Agent access terminates process; WER BEX64/c0000409 data 7 offset 0x67f536
-    outstanding: revised Docker/auth/client dispatch design; standalone service implementation; hosted-data desktop reconciliation; generated-types/advisor checks; fresh independent audit and closed-app/reopen smoke
+    outstanding: Docker work order prepared; verify hosted auth/client/consent checkpoint before dependent implementation; standalone service and desktop reconciliation; generated-types/advisor checks; fresh independent audit and closed-app/reopen smoke

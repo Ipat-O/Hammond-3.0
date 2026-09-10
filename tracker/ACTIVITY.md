@@ -996,3 +996,9 @@
 - Added D-023 and revised HAM3-014 to standalone local Streamable HTTP MCP in Docker with independently authorized hosted-Supabase access. Native companion/Tauri relay plan and audit/smoke packets explicitly historical; PR #12 not merged or closed by this update.
 - Added explicit authoritative desktop startup/sign-in/focus/reconnect and live refresh requirements, missed-event reconciliation, dirty-draft conflict protection and owner/project guards. Acceptance requires agent reads/writes while app closed followed by correct reopened UI.
 - Updated board/index, README/architecture and release scope. HAM3-014 returns to in_design for revised auth/client/base dispatch review; no service/code/hosted changes or worker execution claimed.
+
+## 2026-09-10 — Docker replacement work order prepared for Sonnet
+
+- Owner requested WO. Prepared self-contained device-local HAM3-014-WO-DOCKER.md, replacing native packets and bound to verified live draft PR #12 head f64eeb9b397c85892098f55ae3ddf8086aa994fe on claude/sleepy-fermat-8180q8. Sonnet worker and independent DeepSeek V4 Pro auditor remain assigned subject to actual runtime verification.
+- Packet contains all nine tools, complete instruction scope/history/provenance, guarded writes, Docker lifecycle, independent grants, native cleanup, and desktop startup/live/reconnect draft-safe reconciliation. Same branch/PR retained; no native-only merge prerequisite.
+- Hosted project's public OAuth discovery returned HTTP 404; cause/configuration/intended project unverified. Bounded read-only/isolated auth/client preflight is the first checkpoint, with concrete hosted setup returned for review before dependent implementation. Task remains in_design; no hosted changes or automatic worker dispatch. Updated board/index/task routing; packet remains gitignored for owner transfer.
