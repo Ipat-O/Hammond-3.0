@@ -6,6 +6,8 @@ Hammond stores projects, tasks, comments, versioned instructions and assignments
 
 Development is frozen at the accepted app baseline (D-025). MCP, Docker and disk-only replacement plans are cancelled. Only specifically requested UI improvements may be considered later. The source code, migrations and tests are retained; existing owner data is unchanged.
 
+Read the [Hammond user guide](./docs/USER_GUIDE.md) for setup, project workflows, tasks, comments and instruction injection.
+
 ## Desktop foundation
 
 The application is a Tauri desktop shell with a React and TypeScript frontend. Vite is used for
