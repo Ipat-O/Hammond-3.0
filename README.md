@@ -2,7 +2,7 @@
 
 Hammond 3.0 is a single-owner desktop project tracker and instruction manager.
 
-It remembers projects, tasks, comments, and versioned instruction templates in Supabase. It opens local directories directly and writes the selected Codex, Claude, or Kilo instructions into them. Agents perform Git and GitHub work using their own harnesses; work orders and delivery approval remain outside the app. HAM3-009/010/011 are cancelled. [HAM3-014](./tracker/tasks/HAM3-014.md) plans local MCP access to project memory and instruction scopes, with task updates and comments; implementation has not started.
+It remembers projects, tasks, comments, and versioned instruction templates in Supabase. It opens local directories directly and writes the selected Codex, Claude, or Kilo instructions into them. Agents perform Git and GitHub work using their own harnesses; work orders and delivery approval remain outside the app. HAM3-009/010/011 are cancelled. [HAM3-014](./tracker/tasks/HAM3-014.md) now plans a standalone Docker HTTP MCP service backed by hosted Supabase, with scoped instructions and task/comment writes while the desktop is closed. Hammond refreshes current hosted data on reopening/reconnection and while open. This replaces the earlier native transport implementation; the revised design is not yet delivered.
 
 ## Desktop foundation
 

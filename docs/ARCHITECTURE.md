@@ -1,6 +1,6 @@
 # Hammond 3.0 Architecture
 
-Status: product direction updated 2026-09-09 by D-018 through D-022; see the task board for implementation status. HAM3-014 contains the requested LLM access implementation plan; D-022 settles its bundled stdio/named-pipe transport boundary for implementation.
+Status: D-023 (2026-09-10) replaces native MCP transport with a standalone local Docker Streamable HTTP service backed by hosted Supabase. HAM3-014 is back in design; previous native implementation/audits remain historical.
 
 ## Product boundary
 
@@ -19,7 +19,9 @@ flowchart LR
     Owner["Human owner"] --> App["Hammond desktop app"]
     App <--> Local["Local directory or worktree"]
     App <--> Settings["Local directory bindings"]
-    App <--> DB["Supabase memory"]
+    App <--> DB["Hosted Supabase memory"]
+    Agents --> MCP["Standalone Docker MCP service"]
+    MCP <--> DB
     App --> Docs["Managed harness instructions"]
     Docs --> Agents["Codex / Claude / Kilo"]
     Agents --> Git["Git issues, branches, PRs and reports"]
@@ -112,4 +114,4 @@ Supabase does not store absolute local paths. Exposed tables use owner-scoped ro
 
 ## First-release boundary
 
-The release is useful when the owner can open a directory, link a project, manage nested tasks and comments, edit and restore instruction versions, inject or replace the selected harness instructions, and resume later. HAM3-009/010/011 work-order, approval, and tracker expansion scopes are cancelled. HAM3-014 is planned before integrated release to add local agent reads of project/task context and scoped instructions, plus permitted task updates/comments. The proposed bundled stdio/IPC companion requires the running signed-in app; instruction edits and final delivery statuses remain owner-controlled. See HAM3-014 for the implementation plan and dispatch boundary.
+The release is useful when the owner can open a directory, link a project, manage nested tasks and comments, edit and restore instruction versions, inject or replace the selected harness instructions, and resume later. HAM3-009/010/011 work-order, approval, and tracker expansion scopes are cancelled. HAM3-014 is planned before integrated release to add local agent reads of project/task context and scoped instructions, plus permitted task updates/comments. The standalone Docker service uses independent owner-authorized grants and works while the desktop is closed. Desktop startup, focus, reconnect and live invalidation fetch current hosted state with draft/conflict protection. Instruction edits and final delivery statuses remain owner-controlled. See the revised HAM3-014 contract; D-023 supersedes earlier native transport requirements.

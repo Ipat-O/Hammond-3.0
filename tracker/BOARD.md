@@ -6,6 +6,7 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## in_design
 
+- [HAM3-014](./tasks/HAM3-014.md) — Revised: Docker HTTP MCP + hosted Supabase; desktop refresh after closed/offline changes.
 - [HAM3-012](./tasks/HAM3-012.md) — Integrated desktop release and human QA
 
 ## ready_for_development
@@ -22,7 +23,7 @@ None.
 
 ## testing
 
-- [HAM3-014](./tasks/HAM3-014.md) — Bounded APPROVE at f64eeb9 (Flash, reported operator override); crash closed, signed-in owner smoke/types/advisor gates remain.
+None.
 
 ## cancelled
 

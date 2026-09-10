@@ -990,3 +990,9 @@
 - Bounded changed-path APPROVE independently closes native enable crash through restored old-spawn panic, actual Windows IPC enable lifecycle, companion transport/permission path, 117 tests/clippy/release build. Calls reached signed_out, not successful signed-in DB reads/writes. No owner pass.
 - Prepared local HAM3-014-OWNER-TEST-2.md at f64eeb9 for signed-in instruction/read/write/conflict/reconnect/revoke smoke. Previous installer contains the old crash; no newly built artifact claimed by this intake.
 - HAM3-014 moves to testing. Generated-types parity/advisor evidence and owner merge authorization remain open. No feature edits, broad tests, hosted changes, readiness or merge by orchestrator.
+
+## 2026-09-10 — Owner selected Docker MCP and hosted Supabase
+
+- Added D-023 and revised HAM3-014 to standalone local Streamable HTTP MCP in Docker with independently authorized hosted-Supabase access. Native companion/Tauri relay plan and audit/smoke packets explicitly historical; PR #12 not merged or closed by this update.
+- Added explicit authoritative desktop startup/sign-in/focus/reconnect and live refresh requirements, missed-event reconciliation, dirty-draft conflict protection and owner/project guards. Acceptance requires agent reads/writes while app closed followed by correct reopened UI.
+- Updated board/index, README/architecture and release scope. HAM3-014 returns to in_design for revised auth/client/base dispatch review; no service/code/hosted changes or worker execution claimed.
