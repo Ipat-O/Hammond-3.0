@@ -34,6 +34,10 @@ pub struct AgentAccessStatus {
     pub port: u16,
     pub started_at: String,
     pub token_fingerprint: String,
+    /// Present only when `server::bootstrap` failed and the API is running disabled — lets the
+    /// Settings panel tell the owner why instead of just showing "Revoked".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bootstrap_error: Option<String>,
 }
 
 impl AgentAccessCredentials {
@@ -43,6 +47,7 @@ impl AgentAccessCredentials {
             port: self.port,
             started_at: self.started_at.clone(),
             token_fingerprint: fingerprint(&self.token),
+            bootstrap_error: None,
         }
     }
 }

@@ -19,11 +19,13 @@ pub fn run() {
             // Binds the local-API listener and installs `AgentAccessState` before the event loop
             // starts, so the local API and its credentials file exist the moment Hammond is
             // running — never gated behind the owner navigating to a particular screen. This
-            // blocks startup only long enough for a TCP bind and a small file read/write.
+            // blocks startup only long enough for a TCP bind and a small file read/write. On
+            // failure `bootstrap` still installs a safe disabled `AgentAccessState`, so the
+            // Settings panel's `agent_access_*` commands never hit unmanaged state.
             if let Err(error) =
                 tauri::async_runtime::block_on(agent_access::server::bootstrap(handle))
             {
-                eprintln!("failed to start local agent-access API: {error}");
+                eprintln!("failed to start local agent-access API (running disabled): {error}");
             }
             Ok(())
         })
@@ -45,6 +47,7 @@ pub fn run() {
             harness_commands::harness_render_preview,
             agent_access::commands::agent_access_respond,
             agent_access::commands::agent_access_disconnect,
+            agent_access::commands::agent_access_set_listener_attached,
             agent_access::commands::agent_access_set_signed_in,
             agent_access::commands::agent_access_get_status,
             agent_access::commands::agent_access_reveal_token,

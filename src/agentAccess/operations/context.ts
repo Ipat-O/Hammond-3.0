@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { defineOperation } from '../types';
+import { assertTasksInProject } from './targetConsistency';
 
 const pageParams = {
   limit: z.number().int().min(1).max(200).optional(),
@@ -19,20 +20,22 @@ export const contextOperations = [
 
   defineOperation(
     'context.addRelation',
-    'Record a relation between two tasks (depends_on, blocks, relates_to, duplicates).',
+    'Record a relation between two tasks in the same project (depends_on, blocks, relates_to, duplicates). Both `taskId` and `relatedTaskId` must belong to `projectId`.',
     z.object({
       taskId: z.string().min(1),
       projectId: z.string().min(1),
       relatedTaskId: z.string().min(1),
       kind: relationKind,
     }),
-    (deps, input) =>
-      deps.memory.addRelation({
+    async (deps, input) => {
+      await assertTasksInProject(deps, input.projectId, [input.taskId, input.relatedTaskId]);
+      return deps.memory.addRelation({
         task_id: input.taskId,
         project_id: input.projectId,
         related_task_id: input.relatedTaskId,
         kind: input.kind,
-      }),
+      });
+    },
   ),
 
   defineOperation(
@@ -53,15 +56,17 @@ export const contextOperations = [
       sourceUrl: z.string().optional(),
       metadata: z.unknown().optional(),
     }),
-    (deps, input) =>
-      deps.memory.addEvidence({
+    async (deps, input) => {
+      await assertTasksInProject(deps, input.projectId, [input.taskId]);
+      return deps.memory.addEvidence({
         task_id: input.taskId,
         project_id: input.projectId,
         kind: input.kind,
         summary: input.summary,
         source_url: input.sourceUrl ?? null,
         metadata: (input.metadata as never) ?? {},
-      }),
+      });
+    },
   ),
 
   defineOperation(
@@ -87,13 +92,15 @@ export const contextOperations = [
       eventType: z.string().min(1),
       details: z.unknown().optional(),
     }),
-    (deps, input) =>
-      deps.memory.recordActivity({
+    async (deps, input) => {
+      if (input.taskId) await assertTasksInProject(deps, input.projectId, [input.taskId]);
+      return deps.memory.recordActivity({
         project_id: input.projectId,
         task_id: input.taskId ?? null,
         event_type: input.eventType,
         details: (input.details as never) ?? {},
-      }),
+      });
+    },
   ),
 
   defineOperation(

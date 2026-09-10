@@ -38,7 +38,24 @@ struct ServerContext {
 /// `lib.rs`'s `.setup()`. Returns the bound port so callers (tests, logging) can see it, though
 /// the authoritative copy any client should read is the credentials file `token::load_or_create`
 /// just wrote.
+///
+/// `AgentAccessState` is installed as managed state **whatever happens** — on failure a safe,
+/// permanently-disabled `AgentAccessState::failed(...)` is installed instead — so the
+/// `agent_access_*` commands the Settings panel calls always have state to read rather than
+/// panicking on unmanaged state.
 pub async fn bootstrap(app: AppHandle) -> Result<u16, String> {
+    match try_bootstrap(&app).await {
+        Ok(port) => Ok(port),
+        Err(error) => {
+            if app.try_state::<AgentAccessState>().is_none() {
+                app.manage(AgentAccessState::failed(error.clone()));
+            }
+            Err(error)
+        }
+    }
+}
+
+async fn try_bootstrap(app: &AppHandle) -> Result<u16, String> {
     let listener = TcpListener::bind(("127.0.0.1", 0))
         .await
         .map_err(|error| format!("failed to bind local agent-access listener: {error}"))?;
@@ -47,7 +64,7 @@ pub async fn bootstrap(app: AppHandle) -> Result<u16, String> {
         .map_err(|error| format!("failed to read bound local address: {error}"))?
         .port();
 
-    let credentials = token::load_or_create(&app, port)?;
+    let credentials = token::load_or_create(app, port)?;
     app.manage(AgentAccessState::new(credentials));
 
     let context = ServerContext {
@@ -161,6 +178,25 @@ fn authorize(
     }
     drop(credentials);
 
+    // A request is never forwarded to the webview unless a listener is actually attached to
+    // receive it. This closes the startup gap (readiness published a beat before the listener
+    // registered) and the teardown gap (window unmounted but readiness still says SignedIn) —
+    // in both, a forwarded request would otherwise dispatch into nothing and read back as an
+    // unknown outcome even though it never ran.
+    if !*state
+        .listener_attached
+        .lock()
+        .expect("agent access listener flag lock poisoned")
+    {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(error_body(
+                "starting",
+                "Hammond is running but its workspace window is not ready to serve requests yet.",
+            )),
+        ));
+    }
+
     match *state
         .readiness
         .lock()
@@ -191,6 +227,10 @@ fn status_for_error_code(code: &str) -> StatusCode {
         "not_found" | "unknown_operation" => StatusCode::NOT_FOUND,
         "conflict" | "stale_preview" | "requires_confirmation" => StatusCode::CONFLICT,
         "payload_too_large" => StatusCode::PAYLOAD_TOO_LARGE,
+        // A drained-while-dispatched request (sign-out/unmount) comes back through the bridge as
+        // an `unknown_outcome` response — same meaning and same 504 as a bridge timeout.
+        "unknown_outcome" => StatusCode::GATEWAY_TIMEOUT,
+        "disconnected" => StatusCode::SERVICE_UNAVAILABLE,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
@@ -297,9 +337,210 @@ mod tests {
         );
         assert_eq!(status_for_error_code("not_found"), StatusCode::NOT_FOUND);
         assert_eq!(status_for_error_code("conflict"), StatusCode::CONFLICT);
+        // A drained-while-dispatched request comes back as `unknown_outcome` and must map to the
+        // same 504 as a bridge timeout, never to a 500.
+        assert_eq!(
+            status_for_error_code("unknown_outcome"),
+            StatusCode::GATEWAY_TIMEOUT
+        );
+        assert_eq!(
+            status_for_error_code("disconnected"),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
         assert_eq!(
             status_for_error_code("something_unmapped"),
             StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    // --- Authorization boundary (HAM3-015 Correction 1, F7) -------------------------------------
+    //
+    // Round 1 changed the bearer check to accept any provided token and every existing
+    // agent-access Rust test still passed, because nothing exercised `authorize` itself. These
+    // do: each asserts the *gate*'s decision (status + error code) for one class of request, so
+    // weakening token/Host/Origin/readiness validation fails a test here rather than shipping.
+
+    const TEST_PORT: u16 = 51_234;
+    const GOOD_TOKEN: &str = "d3adb33fd3adb33fd3adb33fd3adb33fd3adb33fd3adb33fd3adb33fd3adb33f0";
+
+    fn credentials(token: &str, enabled: bool) -> token::AgentAccessCredentials {
+        token::AgentAccessCredentials {
+            version: 1,
+            enabled,
+            token: token.to_owned(),
+            port: TEST_PORT,
+            pid: 0,
+            started_at: "2026-01-01T00:00:00Z".to_owned(),
+        }
+    }
+
+    /// A fully-serviceable state: enabled token, listener attached, owner signed in.
+    fn ready_state() -> AgentAccessState {
+        let state = AgentAccessState::new(credentials(GOOD_TOKEN, true));
+        *state.readiness.lock().unwrap() = Readiness::SignedIn;
+        *state.listener_attached.lock().unwrap() = true;
+        state
+    }
+
+    fn headers(host: Option<&str>, bearer: Option<&str>, origin: Option<&str>) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        if let Some(host) = host {
+            map.insert(header::HOST, host.parse().unwrap());
+        }
+        if let Some(bearer) = bearer {
+            map.insert(
+                header::AUTHORIZATION,
+                format!("Bearer {bearer}").parse().unwrap(),
+            );
+        }
+        if let Some(origin) = origin {
+            map.insert(header::ORIGIN, origin.parse().unwrap());
+        }
+        map
+    }
+
+    fn good_headers() -> HeaderMap {
+        headers(
+            Some(&format!("127.0.0.1:{TEST_PORT}")),
+            Some(GOOD_TOKEN),
+            None,
+        )
+    }
+
+    fn deny_code(result: Result<(), (StatusCode, Json<Value>)>) -> (StatusCode, String) {
+        let (status, body) = result.unwrap_err();
+        let code = body.0["error"]["code"].as_str().unwrap_or_default().to_owned();
+        (status, code)
+    }
+
+    #[test]
+    fn authorize_accepts_a_correct_host_token_and_no_origin_when_ready() {
+        assert!(authorize(&good_headers(), TEST_PORT, &ready_state()).is_ok());
+        // localhost is an accepted Host spelling too.
+        let alt = headers(
+            Some(&format!("localhost:{TEST_PORT}")),
+            Some(GOOD_TOKEN),
+            None,
+        );
+        assert!(authorize(&alt, TEST_PORT, &ready_state()).is_ok());
+    }
+
+    #[test]
+    fn authorize_rejects_a_missing_token() {
+        let h = headers(Some(&format!("127.0.0.1:{TEST_PORT}")), None, None);
+        assert_eq!(
+            deny_code(authorize(&h, TEST_PORT, &ready_state())),
+            (StatusCode::UNAUTHORIZED, "invalid_token".to_owned())
+        );
+    }
+
+    #[test]
+    fn authorize_rejects_a_present_but_wrong_token() {
+        // The specific regression: a wrong-but-present bearer must still be refused. A check
+        // weakened to `provided.is_some()` would let this through and fail here.
+        let h = headers(
+            Some(&format!("127.0.0.1:{TEST_PORT}")),
+            Some("not-the-real-token-not-the-real-token-not-the-real-token-0000000"),
+            None,
+        );
+        assert_eq!(
+            deny_code(authorize(&h, TEST_PORT, &ready_state())),
+            (StatusCode::UNAUTHORIZED, "invalid_token".to_owned())
+        );
+    }
+
+    #[test]
+    fn authorize_rejects_a_wrong_host() {
+        let h = headers(Some("evil.example.com"), Some(GOOD_TOKEN), None);
+        assert_eq!(
+            deny_code(authorize(&h, TEST_PORT, &ready_state())),
+            (StatusCode::FORBIDDEN, "invalid_host".to_owned())
+        );
+        // A missing Host is refused the same way, before the token is even considered.
+        let none = headers(None, Some(GOOD_TOKEN), None);
+        assert_eq!(deny_code(authorize(&none, TEST_PORT, &ready_state())).0, StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn authorize_rejects_any_origin_header_outright() {
+        let h = headers(
+            Some(&format!("127.0.0.1:{TEST_PORT}")),
+            Some(GOOD_TOKEN),
+            Some("http://localhost"),
+        );
+        assert_eq!(
+            deny_code(authorize(&h, TEST_PORT, &ready_state())),
+            (StatusCode::FORBIDDEN, "untrusted_origin".to_owned())
+        );
+    }
+
+    #[test]
+    fn authorize_rejects_a_revoked_token_even_when_the_value_is_correct() {
+        let state = AgentAccessState::new(credentials(GOOD_TOKEN, false));
+        *state.readiness.lock().unwrap() = Readiness::SignedIn;
+        *state.listener_attached.lock().unwrap() = true;
+        assert_eq!(
+            deny_code(authorize(&good_headers(), TEST_PORT, &state)),
+            (StatusCode::FORBIDDEN, "token_revoked".to_owned())
+        );
+    }
+
+    #[test]
+    fn authorize_reflects_a_rotated_token_on_the_very_next_request() {
+        let state = ready_state();
+        assert!(authorize(&good_headers(), TEST_PORT, &state).is_ok());
+        // Rotation replaces the in-memory credentials (as `agent_access_rotate_token` does).
+        *state.credentials.lock().unwrap() = credentials("a-freshly-rotated-token-value-0000000000000000000000000000000000", true);
+        assert_eq!(
+            deny_code(authorize(&good_headers(), TEST_PORT, &state)).0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[test]
+    fn authorize_reports_starting_then_signed_out_by_readiness() {
+        let starting = AgentAccessState::new(credentials(GOOD_TOKEN, true));
+        *starting.listener_attached.lock().unwrap() = true;
+        assert_eq!(
+            deny_code(authorize(&good_headers(), TEST_PORT, &starting)),
+            (StatusCode::SERVICE_UNAVAILABLE, "starting".to_owned())
+        );
+
+        let signed_out = AgentAccessState::new(credentials(GOOD_TOKEN, true));
+        *signed_out.readiness.lock().unwrap() = Readiness::SignedOut;
+        *signed_out.listener_attached.lock().unwrap() = true;
+        assert_eq!(
+            deny_code(authorize(&good_headers(), TEST_PORT, &signed_out)),
+            (StatusCode::SERVICE_UNAVAILABLE, "signed_out".to_owned())
+        );
+    }
+
+    #[test]
+    fn authorize_refuses_to_forward_while_no_listener_is_attached_even_if_signed_in() {
+        // The startup/teardown gap (HAM3-015 audit Finding 5): readiness says SignedIn but the
+        // webview listener is not attached — a forwarded request would dispatch into nothing.
+        let state = AgentAccessState::new(credentials(GOOD_TOKEN, true));
+        *state.readiness.lock().unwrap() = Readiness::SignedIn;
+        // listener_attached left at its default `false`
+        assert_eq!(
+            deny_code(authorize(&good_headers(), TEST_PORT, &state)),
+            (StatusCode::SERVICE_UNAVAILABLE, "starting".to_owned())
+        );
+    }
+
+    #[test]
+    fn failed_state_refuses_every_request_and_surfaces_the_bootstrap_error() {
+        let state = AgentAccessState::failed("could not read credentials file");
+        *state.readiness.lock().unwrap() = Readiness::SignedIn;
+        *state.listener_attached.lock().unwrap() = true;
+        // Empty token in the disabled state → nothing authenticates.
+        assert_eq!(
+            deny_code(authorize(&good_headers(), TEST_PORT, &state)).0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            state.bootstrap_error.as_deref(),
+            Some("could not read credentials file")
         );
     }
 }

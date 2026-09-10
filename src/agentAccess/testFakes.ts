@@ -9,21 +9,33 @@ import {
   seedProjectDefaults,
 } from '../assignments/testFakes';
 import type { FakeAssignmentStore } from '../assignments/testFakes';
-import { createFakeHarnessAdapters, createFakeHarnessFilesystem } from '../harness/testFakes';
+import {
+  createFakeHarnessAdapters,
+  createFakeHarnessFilesystem,
+  createFakeHarnessTargetReader,
+} from '../harness/testFakes';
+import type { FakeHarnessFilesystem } from '../harness/testFakes';
 import { HarnessInjectionService } from '../harness/service';
 import { InstructionsService } from '../instructions/service';
 import { createFakeInstructionRepository } from '../instructions/testFakes';
 import { DirectoryContextManager } from '../settings/directoryContextManager';
 import { createFakeDirectoryContextServices } from '../settings/testFakes';
+import type { DirectoryContextServices } from '../settings/contracts';
 import type { AgentAccessDeps } from './deps';
 
 type Row = Record<string, unknown> & { id: string };
 type FakeTables = Record<string, Row[]>;
 
 let idCounter = 0;
-function nextId(prefix: string): string {
+/**
+ * A deterministic uuid-shaped id. Real Hammond rows always have `uuid` primary keys, and the
+ * agent-access pagination layer now validates a continuation cursor's id half against exactly
+ * that format (`src/data/pagination.ts`), so the fake client must mint the same shape.
+ */
+function nextId(): string {
   idCounter += 1;
-  return `${prefix}-${idCounter}`;
+  const hex = idCounter.toString(16).padStart(12, '0');
+  return `00000000-0000-4000-8000-${hex}`;
 }
 
 /**
@@ -185,7 +197,7 @@ class FakeQuery implements PromiseLike<{
     if (this.op === 'insert') {
       const payload = this.cleanPayload();
       const row: Row = {
-        id: (payload.id as string) ?? nextId(this.table),
+        id: (payload.id as string) ?? nextId(),
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         ...payload,
@@ -259,10 +271,15 @@ export interface TestDepsResult {
   tables: FakeTables;
   ownerId: string;
   assignmentStore: FakeAssignmentStore;
+  directoryServices: DirectoryContextServices;
+  harnessFs: FakeHarnessFilesystem;
 }
 
 /** Wires a full `AgentAccessDeps` from fakes, reusing each domain's own existing test fakes. */
-export function createTestDeps(seed: FakeTables = {}): TestDepsResult {
+export function createTestDeps(
+  seed: FakeTables = {},
+  directoryServices: DirectoryContextServices = createFakeDirectoryContextServices(),
+): TestDepsResult {
   const ownerId = 'owner-1';
   const client = createFakeSupabaseClient(seed);
 
@@ -271,7 +288,6 @@ export function createTestDeps(seed: FakeTables = {}): TestDepsResult {
   const assignments = new AssignmentsService(assignmentRepo);
   const instructions = new InstructionsService(createFakeInstructionRepository());
   const harnessFs = createFakeHarnessFilesystem();
-  const directoryServices = createFakeDirectoryContextServices();
 
   const deps: AgentAccessDeps = {
     projects: new ProjectRepository(client),
@@ -283,12 +299,12 @@ export function createTestDeps(seed: FakeTables = {}): TestDepsResult {
       assignments,
       instructions,
       adapters: createFakeHarnessAdapters(harnessFs, '/fake/root'),
-      filesystem: { readTextFile: async () => '' },
+      filesystem: createFakeHarnessTargetReader(harnessFs),
     }),
     directoryContext: new DirectoryContextManager(directoryServices),
   };
 
-  return { deps, tables: seed, ownerId, assignmentStore };
+  return { deps, tables: seed, ownerId, assignmentStore, directoryServices, harnessFs };
 }
 
 export function seedProjectWithDefaults(result: TestDepsResult, projectId: string): void {

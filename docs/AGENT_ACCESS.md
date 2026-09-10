@@ -88,10 +88,21 @@ synchronously, so the UI (via `useDirectoryContextState`) sees an API-driven cha
   directory) is written with `0600` permissions on Unix; on Windows it inherits the per-user ACL
   already applied to `%LOCALAPPDATA%\<app>` by the OS. Neither the token nor a Supabase session
   ever appears in a repository config example or in any log/tool output this feature produces.
-- Sign-out sets Rust's tracked readiness to `SignedOut` and drains every request the webview was
-  still working on with a `disconnected` error — a request already dispatched moments before
-  sign-out cannot land as a completed, authorized mutation afterward (checked once at receipt and
-  again immediately before/after the handler's own async work).
+- Sign-out sets Rust's tracked readiness to `SignedOut` so **no new** request is forwarded, and
+  drains every request the webview was still working on. A request that had **not** started yet
+  (checked at receipt, before dispatch) is refused with an ordinary signed-out error — safe to
+  treat as "did not run". A request **already dispatched** to the webview cannot be cancelled:
+  its mutation may have committed. Those are drained as `unknown_outcome` (HTTP 504), carrying
+  the request id, telling the caller to re-read the affected record rather than retry — never
+  reported as "did not execute". A handler that finished before sign-out landed reports its real
+  result.
+- The webview reports both its sign-in state and whether its request listener is attached. Rust
+  forwards a request only while a listener is attached, so a request arriving in the brief
+  startup window (readiness published a beat before the listener registered) or after the window
+  tears down gets a retryable `503 starting`, never a dispatch into nothing.
+- If the local API cannot start at all (port bind or credential-file failure), Hammond installs a
+  safe **disabled** state instead of leaving it uninitialized: every request is refused, the
+  Settings panel shows the reason, and no native command can crash on unmanaged state.
 - No arbitrary filesystem, shell, SQL, native-invoke, password, or auth-session tool is exposed.
   Directory access is limited to the same confined `fs_guard`-protected commands the UI already
   uses, addressed by explicit path, never a "run this shell command" primitive.
@@ -105,11 +116,17 @@ POST /v1/operations/{name}           <- JSON body = the operation's input
                                       -> non-200 { "error": { "code", "message", "details"? } }
 ```
 
-Status codes: `400` validation/bad JSON, `401` invalid/missing token, `403` wrong Host/Origin or a
-revoked token, `404` unknown operation or (for `not_found`) a missing/foreign record, `409`
-conflict/stale-preview/requires-confirmation, `503` starting/signed-out, `504` `unknown_outcome`
-(the bridge timed out — the operation's effect is unknown; **never retried automatically**, and
-callers should recheck the affected record rather than resend the same mutation).
+Status codes: `400` validation/bad JSON or a malformed continuation cursor, `401` invalid/missing
+token, `403` wrong Host/Origin or a revoked token, `404` unknown operation or (for `not_found`) a
+missing/foreign record, `409` conflict/stale-preview/requires-confirmation, `503`
+starting/signed-out (including "window not ready to serve yet"), `504` `unknown_outcome` (the
+bridge timed out **or** a sign-out/window-teardown drained an already-dispatched request — the
+operation's effect is unknown; **never retried automatically**, and callers should recheck the
+affected record rather than resend the same mutation).
+
+Continuation cursors are opaque `"<created_at>::<id>"` markers; a cursor whose halves are not a
+valid ISO-8601 timestamp and a UUID is rejected with `400 validation_error` before it reaches the
+query layer.
 
 Example (`curl`, once you have a token — see below):
 
@@ -211,16 +228,21 @@ the harness side):
    changes on disk.
 5. Only a separate, explicit request calls `harness.inject`. That call must carry the exact
    `expectedSharedRoleVersionId` / `expectedProviderVersionId` / `expectedOverrideVersionId` /
-   `expectedClassificationKind` a **fresh** `harness.preview` call just returned. `harness.inject`
-   re-previews internally and compares; a mismatch (the instructions changed, or the on-disk file
-   changed) refuses the write and returns `stale_preview` with the fresh preview attached instead
-   — never a silent overwrite of what changed. `forceReplace` is still required to replace an
-   Unmanaged file or one belonging to a different project/role, exactly like the UI.
+   `expectedClassificationKind` **and `expectedTargetDigest`** a **fresh** `harness.preview` call
+   just returned. `harness.inject` re-previews internally and compares; a mismatch — the prepared
+   instructions changed, **or the on-disk target changed in any way, including a hand edit to the
+   body of a still-`ManagedValid` file that leaves its classification and versions untouched** —
+   refuses the write and returns `stale_preview` with the fresh preview attached instead, never a
+   silent overwrite of what changed. `forceReplace` is still required to replace an Unmanaged file
+   or one belonging to a different project/role, exactly like the UI. `expectedTargetDigest` is a
+   change-detection digest of the current file bytes (`null` for a Missing target), not a consent
+   token — a client cannot fabricate agreement by supplying one.
 
 What the server actually enforces: token access, that preparation and injection are two separate
 operations (nothing in `instructions.prepare`'s code path can reach a harness file), and the
-staleness recheck above. What it does **not** enforce: that a human actually answered the
-inject-now-or-later question — that boolean, if an agent fabricates one, is not proof of consent.
+staleness recheck above (version ids, classification kind, **and target-byte digest**). What it
+does **not** enforce: that a human actually answered the inject-now-or-later question — that
+boolean, if an agent fabricates one, is not proof of consent.
 The harness instruction snippet below exists to close that gap at the conversation layer, since
 nothing server-side can.
 
@@ -253,7 +275,7 @@ app), so it can be built and distributed independently.
 
 ```sh
 cd mcp
-npm install
+npm ci
 npm run typecheck   # tsc --noEmit
 npm test            # node:test — credentials, HTTP client retry/timeout semantics, and a real
                      # MCP SDK protocol integration test (spawns the built bundle, connects a
@@ -265,22 +287,36 @@ npm run package:sea   # -> dist/hammond-mcp(.exe) — a single, dependency-free 
 npm run verify:sea     # spawns the packaged binary and runs the same real-protocol check against it
 ```
 
-`npm run package:sea` embeds whatever Node binary is currently on `PATH` when it runs. **To update
-the embedded runtime later, just re-run it with a newer Node installed** — there is nothing else
-to track, since the runtime lives inside the produced binary rather than being referenced
-externally. It was run and verified end to end (built, packaged, and protocol-checked with a real
-MCP client) on this development machine (Linux); the identical script produces
-`dist/hammond-mcp.exe` on Windows by the same mechanism per Node's own SEA documentation, but that
-has not been independently re-verified in this environment — see
-[Known limitations](#known-limitations).
+`package-sea.mjs` is cross-platform: it never shells out and never builds a command string —
+every child process is `node <script>` spawned as the exact interpreter running it
+(`process.execPath`, which is also the runtime embedded into the produced binary), with `postject`
+resolved to its real package entry point rather than invoked via `npx` (a Windows `npx` is the
+`npx.cmd` shim, which `execFileSync` cannot launch — the round-1 defect). It embeds whatever Node
+is running it; **to update the embedded runtime later, re-run it with a newer Node**. On Windows
+`postject` prints `warning: The signature seems corrupted!` — expected and harmless: injecting the
+blob invalidates the copied `node.exe`'s Authenticode signature, which a locally-launched adapter
+does not need.
 
-For the packaged Windows desktop app, `src-tauri/tauri.windows.conf.json` (merged only for Windows
-builds, so it does not affect other platforms) adds `mcp/dist/hammond-mcp.exe` as a bundle
-resource. Build order for a Windows release: `cd mcp && npm ci && npm run build && npm run
-package:sea` **before** `npm run tauri:build` at the repo root, so the `.exe` exists when Tauri
-collects bundle resources. The resulting installed app then carries `hammond-mcp.exe` alongside it
-— reference that absolute path in a harness's MCP config (see below). This wiring has not been
-exercised against a real Windows Tauri build in this environment.
+### Windows release: one reproducible path
+
+The packaged Windows desktop app bundles `mcp/dist/hammond-mcp.exe` next to its executable. That
+bundle resource is declared in `src-tauri/tauri.bundle.windows.conf.json`, which is **not**
+auto-merged (its name is deliberately not `tauri.windows.conf.json`) — so a fresh checkout runs
+`cargo test` / `cargo clippy` / `tauri dev` / a plain `npm run tauri:build` with no hand-built
+adapter binary. The release build applies it explicitly:
+
+```sh
+npm ci                       # repo root
+npm --prefix mcp ci
+npm run package:release      # builds+verifies the adapter, then: tauri build
+                             #   --config src-tauri/tauri.bundle.windows.conf.json
+```
+
+`npm run package:release` (`scripts/package-release.mjs`) stops with a clear error if the adapter
+executable was not produced, and `tauri build` itself fails loudly on the missing bundle resource
+— a release can never silently ship without the adapter. The resulting MSI/NSIS installer places
+`hammond-desktop.exe` and `hammond-mcp.exe` together in the install root (`C:\Program
+Files\Hammond\` for the default MSI).
 
 Whichever entry point you use, none of them depend on the repository's Vite dev server or require
 a globally installed Node/TypeScript toolchain on the machine actually running the harness — the
@@ -301,13 +337,18 @@ separators inside the JSON string.
 
 ### Codex (`~/.codex/config.toml` or project `.codex/config.toml`)
 
+The Windows installer places the standalone adapter next to the app executable in the install
+root — `C:\Program Files\Hammond\hammond-mcp.exe` for the default MSI (an all-users install); a
+per-user or relocated install puts it under that install's own root instead. Point `command` at
+that binary directly, with no arguments:
+
 ```toml
 [mcp_servers.hammond]
-command = "node"
-args = ["C:\\Users\\owner\\AppData\\Local\\Programs\\Hammond\\resources\\hammond-mcp.mjs"]
-# Or, using the packaged standalone binary instead of `node` + the .mjs bundle:
-# command = "C:\\Program Files\\Hammond\\hammond-mcp.exe"
-# args = []
+command = "C:\\Program Files\\Hammond\\hammond-mcp.exe"
+args = []
+# Running from a source checkout instead of the installed app? Use node + the plain bundle:
+# command = "node"
+# args = ["C:\\path\\to\\hammond\\mcp\\dist\\hammond-mcp.mjs"]
 ```
 
 ### Claude Code (`.mcp.json` at the project root, or `claude mcp add`)
@@ -363,37 +404,36 @@ anything in this feature**.
 
 ## Troubleshooting
 
-| Symptom                                        | Meaning                                                                                                                                                  |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hammond_not_running` / connection refused     | Hammond is not running, or has not launched far enough to bind the listener. Start Hammond.                                                              |
-| HTTP `503` `starting`                          | Hammond is running but still initializing. Retry shortly.                                                                                                |
-| HTTP `503` `signed_out`                        | Hammond is running but no owner is signed in. Sign in, then retry.                                                                                       |
-| HTTP `401` `invalid_token`                     | The token is wrong or was rotated. Re-check Settings for the current value.                                                                              |
-| HTTP `403` `token_revoked`                     | Access was explicitly revoked in Settings. Rotate to re-enable.                                                                                          |
-| HTTP `403` `invalid_host` / `untrusted_origin` | Something is not calling `127.0.0.1:<port>` directly (a proxy, a browser). Not supported.                                                                |
-| HTTP `504` `unknown_outcome`                   | The request may or may not have completed. Do not resend it — recheck the affected record (e.g. re-list tasks/comments) before deciding what to do next. |
-| MCP tool call returns `isError: true`          | The adapter reached Hammond and got a clean error back (see the JSON `code`/`message` in the tool result) — this is Hammond-side, not an adapter crash.  |
+| Symptom                                        | Meaning                                                                                                                                                                                                                                       |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hammond_not_running` / connection refused     | Hammond is not running, or has not launched far enough to bind the listener. Start Hammond.                                                                                                                                                   |
+| HTTP `503` `starting`                          | Hammond is running but still initializing, or its workspace window is not yet (or no longer) ready to serve requests. Retry shortly.                                                                                                          |
+| HTTP `503` `signed_out`                        | Hammond is running but no owner is signed in. Sign in, then retry.                                                                                                                                                                            |
+| HTTP `401` `invalid_token`                     | The token is wrong or was rotated. Re-check Settings for the current value.                                                                                                                                                                   |
+| HTTP `403` `token_revoked`                     | Access was explicitly revoked in Settings. Rotate to re-enable.                                                                                                                                                                               |
+| HTTP `403` `invalid_host` / `untrusted_origin` | Something is not calling `127.0.0.1:<port>` directly (a proxy, a browser). Not supported.                                                                                                                                                     |
+| HTTP `504` `unknown_outcome`                   | The bridge timed out, or a sign-out / window-teardown interrupted an already-dispatched request. It may or may not have completed. Do not resend — recheck the affected record (e.g. re-list tasks/comments) before deciding what to do next. |
+| MCP tool call returns `isError: true`          | The adapter reached Hammond and got a clean error back (see the JSON `code`/`message` in the tool result) — this is Hammond-side, not an adapter crash.                                                                                       |
 
 None of the above ever includes the token or a Supabase session value in its message.
 
 ## Known limitations
 
-- **Windows packaging was not independently verified end to end in this environment** (a Linux
-  sandbox with no Windows machine available): the `tauri.windows.conf.json` resource wiring and
-  the `.exe` produced by `package-sea.mjs` on Windows follow the same mechanism verified on Linux,
-  but a real `npm run tauri:build` on Windows, and launching the resulting installed `.exe`, has
-  not been run here.
+- **A live signed-in end-to-end operation through the real webview has not been run.** Reaching a
+  signed-in state needs the owner's Supabase project; the verification here stops at the Rust HTTP
+  layer's own decisions (`authorize` is unit-tested with real header maps) and the HTTP↔MCP path
+  (a real, unmocked MCP SDK protocol test against a genuine HTTP backend,
+  `mcp/src/integration.test.ts`). No automated test drives a real `AppHandle`-backed Tauri window
+  end to end — that would need `tauri::test`'s mock runtime, a different `AppHandle<R>` type than
+  the `AppHandle<Wry>` this code uses throughout. So the Rust HTTP layer's dispatch into a _real_
+  webview, and the owner smoke checklist, remain for the owner to verify.
 - `harness.preview`/`context.*` composite reads issue several sequential Supabase round trips
   internally; this is a straightforward extension of existing per-domain service calls, not a new
   N+1 concern introduced by pagination.
-- The Rust-side HTTP/bridge stack has focused unit tests (token generation, constant-time
-  compare, bridge correlation/drain, error-code→status mapping) but no automated test drives a
-  real `AppHandle`-backed Tauri window end to end (that would need `tauri::test`'s mock runtime,
-  which is a different `AppHandle<R>` type than the `AppHandle<Wry>` this code uses throughout —
-  generalizing every function to `AppHandle<R: Runtime>` for that alone was judged not worth the
-  risk this late in the change). The HTTP↔MCP path _is_ covered by a real, unmocked MCP SDK
-  protocol test against a genuine HTTP backend (`mcp/src/integration.test.ts`); what is not
-  covered end-to-end is the Rust HTTP layer's own dispatch to a _real_ webview.
+- Directory-context and harness operations were exercised against the existing in-memory test
+  fakes for those domains (matching how the rest of the codebase already tests them), not against
+  a real Tauri filesystem — the underlying native filesystem/harness commands themselves are
+  unchanged by this feature.
 - Directory-context and harness operations were exercised against the existing in-memory test
   fakes for those domains (matching how the rest of the codebase already tests them), not against
   a real Tauri filesystem — the underlying native filesystem/harness commands themselves are

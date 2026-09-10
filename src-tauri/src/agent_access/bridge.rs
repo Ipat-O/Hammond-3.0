@@ -63,17 +63,25 @@ pub enum BridgeOutcome {
     /// even completed a mutation) — callers must surface this as an unknown-outcome error, never
     /// retry automatically, and never report it as a plain failure.
     TimedOut,
-    /// No webview is currently attached to receive the request (emit failed), or the pending
-    /// entry was drained (sign-out/window close) before an answer arrived.
+    /// The request was never handed to the webview at all (the `emit` failed because no window
+    /// is attached). Nothing ran; this is safe for a caller to retry once Hammond is back.
     Disconnected,
 }
 
-fn disconnected_response(message: &str) -> BridgeResponse {
+/// A request that was already emitted to the webview but whose correlation was torn down before
+/// an answer came back (sign-out drain, window unmount, shutdown). Its side effects — a mutation
+/// in particular — may or may not have committed, exactly like a timeout: report it as an
+/// unknown outcome carrying the request id, never as "did not execute", and never auto-retry.
+fn unknown_outcome_response(reason: &str, id: &str) -> BridgeResponse {
     BridgeResponse {
         result: None,
         error: Some(BridgeError {
-            code: "disconnected".to_owned(),
-            message: message.to_owned(),
+            code: "unknown_outcome".to_owned(),
+            message: format!(
+                "{reason} Request {id} had already been dispatched to the Hammond workspace \
+                 window; its effect (including any mutation) may or may not have committed. Do \
+                 not retry automatically — re-read the affected record to reconcile."
+            ),
             details: None,
         }),
     }
@@ -141,17 +149,19 @@ pub fn respond(state: &AgentAccessState, id: String, response: BridgeResponse) {
     }
 }
 
-/// Drains every still-pending request with a synthetic disconnect response — used on sign-out,
-/// window close, and app shutdown — so an in-flight HTTP call fails fast with a clear reason
-/// instead of waiting out the full timeout for an answer that will now never come.
+/// Drains every still-pending request — used on sign-out, window close, and app shutdown — so an
+/// in-flight HTTP call fails fast instead of waiting out the full timeout for an answer that will
+/// now never come. Every drained entry was already emitted to the webview (`dispatch` only keeps
+/// an entry pending after a successful `emit`), so each is reported as an unknown outcome, not as
+/// "not executed": a mutation dispatched moments before sign-out can still have committed.
 pub fn drain_pending(state: &AgentAccessState, reason: &str) {
     let mut pending = state
         .pending
         .0
         .lock()
         .expect("agent access bridge lock poisoned");
-    for (_, sender) in pending.drain() {
-        let _ = sender.send(disconnected_response(reason));
+    for (id, sender) in pending.drain() {
+        let _ = sender.send(unknown_outcome_response(reason, &id));
     }
 }
 
@@ -160,7 +170,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn drain_pending_resolves_every_waiter_with_a_disconnected_error() {
+    fn drain_pending_resolves_every_waiter_as_an_unknown_outcome_carrying_its_request_id() {
         let state = AgentAccessState::new(super::super::token::AgentAccessCredentials {
             version: 1,
             enabled: true,
@@ -172,15 +182,21 @@ mod tests {
 
         let (tx1, rx1) = oneshot::channel();
         let (tx2, rx2) = oneshot::channel();
-        state.pending.0.lock().unwrap().insert("a".to_owned(), tx1);
-        state.pending.0.lock().unwrap().insert("b".to_owned(), tx2);
+        state.pending.0.lock().unwrap().insert("req-a".to_owned(), tx1);
+        state.pending.0.lock().unwrap().insert("req-b".to_owned(), tx2);
 
-        drain_pending(&state, "workspace window closed");
+        drain_pending(&state, "Hammond signed out before this request completed.");
 
         let a = rx1.blocking_recv().unwrap();
         let b = rx2.blocking_recv().unwrap();
-        assert_eq!(a.error.as_ref().unwrap().code, "disconnected");
-        assert_eq!(b.error.as_ref().unwrap().code, "disconnected");
+        // A dispatched request that is drained is NOT reported as "did not execute" — a mutation
+        // sent moments before sign-out may have committed. It is an unknown outcome, id included
+        // so a caller can reconcile the specific request.
+        assert_eq!(a.error.as_ref().unwrap().code, "unknown_outcome");
+        assert_eq!(b.error.as_ref().unwrap().code, "unknown_outcome");
+        assert!(a.error.as_ref().unwrap().message.contains("req-a"));
+        assert!(b.error.as_ref().unwrap().message.contains("req-b"));
+        assert!(a.error.as_ref().unwrap().message.contains("re-read"));
         assert!(state.pending.0.lock().unwrap().is_empty());
     }
 

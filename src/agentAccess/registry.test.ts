@@ -1,6 +1,7 @@
 import { AgentAccessError } from './errors';
 import { OperationRegistry, operationRegistry } from './registry';
 import { createTestDeps, seedProjectWithDefaults } from './testFakes';
+import { createFakeDirectoryContextServices } from '../settings/testFakes';
 
 const HARNESS_ROOT = '/fake/root';
 
@@ -265,6 +266,117 @@ describe('comments operations', () => {
   });
 });
 
+describe('project/task target consistency (HAM3-015 Correction 1, F6)', () => {
+  // Persistence-level guarantee: `comments`, `task_relations`, and `task_evidence` each carry a
+  // composite `(task_id, owner_id, project_id)` FK onto `tasks(id, owner_id, project_id)` (and
+  // `task_relations` a second one for `related_task_id`) — see
+  // supabase/migrations/20260813075651_create_project_memory_schema.sql lines 20-32, 53-58 — so a
+  // mismatched row cannot be inserted at all. These tests cover the service-layer pre-check that
+  // turns that into a clean `validation_error` (400) instead of a raw constraint 500, and proves
+  // nothing is persisted on the mismatch path.
+  async function twoProjectsOneTask(deps: ReturnType<typeof createTestDeps>['deps']) {
+    const projectA = (await operationRegistry.invoke(deps, 'projects.create', { name: 'A' })) as {
+      id: string;
+    };
+    const projectB = (await operationRegistry.invoke(deps, 'projects.create', { name: 'B' })) as {
+      id: string;
+    };
+    const taskInA = (await operationRegistry.invoke(deps, 'tasks.create', {
+      projectId: projectA.id,
+      title: 'T',
+    })) as { id: string };
+    return { projectA, projectB, taskInA };
+  }
+
+  it('comments.add rejects a taskId that belongs to a different project and persists nothing', async () => {
+    const { deps, tables } = createTestDeps();
+    const { projectB, taskInA } = await twoProjectsOneTask(deps);
+
+    await expect(
+      operationRegistry.invoke(deps, 'comments.add', {
+        taskId: taskInA.id,
+        projectId: projectB.id,
+        body: 'mismatched',
+      }),
+    ).rejects.toMatchObject({ code: 'validation_error' });
+    expect(tables.comments ?? []).toHaveLength(0);
+  });
+
+  it('comments.add reports an unknown/foreign task as not_found, never as a consistency error', async () => {
+    const { deps } = createTestDeps();
+    const project = (await operationRegistry.invoke(deps, 'projects.create', { name: 'P' })) as {
+      id: string;
+    };
+    await expect(
+      operationRegistry.invoke(deps, 'comments.add', {
+        taskId: '00000000-0000-4000-8000-999999999999',
+        projectId: project.id,
+        body: 'x',
+      }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('context.addRelation requires BOTH tasks to belong to the given project', async () => {
+    const { deps, tables } = createTestDeps();
+    const { projectA, projectB, taskInA } = await twoProjectsOneTask(deps);
+    const otherInA = (await operationRegistry.invoke(deps, 'tasks.create', {
+      projectId: projectA.id,
+      title: 'U',
+    })) as { id: string };
+
+    // Right project, but relatedTaskId lives in a project with no such task -> not_found.
+    await expect(
+      operationRegistry.invoke(deps, 'context.addRelation', {
+        taskId: taskInA.id,
+        projectId: projectA.id,
+        relatedTaskId: '00000000-0000-4000-8000-777777777777',
+        kind: 'relates_to',
+      }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+
+    // Both tasks real and owned, but the project pointer is wrong -> validation_error.
+    await expect(
+      operationRegistry.invoke(deps, 'context.addRelation', {
+        taskId: taskInA.id,
+        projectId: projectB.id,
+        relatedTaskId: otherInA.id,
+        kind: 'relates_to',
+      }),
+    ).rejects.toMatchObject({ code: 'validation_error' });
+    expect(tables.task_relations ?? []).toHaveLength(0);
+
+    // Consistent -> persists.
+    const relation = (await operationRegistry.invoke(deps, 'context.addRelation', {
+      taskId: taskInA.id,
+      projectId: projectA.id,
+      relatedTaskId: otherInA.id,
+      kind: 'relates_to',
+    })) as { id: string };
+    expect(relation.id).toBeTruthy();
+  });
+
+  it('context.addEvidence and context.recordActivity reject a cross-project taskId', async () => {
+    const { deps, tables } = createTestDeps();
+    const { projectB, taskInA } = await twoProjectsOneTask(deps);
+
+    await expect(
+      operationRegistry.invoke(deps, 'context.addEvidence', {
+        taskId: taskInA.id,
+        projectId: projectB.id,
+        kind: 'note',
+      }),
+    ).rejects.toMatchObject({ code: 'validation_error' });
+    await expect(
+      operationRegistry.invoke(deps, 'context.recordActivity', {
+        taskId: taskInA.id,
+        projectId: projectB.id,
+        eventType: 'progress',
+      }),
+    ).rejects.toMatchObject({ code: 'validation_error' });
+    expect(tables.task_evidence ?? []).toHaveLength(0);
+  });
+});
+
 describe('instructions prepare/inject separation', () => {
   it('instructions.prepare saves and activates content without touching any harness file', async () => {
     const { deps } = createTestDeps();
@@ -305,6 +417,7 @@ describe('instructions prepare/inject separation', () => {
       expectedProviderVersionId: 'not-the-real-one',
       expectedOverrideVersionId: null,
       expectedClassificationKind: 'Missing' as const,
+      expectedTargetDigest: null,
     };
 
     let caught: unknown;
@@ -337,6 +450,7 @@ describe('instructions prepare/inject separation', () => {
         providerVersionId: string;
         overrideVersionId: string | null;
       };
+      targetDigest: string | null;
     };
     expect(preview.classification.kind).toBe('Missing');
 
@@ -348,7 +462,75 @@ describe('instructions prepare/inject separation', () => {
       expectedProviderVersionId: preview.generatedHeader.providerVersionId,
       expectedOverrideVersionId: preview.generatedHeader.overrideVersionId,
       expectedClassificationKind: preview.classification.kind,
+      expectedTargetDigest: preview.targetDigest,
     })) as { kind: string };
+    expect(outcome.kind).toBe('Written');
+  });
+
+  it('harness.inject refuses when only the target file BYTES changed since preview — same classification, same versions (HAM3-015 Correction 1, F7)', async () => {
+    const testDeps = createTestDeps();
+    const { deps, harnessFs } = testDeps;
+    const project = (await operationRegistry.invoke(deps, 'projects.create', { name: 'P' })) as {
+      id: string;
+    };
+    seedProjectWithDefaults(testDeps, project.id);
+
+    type Preview = {
+      classification: { kind: string };
+      generatedHeader: {
+        sharedRoleVersionId: string;
+        providerVersionId: string;
+        overrideVersionId: string | null;
+      };
+      targetDigest: string | null;
+    };
+    const currentPreview = () =>
+      operationRegistry.invoke(deps, 'harness.preview', {
+        root: HARNESS_ROOT,
+        projectId: project.id,
+        role: 'worker',
+      }) as Promise<Preview>;
+    const injectArgs = (preview: Preview) => ({
+      root: HARNESS_ROOT,
+      projectId: project.id,
+      role: 'worker' as const,
+      expectedSharedRoleVersionId: preview.generatedHeader.sharedRoleVersionId,
+      expectedProviderVersionId: preview.generatedHeader.providerVersionId,
+      expectedOverrideVersionId: preview.generatedHeader.overrideVersionId,
+      expectedClassificationKind: preview.classification.kind,
+      expectedTargetDigest: preview.targetDigest,
+    });
+
+    // First inject creates the managed file (Missing -> ManagedValid).
+    await operationRegistry.invoke(deps, 'harness.inject', injectArgs(await currentPreview()));
+
+    // Capture a preview of the now-ManagedValid file, then a human hand-edits its body — the
+    // classification stays ManagedValid and no instruction version changed.
+    const capturedPreview = await currentPreview();
+    expect(capturedPreview.classification.kind).toBe('ManagedValid');
+    expect(capturedPreview.targetDigest).not.toBeNull();
+
+    const targetKey = `${HARNESS_ROOT}|claude_code`;
+    const existing = harnessFs.targets.get(targetKey);
+    if (!existing || existing.content === null)
+      throw new Error('expected a written managed target');
+    harnessFs.targets.set(targetKey, {
+      ...existing,
+      content: `${existing.content}\n\n<!-- a human appended this note -->`,
+    });
+
+    // Injecting with the captured (now byte-stale) preview must be refused, not silently
+    // overwrite the human edit.
+    await expect(
+      operationRegistry.invoke(deps, 'harness.inject', injectArgs(capturedPreview)),
+    ).rejects.toMatchObject({ code: 'stale_preview' });
+
+    // Re-previewing and injecting with the fresh digest succeeds (explicit, reviewed update).
+    const outcome = (await operationRegistry.invoke(
+      deps,
+      'harness.inject',
+      injectArgs(await currentPreview()),
+    )) as { kind: string };
     expect(outcome.kind).toBe('Written');
   });
 });
@@ -431,5 +613,58 @@ describe('local contexts operations', () => {
       projectId: project.id,
     })) as { contexts: { id: string }[] };
     expect(afterForget.contexts.map((c) => c.id)).not.toContain(context.id);
+  });
+
+  it('two concurrent localContexts.link calls with the first disk write deferred keep both bindings (HAM3-015 Correction 1, F2)', async () => {
+    const store = new Map<string, unknown>();
+    let writeCount = 0;
+    let releaseFirstWrite!: () => void;
+    const firstWriteGate = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve;
+    });
+    let firstWriteInvoked!: () => void;
+    const firstWriteStarted = new Promise<void>((resolve) => {
+      firstWriteInvoked = resolve;
+    });
+    const settings = {
+      read: async (key: string) => (store.has(key) ? store.get(key) : null),
+      write: async (key: string, value: unknown) => {
+        writeCount += 1;
+        if (writeCount === 1) {
+          firstWriteInvoked();
+          await firstWriteGate;
+        }
+        store.set(key, value);
+      },
+      remove: async (key: string) => {
+        store.delete(key);
+      },
+    } as unknown as ReturnType<typeof createFakeDirectoryContextServices>['settings'];
+    const directoryServices = createFakeDirectoryContextServices({ settings });
+
+    const { deps } = createTestDeps({}, directoryServices);
+
+    const linkA = operationRegistry.invoke(deps, 'localContexts.link', {
+      projectId: 'project-a',
+      path: '/work/a',
+    });
+    await firstWriteStarted;
+    const linkB = operationRegistry.invoke(deps, 'localContexts.link', {
+      projectId: 'project-b',
+      path: '/work/b',
+    });
+    releaseFirstWrite();
+    await Promise.all([linkA, linkB]);
+
+    const listed = (await operationRegistry.invoke(deps, 'localContexts.resolvePath', {
+      path: '/work/a',
+    })) as { matches: unknown[] };
+    expect(listed.matches).toHaveLength(1);
+
+    // Both survive a genuine reload from disk.
+    const reloaded = (await operationRegistry.invoke(deps, 'localContexts.list', {})) as {
+      contexts: { path: string }[];
+    };
+    expect(reloaded.contexts.map((c) => c.path).sort()).toEqual(['/work/a', '/work/b']);
   });
 });

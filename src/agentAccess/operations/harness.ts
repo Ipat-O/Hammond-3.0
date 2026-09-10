@@ -17,20 +17,21 @@ const classificationKind = z.enum([
 export const harnessOperations = [
   defineOperation(
     'harness.preview',
-    "Classification of the current on-disk target plus the full generated document Inject/Update would write right now — read-only, writes nothing. Call this immediately before harness.inject and pass its `generatedHeader` version ids and `classification.kind` back as harness.inject's `expected*` fields.",
+    "Classification of the current on-disk target plus the full generated document Inject/Update would write right now — read-only, writes nothing. Call this immediately before harness.inject and pass its `generatedHeader` version ids, `classification.kind`, and `targetDigest` back as harness.inject's `expected*` fields.",
     z.object(harnessTarget),
     (deps, input) => deps.harness.preview(input),
   ),
 
   defineOperation(
     'harness.inject',
-    'Writes (creates or updates) the managed harness document (AGENTS.md / CLAUDE.md / .kilocode/rules/hammond.md) for one project role. This is the ONLY operation in this registry that writes a harness file, and only fires on an explicit, separate request — preparing/saving instructions (instructions.prepare) never calls this implicitly. Requires the exact version ids and classification a fresh harness.preview just returned; if the target or the prepared instructions changed since that preview, this refuses to write and returns `stale_preview` with a fresh preview attached instead, so the caller can review the updated content before trying again — it never silently writes over what changed. `forceReplace` is required to overwrite an Unmanaged file or one belonging to a different project/role, exactly like the existing UI safeguard.',
+    'Writes (creates or updates) the managed harness document (AGENTS.md / CLAUDE.md / .kilocode/rules/hammond.md) for one project role. This is the ONLY operation in this registry that writes a harness file, and only fires on an explicit, separate request — preparing/saving instructions (instructions.prepare) never calls this implicitly. Requires the exact version ids, classification, AND `targetDigest` a fresh harness.preview just returned; if the prepared instructions changed, or the on-disk target changed in any way since that preview (including a body edit that leaves its classification unchanged), this refuses to write and returns `stale_preview` with a fresh preview attached instead, so the caller can review before trying again — it never silently writes over what changed. `forceReplace` is required to overwrite an Unmanaged file or one belonging to a different project/role, exactly like the existing UI safeguard.',
     z.object({
       ...harnessTarget,
       expectedSharedRoleVersionId: z.string().min(1),
       expectedProviderVersionId: z.string().min(1),
       expectedOverrideVersionId: z.string().nullable(),
       expectedClassificationKind: classificationKind,
+      expectedTargetDigest: z.string().nullable(),
       forceReplace: z.boolean().optional(),
     }),
     async (deps, input) => {
@@ -43,7 +44,8 @@ export const harnessOperations = [
         fresh.generatedHeader.sharedRoleVersionId === input.expectedSharedRoleVersionId &&
         fresh.generatedHeader.providerVersionId === input.expectedProviderVersionId &&
         fresh.generatedHeader.overrideVersionId === input.expectedOverrideVersionId &&
-        fresh.classification.kind === input.expectedClassificationKind;
+        fresh.classification.kind === input.expectedClassificationKind &&
+        fresh.targetDigest === input.expectedTargetDigest;
       if (!matches) {
         throw new AgentAccessError(
           'stale_preview',

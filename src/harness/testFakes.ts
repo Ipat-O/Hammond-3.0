@@ -157,6 +157,32 @@ export function createFakeHarnessAdapter(
   };
 }
 
+/**
+ * A `Pick<FilesystemCommands, 'readTextFile'>` over a `FakeHarnessFilesystem`, resolving a
+ * provider target's relative path back to its stored content — so `HarnessInjectionService`'s
+ * `targetContentDigest` reflects what the fake adapters actually hold.
+ */
+export function createFakeHarnessTargetReader(fs: FakeHarnessFilesystem): {
+  readTextFile: (root: string, relativePath: string) => Promise<string>;
+} {
+  const providerByPath = new Map(
+    (Object.entries(TARGET_PATHS) as [ProviderFamily, string][]).map(([provider, path]) => [
+      path,
+      provider,
+    ]),
+  );
+  return {
+    async readTextFile(root: string, relativePath: string): Promise<string> {
+      const provider = providerByPath.get(relativePath);
+      const target = provider ? fs.targets.get(key(root, provider)) : undefined;
+      if (!target || target.content === null) {
+        throw new Error(`no fake harness target at ${relativePath}`);
+      }
+      return target.content;
+    },
+  };
+}
+
 export function createFakeHarnessAdapters(
   fs: FakeHarnessFilesystem,
   root: string,

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { defineOperation } from '../types';
+import { assertTasksInProject } from './targetConsistency';
 
 const pageParams = {
   limit: z.number().int().min(1).max(200).optional(),
@@ -24,14 +25,16 @@ export const commentOperations = [
 
   defineOperation(
     'comments.add',
-    'Add a comment to a task.',
+    'Add a comment to a task. `taskId` must belong to `projectId` (a mismatch is a validation error, never a persisted row).',
     z.object({ taskId: z.string().min(1), projectId: z.string().min(1), body: z.string().min(1) }),
-    (deps, input) =>
-      deps.memory.addComment({
+    async (deps, input) => {
+      await assertTasksInProject(deps, input.projectId, [input.taskId]);
+      return deps.memory.addComment({
         task_id: input.taskId,
         project_id: input.projectId,
         body: input.body,
-      }),
+      });
+    },
   ),
 
   defineOperation(

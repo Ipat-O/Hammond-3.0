@@ -52,6 +52,11 @@ export function toAgentAccessError(error: unknown): AgentAccessError {
     ) {
       return new AgentAccessError('conflict', error.message);
     }
+    // A malformed continuation cursor (`src/data/pagination.ts`) is caller input, not a backend
+    // fault — classify it as a stable validation error, never a generic persistence failure.
+    if (error.name === 'PaginationCursorError' || error.name === 'TargetConsistencyError') {
+      return new AgentAccessError('validation_error', error.message);
+    }
     return new AgentAccessError('persistence_failed', error.message);
   }
   return new AgentAccessError('persistence_failed', String(error));
