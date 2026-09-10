@@ -70,6 +70,7 @@ Owner human check:
 
 ## Canonical planning documents
 
+- [User guide](./docs/USER_GUIDE.md)
 - [Architecture](./docs/ARCHITECTURE.md)
 - [Delivery workflow](./tracker/WORKFLOW.md)
 - [Task board](./tracker/BOARD.md)
