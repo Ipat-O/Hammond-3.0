@@ -231,7 +231,7 @@ tasks:
     auditor: Kilo Code / DeepSeek V4 Pro
   - id: HAM3-012
     title: Integrated desktop release and human QA
-    state: in_design
+    state: cancelled
     depends_on: [HAM3-007, HAM3-008, HAM3-014]
     worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
@@ -309,14 +309,14 @@ tasks:
     added: after the HAM3-004 human check at the owner's request; extends the foundation plan from twelve tasks to thirteen
   - id: HAM3-014
     title: Disk-only project memory and direct agent file access
-    state: ready_for_development
+    state: cancelled
     depends_on: [HAM3-004, HAM3-005, HAM3-006, HAM3-007, HAM3-008, HAM3-013]
     worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
     assigned_worker_identity: Anthropic / Claude Code / claude-sonnet-5 (recipient must verify)
     work_order: tracker/work-orders/HAM3-014-WO-DISK.md (device-local exact published-dev-base packet)
     requested_branch: claude/ham3-014-disk-memory
-    dispatch_gate: owner transfer of prepared disk implementation packet; no auth feasibility gate; no worker run claimed
+    dispatch_gate: WITHDRAWN by D-025; feature development stopped
     design_note: D-024 replaces Supabase/MCP/Docker with readable project files; docs/DISK_PROJECT_FORMAT.md is authoritative; preserve existing data through verified optional export
     historical_native_branch: claude/sleepy-fermat-8180q8
     historical_native_base_sha: ab265e93475b7b3b3a7c36e02b6eb26df987153a
@@ -334,4 +334,4 @@ tasks:
     current_audit_status: historical native-only approval at f64eeb9; disk design has no implementation or audit yet
     owner_test_packet: tracker/work-orders/HAM3-014-OWNER-TEST-2.md (device-local)
     owner_smoke: FAILED at 6f92b2e; enable Agent access terminates process; WER BEX64/c0000409 data 7 offset 0x67f536
-    outstanding: disk implementation, file schema/recovery and UI reconciliation; optional verified export; fresh independent audit and no-network native owner smoke
+    outstanding: none authorized; MCP and disk replacement cancelled

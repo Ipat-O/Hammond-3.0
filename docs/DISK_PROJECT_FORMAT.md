@@ -1,6 +1,6 @@
 # Disk-only project memory — D-024
 
-Status: approved implementation direction, not delivered behavior. This contract supersedes the Supabase/native-MCP/Docker runtime architecture for HAM3-014. Hammond is a native visual editor for files inside a directory; agents use their existing filesystem tools. No MCP, Docker, backend login or network connection is required for normal operation.
+Status: CANCELLED by D-025. Historical proposal only; do not implement or dispatch. This contract supersedes the Supabase/native-MCP/Docker runtime architecture for HAM3-014. Hammond is a native visual editor for files inside a directory; agents use their existing filesystem tools. No MCP, Docker, backend login or network connection is required for normal operation.
 
 ## Source of truth and format
 

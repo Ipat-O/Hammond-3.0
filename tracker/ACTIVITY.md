@@ -1007,3 +1007,9 @@
 
 - Owner chose only-on-disk operation and said go. Published D-024 and docs/DISK_PROJECT_FORMAT.md, superseding native/Docker MCP and hosted runtime plans. HAM3-014 now covers file-backed project memory, instruction scopes/history, direct agent edits, safe refresh/conflict/recovery and optional verified legacy export.
 - Updated README, architecture/module boundary status, release scope, task/index/board. Prepared Sonnet disk work order from published dev on a fresh branch; PR #12 remains historical and unmerged. No feature edits, hosted changes, automatic worker dispatch or owner data export.
+
+## 2026-09-10 — Retained app baseline prepared for main
+
+- Recorded D-025 and withdrawn all MCP/Docker/auth/disk replacement packets. Updated README/architecture/module boundary status and task/board/index cancellation records; historical designs preserved explicitly as cancelled.
+- Owner authorized main publication. origin/main did not exist; accepted dev app is the baseline. No feature-code changes or cancelled PR #12 changes included. Build passed (nonblocking chunk-size warning), frontend 24 files/395 tests passed with threads pool, native Rust 75 tests passed. No new installer, hosted-database test or owner smoke claimed.
+- Prepared separate device-local Claude residue-scoping and Luna user-guide work orders pinned to the published baseline. Residue job is read-only inventory before reviewed cleanup; documentation job does not authorize feature changes.

@@ -1,10 +1,6 @@
 # Hammond 3.0 Architecture
 
-Status: D-024 supersedes Supabase/MCP/Docker runtime plans. The authoritative target is [Disk-only project memory](./DISK_PROJECT_FORMAT.md): native UI over portable directory files, direct agent filesystem access, startup/watch reconciliation and verified one-time legacy export. Normal operation needs no login or service. Implementation is pending HAM3-014.
-
-## Historical architecture — superseded runtime boundary
-
-The following records the prior architecture and implemented feature vocabulary. Supabase storage, Docker/MCP access and related release requirements below are historical, not current implementation instructions. D-024 and the disk project contract take precedence.
+D-025: retain the accepted Supabase-backed native app. Feature development is stopped; only owner-requested UI tweaks may follow. Hammond organizes projects/tasks/comments, maintains instructions and writes selected harness instruction files. It does not communicate with agents. The repository tracker is separate from app records. D-022/D-023/D-024 agent-service and disk-only directions are cancelled.
 
 ## Product boundary
 
@@ -24,8 +20,8 @@ flowchart LR
     App <--> Local["Local directory or worktree"]
     App <--> Settings["Local directory bindings"]
     App <--> DB["Hosted Supabase memory"]
-    Agents --> MCP["Standalone Docker MCP service"]
-    MCP <--> DB
+
+
     App --> Docs["Managed harness instructions"]
     Docs --> Agents["Codex / Claude / Kilo"]
     Agents --> Git["Git issues, branches, PRs and reports"]
@@ -118,4 +114,4 @@ Supabase does not store absolute local paths. Exposed tables use owner-scoped ro
 
 ## First-release boundary
 
-The release is useful when the owner can open a directory, link a project, manage nested tasks and comments, edit and restore instruction versions, inject or replace the selected harness instructions, and resume later. HAM3-009/010/011 work-order, approval, and tracker expansion scopes are cancelled. HAM3-014 is planned before integrated release to add local agent reads of project/task context and scoped instructions, plus permitted task updates/comments. The standalone Docker service uses independent owner-authorized grants and works while the desktop is closed. Desktop startup, focus, reconnect and live invalidation fetch current hosted state with draft/conflict protection. Instruction edits and final delivery statuses remain owner-controlled. See the revised HAM3-014 contract; D-023 supersedes earlier native transport requirements.
+The retained app supports directory linking, nested tasks/comments/statuses, versioned instructions, assignments, injection and resume. Work orders and results may be entered manually as task comments. No agent execution, MCP, Docker or file-backed task store is delivered. Historical release plans do not authorize further development.

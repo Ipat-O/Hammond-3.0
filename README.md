@@ -2,7 +2,9 @@
 
 Hammond 3.0 is a single-owner desktop project tracker and instruction manager.
 
-The selected direction is disk-only: projects, tasks, comments and versioned instructions live in readable files inside each project directory. Hammond edits those files; agents use existing filesystem tools. No Supabase, MCP, Docker or login is required by the target runtime. [HAM3-014](./tracker/tasks/HAM3-014.md) implements this replacement, external-edit refresh and optional verified export of existing Supabase data. See the [disk project contract](./docs/DISK_PROJECT_FORMAT.md). This direction is not yet delivered; current code still uses Supabase. External work orders and approval remain outside the app; HAM3-009/010/011 remain cancelled.
+Hammond stores projects, tasks, comments, versioned instructions and assignments in Supabase. It links projects to local directories and injects selected instructions into harness files. You organize and monitor work manually; work instructions and completion reports can be ordinary task comments. Hammond does not dispatch agents or synchronize the repository tracker with app records.
+
+Development is frozen at the accepted app baseline (D-025). MCP, Docker and disk-only replacement plans are cancelled. Only specifically requested UI improvements may be considered later. The source code, migrations and tests are retained; existing owner data is unchanged.
 
 ## Desktop foundation
 
@@ -30,9 +32,9 @@ npm run tauri:dev
 See [module boundaries](./docs/MODULE_BOUNDARIES.md) before adding filesystem, Supabase, or local
 settings behavior.
 
-## Existing Supabase runtime — legacy, pending HAM3-014 replacement
+## Supabase project memory
 
-The instructions below describe current code, not the disk-only target. Existing owner data stays intact until an explicitly initiated export is verified; do not delete the database as part of the transition.
+Supabase is the current supported persistence layer. Directory files are instruction outputs, not a backup of task/comment records.
 
 Hammond reads `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` from `.env.local`.
 Copy `.env.example`, then use the hosted project's URL and publishable key. Never place a

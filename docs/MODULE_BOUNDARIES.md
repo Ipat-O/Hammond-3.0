@@ -1,6 +1,6 @@
 # Hammond module boundaries
 
-Current target: D-024 and [disk project contract](./DISK_PROJECT_FORMAT.md) supersede the storage boundary below. React consumes environment-neutral repository interfaces; Rust/Tauri owns bounded native disk I/O, locking/watch/recovery; local settings hold machine preferences. Optional Supabase export is isolated migration tooling, never a normal-runtime dependency. The following foundation notes are historical until HAM3-014 updates the implementation documentation.
+Current boundary (D-025): React uses Supabase repositories for project records; Rust/Tauri handles local directory/settings and managed instruction files. Keep these existing boundaries. Disk-only and MCP replacement work is cancelled. Historical foundation notes follow.
 
 HAM3-001 establishes a desktop shell and contracts without implementing product workflows. The
 boundaries below are intentional seams for the next foundation tasks.
