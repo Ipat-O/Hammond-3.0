@@ -18,11 +18,11 @@ None.
 
 ## in_review
 
-- [HAM3-014](./tasks/HAM3-014.md) — Correction 3 at f64eeb9; V4 Pro runtime/enable-path re-audit prepared after owner crash.
+None.
 
 ## testing
 
-None.
+- [HAM3-014](./tasks/HAM3-014.md) — Bounded APPROVE at f64eeb9 (Flash, reported operator override); crash closed, signed-in owner smoke/types/advisor gates remain.
 
 ## cancelled
 

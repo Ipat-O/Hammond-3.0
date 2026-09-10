@@ -983,3 +983,10 @@
 - Worker reports traced/reproduced sync-command bare-Tokio-spawn panic, Tauri-runtime spawn replacement, readiness handshake and failed-start rollback, 121 Linux Rust tests plus clippy/Windows cross-compile. No live Windows signed-in app enable test; cause/fix proof remains attributed until independent new-head review.
 - Prepared local HAM3-014-AUDIT-3.md for actual V4 Pro, bounded runtime/command/startup/lifecycle regression plus actual Windows app enable and companion call. Old F1-F4/F6 evidence retained; types parity/advisor/owner gates remain explicit. Prior installer still contains old crash; no rebuilt new-head artifact claimed.
 - HAM3-014 moves to in_review; no new-head audit verdict, native owner smoke, code edits/checks by orchestrator, hosted change, readiness or merge.
+
+## 2026-09-10 — HAM3-014 bounded round-3 approval; signed-in smoke pending
+
+- Verified report 5608440517 and unchanged open/draft mergeable PR #12 at f64eeb9b397c85892098f55ae3ddf8086aa994fe. Actual DeepSeek/Kilo Flash identity recorded; auditor reports mismatch-stop then operator carry-on, supplied by owner in this handover. Do not represent this as V4 Pro execution or authorize future substitutions implicitly.
+- Bounded changed-path APPROVE independently closes native enable crash through restored old-spawn panic, actual Windows IPC enable lifecycle, companion transport/permission path, 117 tests/clippy/release build. Calls reached signed_out, not successful signed-in DB reads/writes. No owner pass.
+- Prepared local HAM3-014-OWNER-TEST-2.md at f64eeb9 for signed-in instruction/read/write/conflict/reconnect/revoke smoke. Previous installer contains the old crash; no newly built artifact claimed by this intake.
+- HAM3-014 moves to testing. Generated-types parity/advisor evidence and owner merge authorization remain open. No feature edits, broad tests, hosted changes, readiness or merge by orchestrator.

@@ -309,7 +309,7 @@ tasks:
     added: after the HAM3-004 human check at the owner's request; extends the foundation plan from twelve tasks to thirteen
   - id: HAM3-014
     title: LLM access to project memory and instruction scopes
-    state: in_review
+    state: testing
     depends_on: [HAM3-004, HAM3-005, HAM3-006, HAM3-007, HAM3-008, HAM3-013]
     worker: Anthropic / Claude Code / Claude Sonnet (planning default; bind at dispatch)
     auditor: Kilo Code / DeepSeek V4 Pro
@@ -326,11 +326,11 @@ tasks:
     correction_packet: tracker/work-orders/HAM3-014-CORRECTION-3.md (device-local)
     audit_packet: tracker/work-orders/HAM3-014-AUDIT-3.md (device-local)
     audit_verdict: APPROVE
-    audited_head_sha: 6f92b2e248ee87d7118e7f80638523f0d3ce9b65
-    audit_report: https://github.com/Ipat-O/Hammond-3.0/pull/12#issuecomment-5603003352
-    actual_auditor_identity: DeepSeek / Kilo Code / deepseek-v4-pro (runtime deepseek/deepseek-v4-pro)
-    auditor_identity_deviation: round-1 Flash Vision deviation historical; round-2 identity matches assignment
-    current_audit_status: no verdict at f64eeb9; historical 6f92b2e approval followed by failed owner smoke; independent changed-path audit prepared
-    owner_test_packet: tracker/work-orders/HAM3-014-OWNER-TEST.md (device-local)
+    audited_head_sha: f64eeb9b397c85892098f55ae3ddf8086aa994fe
+    audit_report: https://github.com/Ipat-O/Hammond-3.0/pull/12#issuecomment-5608440517
+    actual_auditor_identity: DeepSeek / Kilo Code / deepseek-v4-flash
+    auditor_identity_deviation: round-3 Flash instead of assigned Pro; operator carry-on override reported in audit and supplied by owner; bounded run only
+    current_audit_status: bounded APPROVE at f64eeb9; real native enable crash closed; signed-in read/write flow untested
+    owner_test_packet: tracker/work-orders/HAM3-014-OWNER-TEST-2.md (device-local)
     owner_smoke: FAILED at 6f92b2e; enable Agent access terminates process; WER BEX64/c0000409 data 7 offset 0x67f536
-    outstanding: independent crash/runtime/readiness closure at f64eeb9 and live Windows owner smoke; generated-types parity resolution or explicit owner acceptance; advisor evidence; owner merge authorization
+    outstanding: signed-in Windows owner smoke at f64eeb9; generated-types parity resolution or explicit owner acceptance; advisor evidence; owner merge authorization
