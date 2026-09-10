@@ -1002,3 +1002,8 @@
 - Owner requested WO. Prepared self-contained device-local HAM3-014-WO-DOCKER.md, replacing native packets and bound to verified live draft PR #12 head f64eeb9b397c85892098f55ae3ddf8086aa994fe on claude/sleepy-fermat-8180q8. Sonnet worker and independent DeepSeek V4 Pro auditor remain assigned subject to actual runtime verification.
 - Packet contains all nine tools, complete instruction scope/history/provenance, guarded writes, Docker lifecycle, independent grants, native cleanup, and desktop startup/live/reconnect draft-safe reconciliation. Same branch/PR retained; no native-only merge prerequisite.
 - Hosted project's public OAuth discovery returned HTTP 404; cause/configuration/intended project unverified. Bounded read-only/isolated auth/client preflight is the first checkpoint, with concrete hosted setup returned for review before dependent implementation. Task remains in_design; no hosted changes or automatic worker dispatch. Updated board/index/task routing; packet remains gitignored for owner transfer.
+
+## 2026-09-10 — Disk-only replacement authorized
+
+- Owner chose only-on-disk operation and said go. Published D-024 and docs/DISK_PROJECT_FORMAT.md, superseding native/Docker MCP and hosted runtime plans. HAM3-014 now covers file-backed project memory, instruction scopes/history, direct agent edits, safe refresh/conflict/recovery and optional verified legacy export.
+- Updated README, architecture/module boundary status, release scope, task/index/board. Prepared Sonnet disk work order from published dev on a fresh branch; PR #12 remains historical and unmerged. No feature edits, hosted changes, automatic worker dispatch or owner data export.

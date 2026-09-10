@@ -6,12 +6,11 @@ Dispatch rule: dependencies must be merged before a task becomes `ready_for_deve
 
 ## in_design
 
-- [HAM3-014](./tasks/HAM3-014.md) — Docker replacement WO prepared at f64eeb9; auth/client preflight pending before implementation; desktop catch-up required.
 - [HAM3-012](./tasks/HAM3-012.md) — Integrated desktop release and human QA
 
 ## ready_for_development
 
-None.
+- [HAM3-014](./tasks/HAM3-014.md) — Disk-only memory, direct agent file access, instruction scopes/history, external-edit reconciliation and verified legacy export; Sonnet packet prepared.
 
 ## in_development
 

@@ -1,6 +1,10 @@
 # Hammond 3.0 Architecture
 
-Status: D-023 (2026-09-10) replaces native MCP transport with a standalone local Docker Streamable HTTP service backed by hosted Supabase. HAM3-014 is back in design; previous native implementation/audits remain historical.
+Status: D-024 supersedes Supabase/MCP/Docker runtime plans. The authoritative target is [Disk-only project memory](./DISK_PROJECT_FORMAT.md): native UI over portable directory files, direct agent filesystem access, startup/watch reconciliation and verified one-time legacy export. Normal operation needs no login or service. Implementation is pending HAM3-014.
+
+## Historical architecture — superseded runtime boundary
+
+The following records the prior architecture and implemented feature vocabulary. Supabase storage, Docker/MCP access and related release requirements below are historical, not current implementation instructions. D-024 and the disk project contract take precedence.
 
 ## Product boundary
 

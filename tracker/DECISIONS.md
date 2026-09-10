@@ -163,3 +163,12 @@ First deployment is a local Docker Streamable HTTP endpoint bound to loopback, b
 Hammond must fetch authoritative hosted data on startup/sign-in, focus and reconnect, and while open invalidate/refetch from relevant realtime changes, with reconnect reconciliation even when events were missed. Preserve unsaved drafts, revision conflicts and owner/project response isolation. Reopening after closed-app agent edits must show current tasks, comments and saved instruction context, not only cached UI state.
 
 All instruction scopes/history/effective content and safe task/comment write contracts remain required. Auth/client capability and consent/revocation design must be settled in a revised exact-base worker packet before implementation dispatch. No hosted configuration/migration, service installation, new worker run or merge is performed by this planning decision. HAM3-012 release acceptance follows the revised architecture.
+
+
+## D-024 — Disk-only project memory; retire MCP and hosted runtime
+
+Owner selected only-on-disk operation and authorized the replacement plan and work order. Hammond becomes a native editor/viewer of readable files under each project directory. Agents use existing filesystem tools. Supabase, OAuth, MCP and Docker are unnecessary for normal operation; D-024 supersedes D-023 and D-022 runtime boundaries. Preserve scoped/versioned instructions, current task features, authoritative startup/watch refresh and draft conflict handling. docs/DISK_PROJECT_FORMAT.md is the current contract.
+
+Keep HAM3-014 and start a fresh Sonnet branch from published dev, excluding PR #12 native transport. Dependencies are merged; exact-base disk packet is prepared for manual owner transfer. Independent DeepSeek review and owner merge authority remain. PR #12 and old packets are historical, not reused approval. No automatic worker dispatch, PR closure, merge or feature implementation by orchestrator.
+
+A one-time verified export of existing owner data is authorized implementation scope, separate from normal runtime. Actual data export is owner-initiated after the tool is reviewable; database/settings remain intact. No cloud sync or new login/server architecture. HAM3-009/010/011 remain cancelled. Portable project-local copies of shared instruction sources avoid hidden cross-project dependencies; Git remains optional.

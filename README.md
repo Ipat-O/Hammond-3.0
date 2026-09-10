@@ -2,7 +2,7 @@
 
 Hammond 3.0 is a single-owner desktop project tracker and instruction manager.
 
-It remembers projects, tasks, comments, and versioned instruction templates in Supabase. It opens local directories directly and writes the selected Codex, Claude, or Kilo instructions into them. Agents perform Git and GitHub work using their own harnesses; work orders and delivery approval remain outside the app. HAM3-009/010/011 are cancelled. [HAM3-014](./tracker/tasks/HAM3-014.md) now plans a standalone Docker HTTP MCP service backed by hosted Supabase, with scoped instructions and task/comment writes while the desktop is closed. Hammond refreshes current hosted data on reopening/reconnection and while open. This replaces the earlier native transport implementation; the revised design is not yet delivered.
+The selected direction is disk-only: projects, tasks, comments and versioned instructions live in readable files inside each project directory. Hammond edits those files; agents use existing filesystem tools. No Supabase, MCP, Docker or login is required by the target runtime. [HAM3-014](./tracker/tasks/HAM3-014.md) implements this replacement, external-edit refresh and optional verified export of existing Supabase data. See the [disk project contract](./docs/DISK_PROJECT_FORMAT.md). This direction is not yet delivered; current code still uses Supabase. External work orders and approval remain outside the app; HAM3-009/010/011 remain cancelled.
 
 ## Desktop foundation
 
@@ -30,7 +30,9 @@ npm run tauri:dev
 See [module boundaries](./docs/MODULE_BOUNDARIES.md) before adding filesystem, Supabase, or local
 settings behavior.
 
-## Supabase project memory
+## Existing Supabase runtime — legacy, pending HAM3-014 replacement
+
+The instructions below describe current code, not the disk-only target. Existing owner data stays intact until an explicitly initiated export is verified; do not delete the database as part of the transition.
 
 Hammond reads `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` from `.env.local`.
 Copy `.env.example`, then use the hosted project's URL and publishable key. Never place a
