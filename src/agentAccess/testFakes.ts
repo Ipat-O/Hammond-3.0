@@ -143,16 +143,19 @@ class FakeQuery implements PromiseLike<{
     return this;
   }
 
-  single(): Promise<{ data: unknown; error: (Error & { code: string }) | null }> {
+  single(): Promise<{ data: unknown; error: { code: string; message: string } | null }> {
     return this.execute().then((rows) => {
       if (rows.length !== 1) {
-        // Real `@supabase/postgrest-js` `PostgrestError` instances extend `Error` — a plain
-        // `{code, message}` object here would silently miss `toAgentAccessError`'s
-        // `error instanceof Error` check and misclassify every not-found case as a generic
-        // persistence failure instead of `not_found`.
+        // Real `@supabase/postgrest-js`, on the normal (non-`.throwOnError()`) path every
+        // repository here uses, hands back `error` as a plain `JSON.parse`d response body —
+        // never a `PostgrestError` class instance (that class is only ever constructed on the
+        // `.throwOnError()` path, unused in this app). Matching that plain shape here is what
+        // makes this fake an honest regression guard for `src/data/supabaseError.ts`'s
+        // `instanceof Error` normalization (HAM3-015 Correction 2) — a fake that instead
+        // constructed a real `Error` would pass even if that normalization were removed.
         return {
           data: null,
-          error: Object.assign(new Error('no matching row'), { code: 'PGRST116' }),
+          error: { code: 'PGRST116', message: 'no matching row' },
         };
       }
       return { data: rows[0], error: null };
