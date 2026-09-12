@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { AgentAccessPanel } from '../agentAccess/AgentAccessPanel';
 import {
   assertNoParentCycle,
   getTaskAncestorIds,
@@ -7,6 +8,7 @@ import {
   TASK_STATUSES,
   type Database,
 } from '../data';
+import { subscribeToDataChanges, type DataChangeEvent } from '../data/dataChangeBus';
 import type { HarnessClassification, InjectionPreview } from '../harness/types';
 import { InstructionStudio } from '../instructions/InstructionStudio';
 import type { InstructionStudioHandle } from '../instructions/InstructionStudio';
@@ -882,6 +884,11 @@ export function TrackerPage({
   // once it resolves, whether the owner is still on the project it started against — a stale
   // completion from a project the owner has since left must never select/act under the new one.
   const selectedProjectIdRef = useRef<string | null>(null);
+  // Kept fresh every render for the same reason as `selectedProjectIdRef` (see below,
+  // `subscribeToDataChanges`): a bus event for a task carries no notion of "which task was
+  // selected when the effect that subscribed last ran," so the handler reads this at delivery
+  // time instead of closing over a stale value.
+  const selectedTaskIdRef = useRef<string | null>(null);
   // Kept fresh every render so a long-running directory-flow await (file picker, guard dialog,
   // activation) can resolve a picked path against whichever projects are ACTUALLY accessible
   // right now — never a snapshot of `projects` captured back when the flow started.
@@ -1011,6 +1018,9 @@ export function TrackerPage({
   // still-null because the saved task turned out invalid) and so would not otherwise re-render.
   const [taskResumePendingProjectId, setTaskResumePendingProjectId] = useState<string | null>(null);
   const [primaryView, setPrimaryView] = useState<PrimaryView>('home');
+  // Deliberately not part of `PrimaryView`/`ResumeScreen`: this is a transient overlay, never a
+  // device-local resume position, so it never needs to persist across a relaunch.
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -1209,6 +1219,7 @@ export function TrackerPage({
   // Kept fresh every render so an in-flight action started against one project can tell, once it
   // resolves, whether the owner is still on that same project (see the ref's own declaration).
   selectedProjectIdRef.current = selectedProjectId;
+  selectedTaskIdRef.current = selectedTaskId;
   projectsRef.current = projects;
   taskDraftRef.current = taskDraft;
 
@@ -1501,6 +1512,66 @@ export function TrackerPage({
       mounted = false;
     };
   }, [repositories.memory, selectedTask]);
+
+  // Live refresh for writes this window did not itself make (HAM3-015 Correction 2) — chiefly an
+  // agent-access HTTP/MCP mutation, but any caller works identically. `subscribeToDataChanges`
+  // (`src/data/dataChangeBus.ts`) fires for EVERY successful project/task/comment mutation
+  // regardless of origin, this window's own handlers included; each event already carries the
+  // mutated row, merged below by the same add/replace/remove-by-id shape those handlers already
+  // use elsewhere in this file, so an event for a mutation this window's own handler already
+  // applied is an idempotent no-op repeat, never a duplicate or a flicker. Subscribed once (empty
+  // deps) and reading `selectedProjectIdRef`/`selectedTaskIdRef` at delivery time rather than
+  // closing over `selectedProjectId`/`selectedTaskId` — those refs are the established pattern
+  // this file already uses for "compare against whichever is current right now," see their own
+  // declarations above.
+  useEffect(() => {
+    return subscribeToDataChanges((event: DataChangeEvent) => {
+      if (event.resource === 'project') {
+        const row = event.row as Project;
+        if (event.op === 'delete') {
+          setProjects((current) => current.filter((project) => project.id !== row.id));
+          if (selectedProjectIdRef.current === row.id) setSelectedProjectId(null);
+          return;
+        }
+        setProjects((current) =>
+          current.some((project) => project.id === row.id)
+            ? current.map((project) => (project.id === row.id ? row : project))
+            : [row, ...current],
+        );
+        return;
+      }
+      if (event.resource === 'task') {
+        if (event.op === 'delete') {
+          setTasks((current) => current.filter((task) => task.id !== event.row.id));
+          if (selectedTaskIdRef.current === event.row.id) setSelectedTaskId(null);
+          return;
+        }
+        const row = event.row as Task;
+        // A task belonging to a project other than the one currently open must never be adopted
+        // into `tasks` (which holds only the selected project's rows) — unlike the delete branch
+        // above, "not present, so add it" would be actively wrong here, not just a harmless no-op.
+        if (row.project_id !== selectedProjectIdRef.current) return;
+        setTasks((current) =>
+          current.some((task) => task.id === row.id)
+            ? current.map((task) => (task.id === row.id ? row : task))
+            : [...current, row],
+        );
+        // Keeps the save-coordinator's own confirmed-row bookkeeping (used for save/dedup
+        // staleness checks) in step with this externally-confirmed row too — the same invariant
+        // its own full-list-load call site documents ("every successful write advances confirmed
+        // state regardless of navigation").
+        taskSaveCoordinatorRef.current.upsertConfirmed([row]);
+        return;
+      }
+      if (event.resource === 'comment') {
+        const row = event.row as Comment;
+        if (row.task_id !== selectedTaskIdRef.current) return;
+        setComments((current) =>
+          current.some((comment) => comment.id === row.id) ? current : [...current, row],
+        );
+      }
+    });
+  }, []);
 
   // Home's project-wide "recent" feed only matters when no single task is selected — a selected
   // task's own comments (above) already cover that case with a navigable summary instead.
@@ -2538,7 +2609,9 @@ export function TrackerPage({
           >
             <span className="nav-icon" aria-hidden="true">▤</span>Instructions
           </button>
-          <span className="nav-item nav-item-muted"><span className="nav-icon" aria-hidden="true">⚙</span>Settings</span>
+          <button type="button" className="nav-item" onClick={() => setSettingsOpen(true)}>
+            <span className="nav-icon" aria-hidden="true">⚙</span>Settings
+          </button>
         </nav>
         <button
           className="button button-secondary sidebar-open-directory"
@@ -3079,6 +3152,7 @@ export function TrackerPage({
           </div>
         </div>
       )}
+      {settingsOpen && <AgentAccessPanel onClose={() => setSettingsOpen(false)} />}
     </main>
   );
 }

@@ -1,6 +1,16 @@
 # Hammond 3.0 Architecture
 
-D-025: retain the accepted Supabase-backed native app. Feature development is stopped; only owner-requested UI tweaks may follow. Hammond organizes projects/tasks/comments, maintains instructions and writes selected harness instruction files. It does not communicate with agents. The repository tracker is separate from app records. D-022/D-023/D-024 agent-service and disk-only directions are cancelled.
+D-025: retain the accepted Supabase-backed native app. Feature development is stopped; only owner-requested UI tweaks may follow. Hammond organizes projects/tasks/comments, maintains instructions and writes selected harness instruction files. The repository tracker is separate from app records. D-022/D-023/D-024 agent-service and disk-only directions are cancelled.
+
+**HAM3-015 (owner-authorized exception, scoped to this feature only):** Hammond now also exposes
+a loopback-only local HTTP API and a bundled stdio MCP adapter so a signed-in owner's own coding
+harness can read/act on their workspace directly — see [docs/AGENT_ACCESS.md](./AGENT_ACCESS.md).
+This is a different, much narrower design than the cancelled D-022/D-023/D-024 agent-service
+directions and the cancelled HAM3-014 Docker/MCP replacement plan: no server process is exposed
+beyond `127.0.0.1`, no second copy of domain logic exists, and it does not launch, dispatch, or
+supervise any agent. Every "does not communicate with agents" / "no ... MCP ... is delivered"
+statement below describes the pre-HAM3-015 baseline this exception was layered onto, not the
+current state.
 
 ## Product boundary
 

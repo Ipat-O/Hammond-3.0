@@ -1,0 +1,5 @@
+{
+  "main": "dist/hammond-mcp.cjs",
+  "output": "dist/hammond-mcp.blob",
+  "disableExperimentalSEAWarning": true
+}

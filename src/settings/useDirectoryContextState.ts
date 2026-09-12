@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { DirectoryContextManager } from './directoryContextManager';
+import { getSharedDirectoryContextManager } from './directoryContextManager';
 import type { DirectoryContextServices } from './contracts';
 import { createDefaultLocalSettingsState, type LocalSettingsStateV2 } from './state';
 
@@ -19,9 +19,14 @@ function errorMessage(error: unknown) {
  * how long any one of them takes to actually persist to disk. The exposed `setState` remains
  * available for a caller (e.g. `DirectoryContextPanel`'s own standalone tests) that manages its
  * own state independently of a manager subscription.
+ *
+ * The manager itself comes from `getSharedDirectoryContextManager`, keyed on `services`'
+ * identity, so every consumer of the same `services.directoryContext` object (this hook and the
+ * agent-access operation registry alike) shares exactly one authoritative manager instead of
+ * racing two independent in-memory caches over the same on-disk store.
  */
 export function useDirectoryContextState(services: DirectoryContextServices) {
-  const manager = useMemo(() => new DirectoryContextManager(services), [services]);
+  const manager = useMemo(() => getSharedDirectoryContextManager(services), [services]);
   const [state, setState] = useState<LocalSettingsStateV2 | null>(null);
   const [error, setError] = useState<string | null>(null);
 

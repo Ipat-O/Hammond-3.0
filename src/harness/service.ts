@@ -48,6 +48,26 @@ export class HarnessInjectionService {
     return this.adapters[provider];
   }
 
+  /**
+   * A stable digest of the target's current on-disk content, or `null` when it does not exist /
+   * cannot be read. FNV-1a (not a cryptographic hash) — this only needs to detect that the bytes
+   * changed between a preview and a later gated write, not resist tampering.
+   */
+  private async targetContentDigest(root: string, relativePath: string): Promise<string | null> {
+    let content: string;
+    try {
+      content = await this.filesystem.readTextFile(root, relativePath);
+    } catch {
+      return null;
+    }
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < content.length; i += 1) {
+      hash ^= content.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    return `fnv1a:${(hash >>> 0).toString(16).padStart(8, '0')}:${content.length}`;
+  }
+
   /** The assigned role/provider for a project, resolved through the agent-assignment domain — never a client-guessed default. */
   private async resolveAssignment(
     projectId: string,
@@ -81,6 +101,14 @@ export class HarnessInjectionService {
     ]);
     const adapter = this.adapterFor(assignment.provider);
     const classified = await adapter.classify(params.root, params.projectId, params.role);
+    // Only the in-place-rewrite cases (`update` a ManagedValid target, `repair` a Malformed one)
+    // can silently lose an un-previewed body edit, so only those pay for the extra read. Missing
+    // has nothing to hash; Unmanaged / ManagedForeign already require an explicit `forceReplace`.
+    const action = deriveAction(classified.classification);
+    const targetDigest =
+      action === 'update' || action === 'repair'
+        ? await this.targetContentDigest(params.root, classified.relativePath)
+        : null;
     const generatedHeaderFields = {
       projectId: params.projectId,
       role: params.role,
@@ -105,7 +133,8 @@ export class HarnessInjectionService {
         provider: assignment.provider,
         formatVersion: MANAGED_HEADER_FORMAT_VERSION,
       },
-      action: deriveAction(classified.classification),
+      action,
+      targetDigest,
     };
   }
 

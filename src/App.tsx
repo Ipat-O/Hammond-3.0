@@ -1,46 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 
-import { nativeFilesystem, nativeHarness, nativeLocalSettings } from './api/native';
-import {
-  ownerAuth,
-  ProjectMemoryRepository,
-  ProjectRepository,
-  SupabaseAssignmentRepository,
-  SupabaseInstructionRepository,
-  TaskRepository,
-} from './data';
-import { AssignmentsService } from './assignments/service';
-import { createNativeHarnessAdapters } from './harness/adapter';
-import { HarnessInjectionService } from './harness/service';
-import { InstructionsService } from './instructions/service';
+import { useAgentAccessBridge } from './agentAccess/bridge';
+import { createDefaultServices } from './services/appServices';
 import { TrackerPage } from './tracker/TrackerPage';
 import type { TrackerServices } from './tracker/contracts';
-
-function createDefaultServices(): TrackerServices {
-  const assignments = new AssignmentsService(new SupabaseAssignmentRepository());
-  const instructions = new InstructionsService(new SupabaseInstructionRepository());
-  return {
-    auth: ownerAuth,
-    repositories: {
-      projects: new ProjectRepository(),
-      tasks: new TaskRepository(),
-      memory: new ProjectMemoryRepository(),
-    },
-    directoryContext: {
-      filesystem: nativeFilesystem,
-      settings: nativeLocalSettings,
-    },
-    instructions,
-    assignments,
-    harness: new HarnessInjectionService({
-      assignments,
-      instructions,
-      adapters: createNativeHarnessAdapters(nativeHarness),
-      filesystem: nativeFilesystem,
-    }),
-  };
-}
 
 interface AuthScreenProps {
   auth: TrackerServices['auth'];
@@ -183,6 +147,13 @@ function App({ services, initialSession }: AppProps) {
       data.subscription.unsubscribe();
     };
   }, [activeServices, initialSession]);
+
+  // Mounted unconditionally, independent of which screen (auth vs. tracker) is showing, so the
+  // local API/MCP surface is live the moment the process is running and signed in — a minimized
+  // window or a not-yet-navigated screen must not block agent access. The hook itself gates
+  // actual operation execution on `session` internally; it never executes a queued/in-flight
+  // mutation once signed out.
+  useAgentAccessBridge(activeServices, session?.user.id ?? null);
 
   if (authLoading || session === undefined) {
     return <main className="loading-shell">Restoring your Hammond workspace…</main>;

@@ -5,15 +5,10 @@ import { AGENT_ASSIGNMENT_ROLES } from '../assignments/types';
 import type { AgentAssignment, InstructionRole, ProviderFamily } from '../assignments/types';
 import { getSupabaseClient } from './client';
 import type { Database } from './database.types';
+import { dataOrThrow, normalizeSupabaseError } from './supabaseError';
 
 type Tables = Database['public']['Tables'];
 type AssignmentRow = Tables['project_agent_assignments']['Row'];
-
-function dataOrThrow<T>(result: { data: T; error: Error | null }): NonNullable<T> {
-  if (result.error) throw result.error;
-  if (result.data === null) throw new Error('Supabase returned no data');
-  return result.data as NonNullable<T>;
-}
 
 function toAssignment(row: AssignmentRow): AgentAssignment {
   return {
@@ -55,7 +50,7 @@ export class SupabaseAssignmentRepository implements AssignmentRepository {
       .eq('project_id', params.projectId)
       .eq('role', params.role)
       .maybeSingle();
-    if (error) throw error;
+    if (error) throw normalizeSupabaseError(error);
     return data ? toAssignment(data) : null;
   }
 

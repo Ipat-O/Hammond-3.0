@@ -52,4 +52,12 @@ export interface InjectionPreview {
   /** The version ids and preview-time timestamp embedded in `generatedDocument`'s header. A real Inject/Update computes its own `generatedAt` at write time, which can differ from this preview. */
   generatedHeader: ManagedHeaderFields;
   action: PendingAction;
+  /**
+   * A digest of the target file's current on-disk bytes (`null` when the target is Missing or
+   * unreadable). Callers that gate a later write on this preview (the agent-access `harness.inject`
+   * operation) pass it back so a write is refused if the file changed since — even a body edit
+   * that leaves the classification and instruction versions unchanged. Not a security digest;
+   * only change detection.
+   */
+  targetDigest: string | null;
 }

@@ -1,6 +1,18 @@
 # Hammond module boundaries
 
-Current boundary (D-025): React uses Supabase repositories for project records; Rust/Tauri handles local directory/settings and managed instruction files. Keep these existing boundaries. Disk-only and MCP replacement work is cancelled. Historical foundation notes follow.
+Current boundary (D-025): React uses Supabase repositories for project records; Rust/Tauri handles local directory/settings and managed instruction files. Keep these existing boundaries. Disk-only replacement work, and the HAM3-014 Docker/MCP replacement architecture, are cancelled. Historical foundation notes follow.
+
+## Agent access (`src/agentAccess/`, `src-tauri/src/agent_access/`, `mcp/`) — HAM3-015
+
+An owner-authorized, narrowly-scoped exception to the boundaries above, not a reopening of them:
+a loopback HTTP API and a separate MCP adapter package expose the _existing_ domain services
+(`InstructionsService`, `AssignmentsService`, `HarnessInjectionService`, `DirectoryContextManager`,
+the three Supabase repositories) to a local coding-agent harness through one allowlisted operation
+registry (`src/agentAccess/registry.ts`). Neither `src-tauri/src/agent_access/` (transport, auth,
+correlation only) nor `mcp/` (a thin HTTP client) contain Hammond domain logic of their own — see
+[docs/AGENT_ACCESS.md](./AGENT_ACCESS.md) for the full contract. `mcp/` is intentionally a
+separate npm package (its own `package.json`/lockfile) so it can be built and distributed
+independently of the desktop app's own toolchain.
 
 HAM3-001 establishes a desktop shell and contracts without implementing product workflows. The
 boundaries below are intentional seams for the next foundation tasks.

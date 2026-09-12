@@ -67,6 +67,11 @@ export class DirectoryContextManager {
   // does not poison the chain for later callers (each link swallows its own rejection before the
   // next one is appended) — but IS surfaced to whichever caller's own `commit()` produced it.
   private writeChain: Promise<void> = Promise.resolve();
+  // Bumped once per committed mutation. `loadState()` samples it before its async disk read and
+  // re-checks afterward: if a mutation landed in between, the freshly-read disk snapshot is
+  // already stale relative to this manager's in-memory state and must not replace it.
+  private mutationRevision = 0;
+  private pendingWrites = 0;
 
   constructor(private readonly services: DirectoryContextServices) {}
 
@@ -95,11 +100,36 @@ export class DirectoryContextManager {
     return this.latestState ?? fallback;
   }
 
+  /**
+   * Re-reads canonical state from disk and publishes it — the "intentional refresh" the UI uses
+   * on mount and after an external edit. It must never regress a change this manager has already
+   * committed in memory but not yet flushed:
+   *
+   * 1. It waits out every write still queued, so the file it is about to read already reflects
+   *    every prior `commit()` (a delayed write is exactly how the API-vs-API and API-vs-UII lost
+   *    update in HAM3-015 audit Finding 2 happened — a second `loadState()` read the file before
+   *    the first operation's write landed and clobbered the newer in-memory state).
+   * 2. If a mutation commits while it is awaiting the chain or the read, the disk snapshot it
+   *    just obtained is already behind `latestState`; it keeps the newer in-memory state instead
+   *    of publishing the stale read.
+   *
+   * A genuine external change to the file (no local mutation in flight) still takes effect, so
+   * subscription and error semantics are unchanged for that path.
+   */
   async loadState(): Promise<LocalSettingsStateV2> {
+    const revisionAtEntry = this.mutationRevision;
+    await this.writeChain;
     const raw = await this.services.settings.read<unknown>(LOCAL_SETTINGS_KEY);
-    const state = raw === null ? createDefaultLocalSettingsState() : migrateLocalSettingsState(raw);
-    this.setLatestState(state);
-    return state;
+    const diskState =
+      raw === null ? createDefaultLocalSettingsState() : migrateLocalSettingsState(raw);
+    if (
+      this.latestState !== null &&
+      (this.mutationRevision !== revisionAtEntry || this.pendingWrites > 0)
+    ) {
+      return this.latestState;
+    }
+    this.setLatestState(diskState);
+    return diskState;
   }
 
   /**
@@ -111,13 +141,19 @@ export class DirectoryContextManager {
    * change) naturally carries it through.
    */
   private commit(nextState: LocalSettingsStateV2): Promise<LocalSettingsStateV2> {
+    this.mutationRevision += 1;
+    this.pendingWrites += 1;
     this.setLatestState(nextState);
     const write = this.writeChain.then(() =>
       this.services.settings.write(LOCAL_SETTINGS_KEY, nextState),
     );
     this.writeChain = write.then(
-      () => undefined,
-      () => undefined,
+      () => {
+        this.pendingWrites -= 1;
+      },
+      () => {
+        this.pendingWrites -= 1;
+      },
     );
     return write.then(() => nextState);
   }
@@ -302,4 +338,28 @@ export class DirectoryContextManager {
   async pickDirectory(): Promise<string | null> {
     return this.services.filesystem.selectDirectory();
   }
+}
+
+/**
+ * One `DirectoryContextManager` per distinct `DirectoryContextServices` object identity, shared
+ * across every consumer (the UI's `useDirectoryContextState` and the agent-access operation
+ * registry alike). Two independent manager instances wrapping the same underlying settings store
+ * would each keep their own `latestState`/`writeChain` cache, so a mutation through one would not
+ * be visible to the other until its next `loadState()` — and a mutation computed from that stale
+ * cache could silently drop a concurrent change the other instance already committed. Since
+ * `createDefaultServices()` builds the app's `directoryContext` ports exactly once per session,
+ * keying on that object's identity is sufficient to give the whole app exactly one authoritative
+ * manager without threading it through every constructor explicitly.
+ */
+const sharedManagers = new WeakMap<DirectoryContextServices, DirectoryContextManager>();
+
+export function getSharedDirectoryContextManager(
+  services: DirectoryContextServices,
+): DirectoryContextManager {
+  let manager = sharedManagers.get(services);
+  if (!manager) {
+    manager = new DirectoryContextManager(services);
+    sharedManagers.set(services, manager);
+  }
+  return manager;
 }

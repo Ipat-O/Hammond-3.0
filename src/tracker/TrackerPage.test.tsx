@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { vi } from 'vitest';
 
 import type { Database } from '../data';
+import { publishDataChange } from '../data/dataChangeBus';
 import { AssignmentsService } from '../assignments/service';
 import { createFakeAssignmentRepository, seedProjectDefaults } from '../assignments/testFakes';
 import { HarnessInjectionService } from '../harness/service';
@@ -65,6 +66,16 @@ function task(overrides: Partial<Task> & Pick<Task, 'id' | 'project_id'>): Task 
     parent_task_id: null,
     due_at: null,
     archived_at: null,
+    created_at: '2026-08-13T08:00:00.000Z',
+    updated_at: '2026-08-13T08:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function comment(overrides: Partial<Comment> & Pick<Comment, 'id' | 'task_id' | 'project_id'>): Comment {
+  return {
+    owner_id: ownerId,
+    body: 'a comment',
     created_at: '2026-08-13T08:00:00.000Z',
     updated_at: '2026-08-13T08:00:00.000Z',
     ...overrides,
@@ -4329,5 +4340,117 @@ describe('Correction 10 — synthetic-row Move display reconciles by real id; Re
     expect(screen.getByRole('alert').textContent).toContain('bravo blew up');
     expect(screen.getByRole('button', { name: /^Task Bravo/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Task Alpha/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('HAM3-015 Correction 2 — the mounted UI reflects an external write via the live data-change bus, without a reload', () => {
+  it('a project created through the shared repository wiring (e.g. an agent-access write) appears in the sidebar without navigation, focus, or restart', async () => {
+    const { services } = makeServices();
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    await waitFor(() =>
+      expect(screen.getAllByRole('heading', { name: 'Hammond project' }).length).toBeGreaterThan(0),
+    );
+    expect(screen.queryByRole('button', { name: 'External Project' })).not.toBeInTheDocument();
+
+    // Simulates exactly what `ProjectRepository.create` (`src/data/repositories.ts`) publishes
+    // after a real insert — the same bus a repository instance constructed anywhere (including
+    // agent-access's own, deliberately separate, instance — see `dataChangeBus.ts`) publishes to.
+    publishDataChange({
+      resource: 'project',
+      op: 'create',
+      row: project({ id: 'project-external', name: 'External Project' }),
+    });
+
+    expect(await screen.findByRole('button', { name: 'External Project' })).toBeInTheDocument();
+  });
+
+  it('an externally updated task title refreshes in the open workspace without navigation', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Original title' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [taskA] } });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    await screen.findByRole('button', { name: /^Original title/ });
+
+    publishDataChange({
+      resource: 'task',
+      op: 'update',
+      row: task({ id: 'task-a', project_id: 'project-a', title: 'Updated title' }),
+    });
+
+    expect(await screen.findByRole('button', { name: /^Updated title/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Original title/ })).not.toBeInTheDocument();
+  });
+
+  it('a task update for a project other than the one currently open is not adopted into the visible list', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const projectB = project({ id: 'project-b', name: 'Project B' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task in A' });
+    const { services } = makeServices([projectA, projectB], {
+      tasksByProject: { 'project-a': [taskA], 'project-b': [] },
+    });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Project B' }));
+    await waitFor(() =>
+      expect(screen.getAllByRole('heading', { name: 'Project B' }).length).toBeGreaterThan(0),
+    );
+
+    // A response for project A's own task, arriving after the owner has already switched to B —
+    // the analogue of a slow write's response landing after a project switch.
+    publishDataChange({
+      resource: 'task',
+      op: 'update',
+      row: task({ id: 'task-a', project_id: 'project-a', title: 'Task in A (renamed)' }),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole('button', { name: /^Task in A/ })).not.toBeInTheDocument();
+  });
+
+  it('deleting the currently selected project externally clears the selection instead of leaving a dangling reference', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const { services } = makeServices([projectA]);
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    await waitFor(() =>
+      expect(screen.getAllByRole('heading', { name: 'Project A' }).length).toBeGreaterThan(0),
+    );
+
+    publishDataChange({ resource: 'project', op: 'delete', row: { id: 'project-a' } });
+
+    await waitFor(() =>
+      expect(screen.queryAllByRole('heading', { name: 'Project A' })).toHaveLength(0),
+    );
+    expect(screen.queryByRole('button', { name: 'Project A' })).not.toBeInTheDocument();
+  });
+
+  it('an externally added comment appears in the open thread, and never overwrites an in-progress (unsaved) comment draft', async () => {
+    const projectA = project({ id: 'project-a', name: 'Project A' });
+    const taskA = task({ id: 'task-a', project_id: 'project-a', title: 'Task A' });
+    const { services } = makeServices([projectA], { tasksByProject: { 'project-a': [taskA] } });
+
+    render(<TrackerPage services={services} ownerId={ownerId} onSignOut={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Task A/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByRole('button', { name: 'Add comment' });
+
+    // The owner's own not-yet-sent draft must survive an unrelated external write landing while
+    // it is still in the box (this component's `comments` list state and its comment-draft state
+    // are separate — see the bus subscriber's own comment above — but this exercises that through
+    // the real rendered form rather than only by code inspection).
+    fireEvent.change(screen.getByLabelText('Add a comment'), { target: { value: 'my own unsent draft' } });
+
+    publishDataChange({
+      resource: 'comment',
+      op: 'create',
+      row: comment({ id: 'comment-external', task_id: 'task-a', project_id: 'project-a', body: 'left externally' }),
+    });
+
+    expect(await screen.findByText('left externally')).toBeInTheDocument();
+    expect(screen.getByLabelText('Add a comment')).toHaveValue('my own unsent draft');
   });
 });

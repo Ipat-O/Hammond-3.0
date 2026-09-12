@@ -21,7 +21,8 @@
     "supabase:types:check": "npm run supabase:types && git diff --exit-code -- src/data/database.types.ts",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "package:release": "node scripts/package-release.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.112.3",
@@ -29,7 +30,8 @@
     "dompurify": "^3.4.14",
     "marked": "^18.0.11",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "zod": "^4.6.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

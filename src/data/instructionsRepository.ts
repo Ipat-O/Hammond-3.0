@@ -12,17 +12,12 @@ import type {
 import { getSupabaseClient } from './client';
 import type { Database } from './database.types';
 import { assertNoAbsoluteLocalPaths } from './pathGuard';
+import { dataOrThrow, normalizeSupabaseError } from './supabaseError';
 
 type Tables = Database['public']['Tables'];
 type TemplateRow = Tables['instruction_templates']['Row'];
 type VersionRow = Tables['instruction_template_versions']['Row'];
 type SelectionRow = Tables['project_instruction_selections']['Row'];
-
-function dataOrThrow<T>(result: { data: T; error: Error | null }): NonNullable<T> {
-  if (result.error) throw result.error;
-  if (result.data === null) throw new Error('Supabase returned no data');
-  return result.data as NonNullable<T>;
-}
 
 function toTemplate(row: TemplateRow): InstructionTemplate {
   return {
@@ -115,7 +110,7 @@ export class SupabaseInstructionRepository implements InstructionRepository {
       ? query.eq('project_id', params.projectId)
       : query.is('project_id', null);
     const { data, error } = await query.maybeSingle();
-    if (error) throw error;
+    if (error) throw normalizeSupabaseError(error);
     return data ? toTemplate(data) : null;
   }
 
@@ -196,7 +191,7 @@ export class SupabaseInstructionRepository implements InstructionRepository {
       .eq('role', params.role)
       .eq('provider', params.provider)
       .maybeSingle();
-    if (error) throw error;
+    if (error) throw normalizeSupabaseError(error);
     return data ? toSelection(data) : null;
   }
 

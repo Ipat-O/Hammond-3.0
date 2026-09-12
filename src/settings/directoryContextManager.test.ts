@@ -1,3 +1,4 @@
+import type { DirectoryContextServices } from './contracts';
 import { DirectoryContextManager, normalizePathForComparison } from './directoryContextManager';
 import { createDefaultLocalSettingsState } from './state';
 import { createFakeDirectoryContextServices } from './testFakes';
@@ -489,6 +490,116 @@ describe('DirectoryContextManager', () => {
       await manager.linkDirectory(staleState, projectId, '/home/owner/repo');
 
       expect(manager.findContextsForPath(staleState, '/home/owner/repo')).toHaveLength(1);
+    });
+  });
+
+  describe('loadState never regresses an unflushed in-memory mutation (HAM3-015 Correction 1, F2)', () => {
+    /** An in-memory settings store whose Nth write can be held open to model deferred disk I/O. */
+    function createGatedSettings(gateWriteNumber: number) {
+      const store = new Map<string, unknown>();
+      let writeCount = 0;
+      let release!: () => void;
+      const gateOpened = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let gatedWriteInvoked!: () => void;
+      const gatedWriteStarted = new Promise<void>((resolve) => {
+        gatedWriteInvoked = resolve;
+      });
+      const settings = {
+        read: async (key: string) => (store.has(key) ? store.get(key) : null),
+        write: async (key: string, value: unknown) => {
+          writeCount += 1;
+          if (writeCount === gateWriteNumber) {
+            gatedWriteInvoked();
+            await gateOpened;
+          }
+          store.set(key, value);
+        },
+        remove: async (key: string) => {
+          store.delete(key);
+        },
+      } as DirectoryContextServices['settings'];
+      return { settings, releaseGatedWrite: () => release(), gatedWriteStarted };
+    }
+
+    it('a second loadState() that reads the file before an earlier write lands keeps both contexts, in memory and after reload', async () => {
+      const { settings, releaseGatedWrite, gatedWriteStarted } = createGatedSettings(1);
+      const services = createFakeDirectoryContextServices({ settings });
+      const manager = new DirectoryContextManager(services);
+
+      // Operation A: load, link /work/a — its disk write is the gated one and stays in flight.
+      const snapshotA = await manager.loadState();
+      const linkA = manager.linkDirectory(snapshotA, 'project-a', '/work/a');
+      await gatedWriteStarted;
+
+      // Operation B: a fresh loadState() — the exact shape of the audit's lost update. It must
+      // NOT clobber A's committed-but-unflushed state with the still-empty file.
+      const loadB = manager.loadState();
+
+      // Nothing is deadlocked: releasing A's write lets B's loadState complete.
+      releaseGatedWrite();
+      await linkA;
+      const snapshotB = await loadB;
+
+      const afterLinkB = await manager.linkDirectory(snapshotB, 'project-b', '/work/b');
+      expect(afterLinkB.state.directoryContexts.map((c) => c.path).sort()).toEqual([
+        '/work/a',
+        '/work/b',
+      ]);
+
+      // And it survives a genuine reload from disk once every write has flushed.
+      const reloaded = await manager.loadState();
+      expect(reloaded.directoryContexts.map((c) => c.path).sort()).toEqual(['/work/a', '/work/b']);
+    });
+
+    it('an API link interleaved with a direct UI setActive loses neither change', async () => {
+      const services = createFakeDirectoryContextServices();
+      const manager = new DirectoryContextManager(services);
+
+      // UI mounts and links a directory for project-a.
+      const mounted = await manager.loadState();
+      const { state: withA, context: contextA } = await manager.linkDirectory(
+        mounted,
+        'project-a',
+        '/work/a',
+      );
+
+      // Interleave: an API caller does its own loadState()+link for project-b, while the UI (from
+      // a snapshot taken before that link) reactivates contextA.
+      const apiSnapshot = await manager.loadState();
+      const apiLink = manager.linkDirectory(apiSnapshot, 'project-b', '/work/b');
+      const uiSetActive = manager.setActive(withA, contextA.id);
+      const [apiResult, uiResult] = await Promise.all([apiLink, uiSetActive]);
+
+      expect(apiResult.state.directoryContexts).toHaveLength(2);
+      expect(uiResult.directoryContexts).toHaveLength(2);
+      const reloaded = await manager.loadState();
+      expect(reloaded.directoryContexts.map((c) => c.path).sort()).toEqual(['/work/a', '/work/b']);
+    });
+
+    it('a failed write never discards a later, successful, unrelated change', async () => {
+      const services = createFakeDirectoryContextServices();
+      const write = services.settings.write as ReturnType<typeof vi.fn>;
+      const manager = new DirectoryContextManager(services);
+      const loaded = await manager.loadState();
+
+      write.mockImplementationOnce(async () => {
+        throw new Error('disk full');
+      });
+
+      const failing = manager.linkDirectory(loaded, 'project-a', '/work/a');
+      await expect(failing).rejects.toThrow('disk full');
+
+      // A later, unrelated mutation still persists — and carries the earlier change through,
+      // because it writes the merged in-memory state.
+      const after = await manager.linkDirectory(loaded, 'project-b', '/work/b');
+      expect(after.state.directoryContexts.map((c) => c.path).sort()).toEqual([
+        '/work/a',
+        '/work/b',
+      ]);
+      const reloaded = await manager.loadState();
+      expect(reloaded.directoryContexts.map((c) => c.path).sort()).toEqual(['/work/a', '/work/b']);
     });
   });
 });
